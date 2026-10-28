@@ -37,6 +37,13 @@ class FakeManager:
         self.exited = True
 
 
+def config():
+    return SimpleNamespace(
+        telegram_bot_token="token",
+        telegram_chat_id="chat",
+    )
+
+
 def test_low_memory_wrapper_injects_flags_and_preserves_options():
     manager = FakeManager()
     factory = lambda: manager
@@ -57,91 +64,145 @@ def test_low_memory_wrapper_injects_flags_and_preserves_options():
         assert flag in args
 
 
-def test_live_history_helpers_keep_duplicates_trim_and_build_three_columns():
-    history = [f"{value:.2f}x" for value in range(1, 16)]
-    updated = app_main.prepend_history(history, "4.45x", limit=15)
+def test_history_keeps_latest_twenty_and_uses_five_by_four_grid():
+    history = [f"{1 + value / 100:.2f}x" for value in range(20)]
+    updated = app_main.prepend_history(history, "4.45x", limit=20)
 
     assert updated[0] == "4.45x"
-    assert len(updated) == 15
+    assert len(updated) == 20
 
-    duplicated = app_main.prepend_history(["1.00x"], "1.00x", limit=15)
-    assert duplicated == ["1.00x", "1.00x"]
-
-    keyboard = app_main.build_history_keyboard(
-        ["4.45x", "1.00x", "1.52x", "2.28x"],
-        columns=3,
-    )
+    keyboard = app_main.build_history_keyboard(updated, columns=5)
     rows = keyboard["inline_keyboard"]
-    assert [len(row) for row in rows] == [3, 1]
-    assert rows[0][0]["text"] == "🟪 4.45x"
-    assert rows[1][0]["text"] == "🟪 2.28x"
+    assert [len(row) for row in rows] == [5, 5, 5, 5]
+    assert rows[0][0]["text"] == "🟪4.45x"
+    assert rows[0][1]["text"] == "🟦1.00x"
 
 
-def test_live_history_panel_creates_once_then_edits_same_message():
+def test_history_with_existing_message_id_never_sends_duplicate_message():
     calls = []
 
     async def fake_request(method, payload):
         calls.append((method, payload))
-        if method == "sendMessage":
-            return {"ok": True, "result": {"message_id": 777}}
         return {"ok": True, "result": True}
 
-    config = SimpleNamespace(
-        telegram_bot_token="token",
-        telegram_chat_id="chat",
-    )
     panel = app_main.TelegramHistoryPanel(
-        config,
+        config(),
         request=fake_request,
         initial_history=["2.28x", "1.52x"],
+        message_id=777,
     )
 
     async def run():
         assert await panel.ensure_panel() is True
         assert await panel.handle_monitor_message(
-            config,
+            config(),
             "Последний коэффициент: 4.45x",
         ) is True
 
     asyncio.run(run())
 
     assert [method for method, _ in calls] == [
-        "sendMessage",
+        "editMessageReplyMarkup",
         "editMessageReplyMarkup",
     ]
-    assert calls[0][1]["text"] == "🎰 Lucky Jet — история"
-    assert calls[1][1]["message_id"] == 777
-    first_button = calls[1][1]["reply_markup"]["inline_keyboard"][0][0]
-    assert first_button["text"] == "🟪 4.45x"
-
-def test_v03_history_default_has_twenty_buttons_in_five_columns():
-    assert app_main._HISTORY_LIMIT == 20
-    assert app_main._HISTORY_COLUMNS == 5
-    rows = app_main.build_history_keyboard(["1.10x"] * 20)["inline_keyboard"]
-    assert [len(row) for row in rows] == [5, 5, 5, 5]
+    assert all(payload["message_id"] == 777 for _, payload in calls)
 
 
-def test_v03_streak_edits_one_message_and_deletes_after_completion():
+def test_history_edit_failure_does_not_create_replacement_message():
     calls = []
+
+    async def fake_request(method, payload):
+        calls.append((method, payload))
+        raise RuntimeError("edit failed")
+
+    panel = app_main.TelegramHistoryPanel(
+        config(),
+        request=fake_request,
+        initial_history=["1.11x"] * 20,
+        message_id=777,
+    )
+
+    assert asyncio.run(panel.ensure_panel()) is False
+    assert [method for method, _ in calls] == ["editMessageReplyMarkup"]
+    assert panel.message_id == 777
+
+
+def test_streak_is_silent_before_four_and_uses_one_full_width_button():
+    calls = []
+
     async def request(method, payload):
         calls.append((method, payload))
-        return {"ok": True, "result": {"message_id": 77}}
+        if method == "sendMessage":
+            return {"ok": True, "result": {"message_id": 88}}
+        return {"ok": True, "result": True}
+
+    panel = app_main.TelegramStreakPanel(config(), request)
 
     async def run():
-        from types import SimpleNamespace
-        panel = app_main.TelegramStreakPanel(
-            SimpleNamespace(telegram_chat_id="chat"), request
-        )
-        async def no_wait_delete(message_id):
-            calls.append(("scheduled_delete", {"message_id": message_id}))
-        panel._delete_later = no_wait_delete
+        for coefficient in ["1.11x", "1.22x", "1.33x"]:
+            await panel.on_round(coefficient)
+        assert calls == []
+        await panel.on_round("1.44x")
+
+    asyncio.run(run())
+
+    assert [method for method, _ in calls] == ["sendMessage"]
+    assert calls[0][1]["text"] == "Серия"
+    rows = calls[0][1]["reply_markup"]["inline_keyboard"]
+    assert rows == [[{"text": "🔵4<2x", "callback_data": "noop"}]]
+
+
+def test_streak_edits_same_button_until_break_then_schedules_delete():
+    calls = []
+
+    async def request(method, payload):
+        calls.append((method, payload))
+        if method == "sendMessage":
+            return {"ok": True, "result": {"message_id": 77}}
+        return {"ok": True, "result": True}
+
+    panel = app_main.TelegramStreakPanel(config(), request)
+
+    async def no_wait_delete(message_id):
+        calls.append(("scheduled_delete", {"message_id": message_id}))
+
+    panel._delete_later = no_wait_delete
+
+    async def run():
         for coefficient in ["1.11x", "1.22x", "1.33x", "1.44x", "1.55x", "2.00x"]:
             await panel.on_round(coefficient)
         await asyncio.sleep(0)
         await panel.close()
 
     asyncio.run(run())
+
     assert [method for method, _ in calls] == [
-        "sendMessage", "editMessageText", "editMessageText", "scheduled_delete"
+        "sendMessage",
+        "editMessageReplyMarkup",
+        "editMessageReplyMarkup",
+        "scheduled_delete",
     ]
-    assert "6-м раунде: 2.00x" in calls[2][1]["text"]
+    assert calls[1][1]["message_id"] == 77
+    assert calls[1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "🔵5<2x"
+    assert calls[2][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "🟪5→2.00x"
+
+
+def test_streak_has_no_maximum_length():
+    calls = []
+
+    async def request(method, payload):
+        calls.append((method, payload))
+        if method == "sendMessage":
+            return {"ok": True, "result": {"message_id": 99}}
+        return {"ok": True, "result": True}
+
+    panel = app_main.TelegramStreakPanel(config(), request)
+
+    async def run():
+        for _ in range(21):
+            await panel.on_round("1.50x")
+
+    asyncio.run(run())
+
+    assert len(panel.values) == 21
+    assert calls[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "🔵21<2x"

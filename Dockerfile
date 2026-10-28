@@ -5,6 +5,6 @@ RUN pip install --no-cache-dir -r requirements.txt pytest \
     && playwright install --with-deps chromium
 COPY . .
 ENV PYTHONPATH=/app/src
-RUN python -m compileall -q main.py src \
-    && pytest -q tests/test_browser_runtime.py
+RUN python -m compileall -q main.py src luckyjet_password_gate.py \
+    && pytest -q
 CMD ["python", "main.py"]

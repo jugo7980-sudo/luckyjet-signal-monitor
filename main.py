@@ -5,7 +5,8 @@ import logging
 import os
 
 from luckyjet_signal.settings import Config
-from luckyjet_signal.monitor import run_monitor
+from luckyjet_signal import monitor
+from luckyjet_signal.ws_diagnostics import wrap_ws_handler
 
 
 async def health_server() -> None:
@@ -35,7 +36,14 @@ async def health_server() -> None:
 
 async def main_async() -> None:
     config = Config.from_env()
-    await asyncio.gather(health_server(), run_monitor(config))
+    monitor.handle_ws_frame = wrap_ws_handler(
+        monitor.handle_ws_frame,
+        max_samples=8,
+    )
+    await asyncio.gather(
+        health_server(),
+        monitor.run_monitor(config),
+    )
 
 
 def main() -> None:

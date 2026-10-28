@@ -18,6 +18,7 @@ _COEFFICIENT_PREFIX = "Последний коэффициент: "
 _PANEL_TITLE = "🎰 Lucky Jet — история"
 _HISTORY_LIMIT = 20
 _HISTORY_COLUMNS = 5
+_DEFAULT_HISTORY_MESSAGE_ID = 149
 
 
 def coefficient_from_message(message: str) -> str | None:
@@ -103,7 +104,10 @@ class TelegramHistoryPanel:
         self.limit = max(1, int(limit))
         self.columns = max(1, int(columns))
         if message_id is None:
-            raw_message_id = os.getenv("TELEGRAM_HISTORY_MESSAGE_ID", "").strip()
+            raw_message_id = os.getenv(
+                "TELEGRAM_HISTORY_MESSAGE_ID",
+                str(_DEFAULT_HISTORY_MESSAGE_ID),
+            ).strip()
             message_id = int(raw_message_id) if raw_message_id.isdigit() else None
         self.message_id = int(message_id) if message_id is not None else None
         self._request = request or self._telegram_request

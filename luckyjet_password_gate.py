@@ -15,6 +15,7 @@ class TelegramPasswordGate:
         self.request = request
         self.history_provider = history_provider
         self.notifications_disabled = set()
+        self.chats = {}
         self.password = os.getenv("TELEGRAM_ACCESS_PASSWORD", "122011")
         self.redis_url = os.getenv("REDIS_URL")
         self.redis = None
@@ -78,6 +79,8 @@ class TelegramPasswordGate:
         if user_id is None or chat_id is None:
             return
         value = (msg.get("text") or "").strip()
+        if await self.is_authorized(user_id):
+            self.chats[user_id] = chat_id
         if value.split("@", 1)[0].split(" ", 1)[0] == "/start":
             if await self.is_authorized(user_id):
                 answer = "Доступ уже открыт."
@@ -96,6 +99,7 @@ class TelegramPasswordGate:
             else:
                 self.authorized.add(user_id)
             self.pending.discard(user_id)
+            self.chats[user_id] = chat_id
             self.failures.pop(user_id, None)
             self.blocked_until.pop(user_id, None)
             answer = "✅ Пароль верный. Доступ открыт."
@@ -129,7 +133,12 @@ class TelegramPasswordGate:
         elif data == "menu_status":
             answer = "📡 Бот запущен. Статус источника данных проверяйте по обновлению истории."
         elif data == "menu_notifications":
-            answer = "🔔 Настройка персональных уведомлений появится после подключения рассылки в личные чаты."
+            if user_id in self.notifications_disabled:
+                self.notifications_disabled.remove(user_id)
+                answer = "🔔 Уведомления включены."
+            else:
+                self.notifications_disabled.add(user_id)
+                answer = "🔕 Уведомления выключены."
         elif data == "menu_settings":
             answer = "⚙️ Настройки: порог серии 4, автоудаление 30 секунд."
         else:

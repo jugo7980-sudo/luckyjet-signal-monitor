@@ -204,7 +204,9 @@ class TelegramPasswordGate:
 
     def user_delete_seconds(self, user_id):
         value = int(self.delete_seconds.get(int(user_id), 30))
-        return value if value in {0, 15, 30, 60} else 30
+        if value == 15:
+            return 10
+        return value if value in {0, 10, 30, 60} else 30
 
     def _navigation_rows(self):
         return [[
@@ -257,7 +259,7 @@ class TelegramPasswordGate:
             threshold_rows.append(row)
 
         delete_row = []
-        for value, label in ((15, "15с"), (30, "30с"), (60, "60с"), (0, "Без удаления")):
+        for value, label in ((10, "10с"), (30, "30с"), (60, "60с"), (0, "Без удаления")):
             prefix = "✓ " if value == delete else ""
             callback_value = "off" if value == 0 else str(value)
             delete_row.append({"text": f"{prefix}{label}", "callback_data": f"delete:{callback_value}"})
@@ -573,7 +575,7 @@ class TelegramPasswordGate:
         elif data.startswith("delete:"):
             raw = data.split(":", 1)[1]
             value = 0 if raw == "off" else self._to_int(raw)
-            if value not in {0, 15, 30, 60}:
+            if value not in {0, 10, 30, 60}:
                 return
             self.delete_seconds[user_id] = value
             await self._persist_user(user_id)

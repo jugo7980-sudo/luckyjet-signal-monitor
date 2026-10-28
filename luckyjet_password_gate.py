@@ -23,6 +23,7 @@ class TelegramPasswordGate:
         self.blocked = set()
         self.pending = set()
         self.chats = {}
+        self.history_messages = {}
         self.notifications_disabled = set()
         self.thresholds = {}
         self.delete_seconds = {}
@@ -59,6 +60,10 @@ class TelegramPasswordGate:
                 self.redis = None
         else:
             log.warning("REDIS_URL missing: private bot state is in-memory only")
+
+        for user_id in list(self.authorized):
+            if user_id in self.chats:
+                await self.ensure_private_history(user_id)
 
         try:
             while True:
@@ -104,6 +109,10 @@ class TelegramPasswordGate:
             int(k): int(v)
             for k, v in (await self.redis.hgetall("luckyjet:chats")).items()
         }
+        self.history_messages = {
+            int(k): int(v)
+            for k, v in (await self.redis.hgetall("luckyjet:history_messages")).items()
+        }
         self.thresholds = {
             int(k): int(v)
             for k, v in (await self.redis.hgetall("luckyjet:thresholds")).items()
@@ -134,6 +143,10 @@ class TelegramPasswordGate:
             pipe.hset("luckyjet:chats", uid, str(self.chats[user_id]))
         else:
             pipe.hdel("luckyjet:chats", uid)
+        if user_id in self.history_messages:
+            pipe.hset("luckyjet:history_messages", uid, str(self.history_messages[user_id]))
+        else:
+            pipe.hdel("luckyjet:history_messages", uid)
         pipe.hset("luckyjet:thresholds", uid, str(self.user_threshold(user_id)))
         pipe.hset("luckyjet:delete_seconds", uid, str(self.user_delete_seconds(user_id)))
         await pipe.execute()
@@ -236,6 +249,7 @@ class TelegramPasswordGate:
         if await self.is_authorized(user_id):
             self.chats[user_id] = chat_id
 
+        newly_authorized = False
         if command == "/start":
             if await self.is_authorized(user_id):
                 answer = "🎰 Lucky Jet Monitor\nДоступ открыт."
@@ -255,6 +269,7 @@ class TelegramPasswordGate:
             self.failures.pop(user_id, None)
             self.blocked_until.pop(user_id, None)
             await self._persist_user(user_id)
+            newly_authorized = True
             answer = "✅ Пароль верный. Доступ открыт."
         else:
             count = self.failures.get(user_id, 0) + 1
@@ -274,6 +289,9 @@ class TelegramPasswordGate:
                 )
             except (httpx.HTTPError, RuntimeError, KeyError, TypeError):
                 pass
+
+        if newly_authorized:
+            await self.ensure_private_history(user_id)
 
         payload = {"chat_id": chat_id, "text": answer}
         if await self.is_authorized(user_id):
@@ -300,8 +318,8 @@ class TelegramPasswordGate:
             answer = "🎰 Lucky Jet Monitor\nВыберите раздел."
             markup = self.menu(user_id)
         elif data == "menu_history":
-            values = list(self.history_provider() if self.history_provider else [])[:20]
-            answer = "📊 Последние 20 коэффициентов:\n" + ("  ".join(values) if values else "Пока нет данных")
+            await self.ensure_private_history(user_id)
+            answer = "📊 История обновлена."
             markup = self.menu(user_id)
         elif data == "menu_status":
             uptime = max(0, int(time.monotonic() - self.started_at))
@@ -392,19 +410,28 @@ class TelegramPasswordGate:
         await self.request("sendMessage", {"chat_id": chat_id, "text": answer, "reply_markup": markup})
 
     async def _revoke_user(self, user_id, *, block):
+        chat_id = self.chats.get(user_id)
+        history_message_id = self.history_messages.pop(user_id, None)
         self.authorized.discard(user_id)
         self.pending.discard(user_id)
         self.notifications_disabled.discard(user_id)
         self.thresholds.pop(user_id, None)
         self.delete_seconds.pop(user_id, None)
         self.chats.pop(user_id, None)
-        message_id = self.active_messages.pop(user_id, None)
+        self.active_messages.pop(user_id, None)
         if block:
             self.blocked.add(user_id)
         else:
             self.blocked.discard(user_id)
         await self._persist_user(user_id)
-        return message_id
+        if chat_id is not None and history_message_id is not None:
+            try:
+                await self.request(
+                    "deleteMessage",
+                    {"chat_id": chat_id, "message_id": history_message_id},
+                )
+            except (httpx.HTTPError, RuntimeError):
+                pass
 
     @staticmethod
     def _format_coefficient(value):
@@ -424,6 +451,57 @@ class TelegramPasswordGate:
         number = float(formatted[:-1])
         marker = "🟦" if number < 2 else "🟪" if number < 10 else "🟧"
         return f"{marker}{formatted}"
+
+    def _history_markup(self):
+        values = list(self.history_provider() if self.history_provider else [])[:20]
+        rows = []
+        for start in range(0, len(values), 5):
+            rows.append(
+                [
+                    {"text": self._colored_label(value), "callback_data": "noop"}
+                    for value in values[start : start + 5]
+                ]
+            )
+        return {"inline_keyboard": rows}
+
+    async def ensure_private_history(self, user_id):
+        user_id = int(user_id)
+        chat_id = self.chats.get(user_id)
+        if chat_id is None:
+            return False
+        markup = self._history_markup()
+        if not markup["inline_keyboard"]:
+            return True
+        message_id = self.history_messages.get(user_id)
+        if message_id is not None:
+            try:
+                await self.request(
+                    "editMessageReplyMarkup",
+                    {"chat_id": chat_id, "message_id": message_id, "reply_markup": markup},
+                )
+                return True
+            except (httpx.HTTPError, RuntimeError):
+                log.warning("Private history edit failed: user_id=%s", user_id)
+                return False
+        try:
+            result = await self.request(
+                "sendMessage",
+                {"chat_id": chat_id, "text": "🎰 Lucky Jet — история", "reply_markup": markup},
+            )
+            message_id = result.get("result", {}).get("message_id")
+            if message_id is None:
+                return False
+            self.history_messages[user_id] = int(message_id)
+            await self._persist_user(user_id)
+            return True
+        except (httpx.HTTPError, RuntimeError):
+            log.warning("Private history create failed: user_id=%s", user_id)
+            return False
+
+    async def update_private_histories(self):
+        for user_id in list(self.authorized):
+            if user_id in self.chats:
+                await self.ensure_private_history(user_id)
 
     def _streak_markup(self, ending=None):
         count = len(self.current_streak)
@@ -445,6 +523,7 @@ class TelegramPasswordGate:
             return
         self.last_round = value
         self.last_round_at = time.time()
+        await self.update_private_histories()
         number = float(value[:-1])
 
         if number < 2:

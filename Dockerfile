@@ -4,7 +4,7 @@ ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt pytest \
+RUN pip install --no-cache-dir -r requirements.txt pytest==9.2.0 \
     && playwright install --with-deps chromium
 COPY . .
 RUN python -m compileall -q \

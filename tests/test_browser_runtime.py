@@ -86,11 +86,12 @@ def test_live_history_panel_creates_once_then_edits_same_message():
             return {"ok": True, "result": {"message_id": 777}}
         return {"ok": True, "result": True}
 
+    config = SimpleNamespace(
+        telegram_bot_token="token",
+        telegram_chat_id="chat",
+    )
     panel = app_main.TelegramHistoryPanel(
-        SimpleNamespace(
-            telegram_bot_token="token",
-            telegram_chat_id="chat",
-        ),
+        config,
         request=fake_request,
         initial_history=["2.28x", "1.52x"],
     )
@@ -98,7 +99,8 @@ def test_live_history_panel_creates_once_then_edits_same_message():
     async def run():
         assert await panel.ensure_panel() is True
         assert await panel.handle_monitor_message(
-            "Последний коэффициент: 4.45x"
+            config,
+            "Последний коэффициент: 4.45x",
         ) is True
 
     asyncio.run(run())

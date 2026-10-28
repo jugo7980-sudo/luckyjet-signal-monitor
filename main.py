@@ -55,13 +55,13 @@ def prepend_history(
 
 
 def colored_coefficient_label(value: str) -> str:
-    """Use screenshot's coefficient tiers in Telegram's unstyled buttons."""
+    """Use screenshot coefficient tiers with compact Telegram labels."""
     formatted = format_history_coefficient(value)
     if formatted is None:
         return str(value)
     coefficient = float(formatted[:-1])
     marker = "🟦" if coefficient < 2 else "🟪" if coefficient < 10 else "🟧"
-    return f"{marker} {formatted}"
+    return f"{marker}{formatted}"
 
 
 def build_history_keyboard(
@@ -97,11 +97,15 @@ class TelegramHistoryPanel:
         initial_history=None,
         limit: int = _HISTORY_LIMIT,
         columns: int = _HISTORY_COLUMNS,
+        message_id=None,
     ):
         self.config = config
         self.limit = max(1, int(limit))
         self.columns = max(1, int(columns))
-        self.message_id = None
+        if message_id is None:
+            raw_message_id = os.getenv("TELEGRAM_HISTORY_MESSAGE_ID", "").strip()
+            message_id = int(raw_message_id) if raw_message_id.isdigit() else None
+        self.message_id = int(message_id) if message_id is not None else None
         self._request = request or self._telegram_request
         self._lock = asyncio.Lock()
         self._http_client = None
@@ -176,13 +180,16 @@ class TelegramHistoryPanel:
 
         self.message_id = int(message_id)
         log.info(
-            "Telegram history panel created: message_id=%s items=%s",
+            "Telegram history panel created: message_id=%s items=%s; pin this id in TELEGRAM_HISTORY_MESSAGE_ID",
             self.message_id,
             len(self.history),
         )
         return True
 
     async def _edit_locked(self) -> bool:
+        if not self.history:
+            return True
+
         if self.message_id is None:
             return await self._create_locked()
 
@@ -209,12 +216,12 @@ class TelegramHistoryPanel:
             ):
                 return True
 
-            log.warning(
-                "Telegram history panel edit rejected: HTTP %s; recreating",
+            log.error(
+                "Permanent Telegram history edit rejected: HTTP %s message_id=%s; duplicate creation blocked",
                 exc.response.status_code,
+                self.message_id,
             )
-            self.message_id = None
-            return await self._create_locked()
+            return False
         except httpx.RequestError as exc:
             log.error(
                 "Telegram history panel connection failed: %s",
@@ -222,12 +229,12 @@ class TelegramHistoryPanel:
             )
             return False
         except RuntimeError as exc:
-            log.warning(
-                "Telegram history panel edit failed: %s; recreating",
+            log.error(
+                "Permanent Telegram history edit failed: %s message_id=%s; duplicate creation blocked",
                 type(exc).__name__,
+                self.message_id,
             )
-            self.message_id = None
-            return await self._create_locked()
+            return False
 
         log.info(
             "Telegram history panel updated: message_id=%s latest=%s items=%s telegram_request_ms=%.1f",
@@ -270,9 +277,8 @@ class TelegramHistoryPanel:
             return await self._edit_locked()
 
 
-
 class TelegramStreakPanel:
-    """One temporary message per consecutive sub-2x run."""
+    """One temporary full-width button per consecutive sub-2x run."""
 
     def __init__(self, config, request, initial_history=None):
         self.config = config
@@ -294,32 +300,41 @@ class TelegramStreakPanel:
         )
         self._startup_pending = True
 
-    def _text(self, ending=None):
+    def _reply_markup(self, ending=None):
         count = len(self.values)
         if ending is None:
-            return (
-                "🎰 Lucky Jet | Серия активна\\n\\n"
-                f"🔵 {count} раундов подряд ниже 2.00x\\n"
-                f"Коэффициенты: {', '.join(self.values)}\\n\\n"
-                f"⏳ Ожидание {count + 1}-го раунда"
-            )
-        return (
-            "🎰 Lucky Jet | Серия завершена\\n\\n"
-            f"🔵 {count} раундов подряд ниже 2.00x\\n"
-            f"Коэффициенты: {', '.join(self.values)}\\n\\n"
-            f"Прервалась на {count + 1}-м раунде: {ending}\\n"
-            "🕒 Сообщение удалится через 60 секунд"
-        )
-
-    async def _send_or_edit(self, text):
-        payload = {"chat_id": self.config.telegram_chat_id, "text": text}
-        if self.message_id is None:
-            result = await self._request("sendMessage", payload)
-            self.message_id = int(result["result"]["message_id"])
+            label = f"🔵{count}<2x"
         else:
-            await self._request("editMessageText", {
-                **payload, "message_id": self.message_id
-            })
+            label = f"🟪{count}→{ending}"
+        return {
+            "inline_keyboard": [[{
+                "text": label,
+                "callback_data": "noop",
+            }]]
+        }
+
+    async def _send_or_edit(self, ending=None):
+        reply_markup = self._reply_markup(ending=ending)
+        if self.message_id is None:
+            result = await self._request(
+                "sendMessage",
+                {
+                    "chat_id": self.config.telegram_chat_id,
+                    "text": "Серия",
+                    "reply_markup": reply_markup,
+                },
+            )
+            self.message_id = int(result["result"]["message_id"])
+            return
+
+        await self._request(
+            "editMessageReplyMarkup",
+            {
+                "chat_id": self.config.telegram_chat_id,
+                "message_id": self.message_id,
+                "reply_markup": reply_markup,
+            },
+        )
 
     async def _delete_later(self, message_id):
         try:
@@ -337,7 +352,7 @@ class TelegramStreakPanel:
         async with self._lock:
             if len(self.values) >= 4:
                 try:
-                    await self._send_or_edit(self._text())
+                    await self._send_or_edit()
                 except (httpx.HTTPError, RuntimeError) as exc:
                     log.warning("Streak startup notification failed: %s", type(exc).__name__)
 
@@ -354,13 +369,13 @@ class TelegramStreakPanel:
                 self.values.append(value)
                 if len(self.values) >= 4:
                     try:
-                        await self._send_or_edit(self._text())
+                        await self._send_or_edit()
                     except (httpx.HTTPError, RuntimeError) as exc:
                         log.warning("Streak update failed: %s", type(exc).__name__)
             else:
                 if len(self.values) >= 4:
                     try:
-                        await self._send_or_edit(self._text(ending=value))
+                        await self._send_or_edit(ending=value)
                         old_message = self.message_id
                         task = asyncio.create_task(self._delete_later(old_message))
                         self._deletion_tasks.add(task)

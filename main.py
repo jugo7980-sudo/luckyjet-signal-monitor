@@ -6,6 +6,7 @@ import os
 
 from luckyjet_signal.settings import Config
 from luckyjet_signal import monitor
+from luckyjet_signal.browser_diagnostics import wrap_diagnose_page
 from luckyjet_signal.ws_diagnostics import wrap_ws_handler
 
 
@@ -39,6 +40,9 @@ async def main_async() -> None:
     monitor.handle_ws_frame = wrap_ws_handler(
         monitor.handle_ws_frame,
         max_samples=8,
+    )
+    monitor.diagnose_page = wrap_diagnose_page(
+        monitor.diagnose_page,
     )
     await asyncio.gather(
         health_server(),

@@ -463,7 +463,7 @@ async def main_async() -> None:
         initial_history=state.previous,
     )
     streak = TelegramStreakPanel(config, panel._request, initial_history=state.previous)
-    password_gate = TelegramPasswordGate(panel._request)
+    password_gate = TelegramPasswordGate(panel._request, history_provider=lambda: panel.history)
 
     async def handle_round(config_or_message, message=None):
         actual = str(config_or_message) if message is None else message

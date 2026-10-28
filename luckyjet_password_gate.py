@@ -3,6 +3,7 @@ import asyncio
 import hmac
 import logging
 import os
+import time
 
 import httpx
 
@@ -18,6 +19,8 @@ class TelegramPasswordGate:
         self.authorized = set()
         self.pending = set()
         self.offset = None
+        self.failures = {}
+        self.blocked_until = {}
 
     async def start(self):
         if self.redis_url:
@@ -71,13 +74,24 @@ class TelegramPasswordGate:
             return
         elif user_id not in self.pending:
             answer = "Для начала нажмите /start."
+        elif self.blocked_until.get(user_id, 0) > time.monotonic():
+            answer = "Повторите попытку через 5 минут."
         elif hmac.compare_digest(value, self.password):
             if self.redis:
                 await self.redis.sadd("luckyjet:authorized_users", str(user_id))
             else:
                 self.authorized.add(user_id)
             self.pending.discard(user_id)
+            self.failures.pop(user_id, None)
+            self.blocked_until.pop(user_id, None)
             answer = "✅ Пароль верный. Доступ открыт."
         else:
-            answer = "❌ Неверный пароль. Попробуйте ещё раз."
+            count = self.failures.get(user_id, 0) + 1
+            self.failures[user_id] = count
+            if count >= 5:
+                self.blocked_until[user_id] = time.monotonic() + 300
+                self.failures[user_id] = 0
+                answer = "Слишком много ошибок. Повторите через 5 минут."
+            else:
+                answer = "❌ Неверный пароль. Попробуйте ещё раз."
         await self.request("sendMessage", {"chat_id": chat_id, "text": answer})

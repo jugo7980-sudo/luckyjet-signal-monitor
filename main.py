@@ -8,6 +8,7 @@ from luckyjet_signal.settings import Config
 from luckyjet_signal import monitor
 from luckyjet_signal.browser_diagnostics import wrap_diagnose_page
 from luckyjet_signal.browser_runtime import low_memory_async_playwright
+from luckyjet_signal.demo_mode import wrap_click_demo_mode
 from luckyjet_signal.ws_diagnostics import wrap_ws_handler
 
 
@@ -45,6 +46,9 @@ async def main_async() -> None:
     )
     monitor.diagnose_page = wrap_diagnose_page(
         monitor.diagnose_page,
+    )
+    monitor.click_demo_mode = wrap_click_demo_mode(
+        monitor.click_demo_mode,
     )
     await asyncio.gather(
         health_server(),

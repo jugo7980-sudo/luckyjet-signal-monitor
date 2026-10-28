@@ -27,6 +27,7 @@ class TelegramPasswordGate:
         self.prompt_messages = {}
         self.menu_messages = {}
         self.notifications_disabled = set()
+        self.silent_users = set()
         self.thresholds = {}
         self.delete_seconds = {}
         self.failures = {}
@@ -65,6 +66,22 @@ class TelegramPasswordGate:
                 self.redis = None
         else:
             log.warning("REDIS_URL missing: private bot state is in-memory only")
+
+        try:
+            await self.request(
+                "setMyCommands",
+                {
+                    "commands": [
+                        {"command": "start", "description": "Открыть бота"},
+                        {"command": "menu", "description": "Открыть меню"},
+                        {"command": "status", "description": "Статус мониторинга"},
+                        {"command": "settings", "description": "Настройки"},
+                        {"command": "help", "description": "Справка"},
+                    ]
+                },
+            )
+        except (httpx.HTTPError, RuntimeError):
+            log.warning("Telegram command registration failed")
 
         for user_id in list(self.authorized):
             if user_id in self.chats:
@@ -110,6 +127,7 @@ class TelegramPasswordGate:
         self.notifications_disabled = {
             int(x) for x in await self.redis.smembers("luckyjet:notifications_disabled")
         }
+        self.silent_users = {int(x) for x in await self.redis.smembers("luckyjet:silent_users")}
         self.chats = {
             int(k): int(v)
             for k, v in (await self.redis.hgetall("luckyjet:chats")).items()
@@ -144,6 +162,10 @@ class TelegramPasswordGate:
             pipe.sadd("luckyjet:notifications_disabled", uid)
         else:
             pipe.srem("luckyjet:notifications_disabled", uid)
+        if user_id in self.silent_users:
+            pipe.sadd("luckyjet:silent_users", uid)
+        else:
+            pipe.srem("luckyjet:silent_users", uid)
         if user_id in self.chats:
             pipe.hset("luckyjet:chats", uid, str(self.chats[user_id]))
         else:
@@ -179,19 +201,38 @@ class TelegramPasswordGate:
     def menu(self, user_id=None):
         rows = [
             [
+                {"text": "📊 История", "callback_data": "menu_history"},
                 {"text": "📡 Статус", "callback_data": "menu_status"},
-                {"text": "🔔 Уведомления", "callback_data": "menu_notifications"},
             ],
-            [{"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
+            [
+                {"text": "🔔 Уведомления", "callback_data": "menu_notifications"},
+                {"text": "⚙️ Настройки", "callback_data": "menu_settings"},
+            ],
         ]
         if user_id is not None and self.is_admin(user_id):
             rows.append([{"text": "🛡 Админ", "callback_data": "admin_users"}])
         rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
 
+    def _settings_text(self, user_id):
+        notifications = "включены" if user_id not in self.notifications_disabled else "выключены"
+        sound = "без звука" if user_id in self.silent_users else "со звуком"
+        delete = self.user_delete_seconds(user_id)
+        delete_label = "не удалять" if delete == 0 else f"{delete} сек."
+        return (
+            "⚙️ Настройки\n"
+            f"🔔 Уведомления: {notifications}\n"
+            f"🎯 Серия: {self.user_threshold(user_id)} подряд ниже 2x\n"
+            f"⏱ Автоудаление: {delete_label}\n"
+            f"🔊 Звук: {sound}"
+        )
+
     def settings_menu(self, user_id):
         threshold = self.user_threshold(user_id)
         delete = self.user_delete_seconds(user_id)
+        notifications_enabled = user_id not in self.notifications_disabled
+        sound_enabled = user_id not in self.silent_users
+
         threshold_rows = []
         for start in (3, 7):
             row = []
@@ -200,12 +241,30 @@ class TelegramPasswordGate:
                 prefix = "✓ " if value == threshold else ""
                 row.append({"text": f"{prefix}{value}", "callback_data": f"threshold:{value}"})
             threshold_rows.append(row)
+
         delete_row = []
         for value, label in ((15, "15с"), (30, "30с"), (60, "60с"), (0, "Без удаления")):
             prefix = "✓ " if value == delete else ""
             callback_value = "off" if value == 0 else str(value)
             delete_row.append({"text": f"{prefix}{label}", "callback_data": f"delete:{callback_value}"})
-        return {"inline_keyboard": [*threshold_rows, delete_row, *self._navigation_rows()]}
+
+        return {
+            "inline_keyboard": [
+                [{
+                    "text": f"🔔 Уведомления: {'ВКЛ' if notifications_enabled else 'ВЫКЛ'}",
+                    "callback_data": "settings_notifications",
+                }],
+                *threshold_rows,
+                delete_row,
+                [{
+                    "text": f"🔊 Звук: {'ВКЛ' if sound_enabled else 'ВЫКЛ'}",
+                    "callback_data": "settings_sound",
+                }],
+                [{"text": "🧪 Тест уведомления", "callback_data": "settings_test"}],
+                [{"text": "♻️ Сбросить настройки", "callback_data": "settings_reset"}],
+                *self._navigation_rows(),
+            ]
+        }
 
     def _admin_menu(self):
         rows = []
@@ -276,6 +335,24 @@ class TelegramPasswordGate:
         if message_id is not None:
             self.menu_messages[user_id] = int(message_id)
 
+    async def _show_status(self, user_id, chat_id):
+        uptime = max(0, int(time.monotonic() - self.started_at))
+        hours, rem = divmod(uptime, 3600)
+        minutes, seconds = divmod(rem, 60)
+        latest = self.last_round or "нет данных"
+        answer = (
+            "📡 Статус: работает\n"
+            f"Последний коэффициент: {latest}\n"
+            f"Текущая серия <2x: {len(self.current_streak)}\n"
+            f"Аптайм: {hours:02d}:{minutes:02d}:{seconds:02d}"
+        )
+        await self._send_transient(
+            user_id,
+            chat_id,
+            answer,
+            {"inline_keyboard": self._navigation_rows()},
+        )
+
     async def handle_update(self, update):
         callback = update.get("callback_query")
         if callback:
@@ -295,7 +372,7 @@ class TelegramPasswordGate:
             return
 
         value = (msg.get("text") or "").strip()
-        command = value.split("@", 1)[0].split(" ", 1)[0]
+        command = value.split("@", 1)[0].split(" ", 1)[0].lower()
 
         if user_id in self.blocked and not self.is_admin(user_id):
             await self._safe_delete(chat_id, message_id)
@@ -307,6 +384,31 @@ class TelegramPasswordGate:
             await self._safe_delete(chat_id, message_id)
             if command == "/start":
                 await self.ensure_private_history(user_id)
+            elif command == "/menu":
+                await self._send_transient(
+                    user_id,
+                    chat_id,
+                    "🎰 Lucky Jet Monitor\nВыберите раздел.",
+                    self.menu(user_id),
+                )
+            elif command == "/status":
+                await self._show_status(user_id, chat_id)
+            elif command == "/settings":
+                await self._send_transient(
+                    user_id,
+                    chat_id,
+                    self._settings_text(user_id),
+                    self.settings_menu(user_id),
+                )
+            elif command == "/help":
+                await self._send_transient(
+                    user_id,
+                    chat_id,
+                    "ℹ️ Lucky Jet Monitor\n"
+                    "История обновляется автоматически. Меню открывается кнопкой под историей. "
+                    "Сообщение серии появляется при достижении выбранного порога и обновляется до завершения серии.",
+                    {"inline_keyboard": self._navigation_rows()},
+                )
             return
 
         if command == "/start":
@@ -377,6 +479,9 @@ class TelegramPasswordGate:
 
         if data == "menu_close":
             return
+        if data == "menu_history":
+            await self.ensure_private_history(user_id)
+            return
         if data == "menu_main":
             answer = "🎰 Lucky Jet Monitor\nВыберите раздел."
             markup = self.menu(user_id)
@@ -400,15 +505,17 @@ class TelegramPasswordGate:
                 self.notifications_disabled.add(user_id)
                 answer = "🔕 Уведомления выключены."
             await self._persist_user(user_id)
-            markup = {"inline_keyboard": self._navigation_rows()}
+            markup = self.menu(user_id)
         elif data == "menu_settings":
-            delete = self.user_delete_seconds(user_id)
-            delete_label = "выкл." if delete == 0 else f"{delete} сек."
-            answer = (
-                "⚙️ Настройки\n"
-                f"Порог серии: {self.user_threshold(user_id)} подряд ниже 2x\n"
-                f"Автоудаление: {delete_label}"
-            )
+            answer = self._settings_text(user_id)
+            markup = self.settings_menu(user_id)
+        elif data == "settings_notifications":
+            if user_id in self.notifications_disabled:
+                self.notifications_disabled.remove(user_id)
+            else:
+                self.notifications_disabled.add(user_id)
+            await self._persist_user(user_id)
+            answer = self._settings_text(user_id)
             markup = self.settings_menu(user_id)
         elif data.startswith("threshold:"):
             try:
@@ -419,7 +526,7 @@ class TelegramPasswordGate:
                 return
             self.thresholds[user_id] = value
             await self._persist_user(user_id)
-            answer = f"✅ Порог серии: {value}."
+            answer = self._settings_text(user_id)
             markup = self.settings_menu(user_id)
         elif data.startswith("delete:"):
             raw = data.split(":", 1)[1]
@@ -428,7 +535,39 @@ class TelegramPasswordGate:
                 return
             self.delete_seconds[user_id] = value
             await self._persist_user(user_id)
-            answer = "✅ Автоудаление выключено." if value == 0 else f"✅ Автоудаление: {value} сек."
+            answer = self._settings_text(user_id)
+            markup = self.settings_menu(user_id)
+        elif data == "settings_sound":
+            if user_id in self.silent_users:
+                self.silent_users.remove(user_id)
+            else:
+                self.silent_users.add(user_id)
+            await self._persist_user(user_id)
+            answer = self._settings_text(user_id)
+            markup = self.settings_menu(user_id)
+        elif data == "settings_test":
+            result = await self.request(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": "🧪 Тест уведомления Lucky Jet",
+                    "disable_notification": user_id in self.silent_users,
+                },
+            )
+            test_message_id = result.get("result", {}).get("message_id")
+            if test_message_id is not None:
+                task = asyncio.create_task(self._schedule_delete(chat_id, int(test_message_id), 5))
+                self._deletion_tasks.add(task)
+                task.add_done_callback(self._deletion_tasks.discard)
+            answer = self._settings_text(user_id)
+            markup = self.settings_menu(user_id)
+        elif data == "settings_reset":
+            self.thresholds.pop(user_id, None)
+            self.delete_seconds.pop(user_id, None)
+            self.notifications_disabled.discard(user_id)
+            self.silent_users.discard(user_id)
+            await self._persist_user(user_id)
+            answer = self._settings_text(user_id)
             markup = self.settings_menu(user_id)
         elif data == "admin_users" and self.is_admin(user_id):
             users = ", ".join(str(x) for x in sorted(self.authorized)) or "нет"
@@ -466,13 +605,15 @@ class TelegramPasswordGate:
         chat_id = self.chats.get(user_id)
         history_message_id = self.history_messages.pop(user_id, None)
         menu_message_id = self.menu_messages.pop(user_id, None)
+        streak_message_id = self.active_messages.pop(user_id, None)
+        prompt_message_id = self.prompt_messages.pop(user_id, None)
         self.authorized.discard(user_id)
         self.pending.discard(user_id)
         self.notifications_disabled.discard(user_id)
+        self.silent_users.discard(user_id)
         self.thresholds.pop(user_id, None)
         self.delete_seconds.pop(user_id, None)
         self.chats.pop(user_id, None)
-        self.active_messages.pop(user_id, None)
         if block:
             self.blocked.add(user_id)
         else:
@@ -480,6 +621,8 @@ class TelegramPasswordGate:
         await self._persist_user(user_id)
         if chat_id is not None:
             await self._safe_delete(chat_id, menu_message_id)
+            await self._safe_delete(chat_id, prompt_message_id)
+            await self._safe_delete(chat_id, streak_message_id)
             await self._safe_delete(chat_id, history_message_id)
 
     @staticmethod
@@ -529,8 +672,9 @@ class TelegramPasswordGate:
                 )
                 return True
             except (httpx.HTTPError, RuntimeError):
-                log.warning("Private history edit failed: user_id=%s", user_id)
-                return False
+                log.warning("Private history edit failed; recreating: user_id=%s", user_id)
+                self.history_messages.pop(user_id, None)
+                await self._persist_user(user_id)
         try:
             result = await self.request(
                 "sendMessage",
@@ -577,25 +721,10 @@ class TelegramPasswordGate:
         if number < 2:
             self.current_streak.append(value)
             for user_id, chat_id in list(self.chats.items()):
-                if user_id not in self.authorized or user_id in self.notifications_disabled:
+                if user_id not in self.authorized:
                     continue
-                threshold = self.user_threshold(user_id)
-                if len(self.current_streak) == threshold:
-                    try:
-                        result = await self.request(
-                            "sendMessage",
-                            {
-                                "chat_id": chat_id,
-                                "text": "🎰 Lucky Jet | Серия <2x",
-                                "reply_markup": self._streak_markup(),
-                            },
-                        )
-                        message_id = result.get("result", {}).get("message_id")
-                        if message_id is not None:
-                            self.active_messages[user_id] = int(message_id)
-                    except (httpx.HTTPError, RuntimeError):
-                        log.warning("Private streak create failed: user_id=%s", user_id)
-                elif len(self.current_streak) > threshold and user_id in self.active_messages:
+
+                if user_id in self.active_messages:
                     try:
                         await self.request(
                             "editMessageReplyMarkup",
@@ -607,6 +736,29 @@ class TelegramPasswordGate:
                         )
                     except (httpx.HTTPError, RuntimeError):
                         log.warning("Private streak update failed: user_id=%s", user_id)
+                        self.active_messages.pop(user_id, None)
+                    continue
+
+                if user_id in self.notifications_disabled:
+                    continue
+
+                threshold = self.user_threshold(user_id)
+                if len(self.current_streak) >= threshold:
+                    try:
+                        result = await self.request(
+                            "sendMessage",
+                            {
+                                "chat_id": chat_id,
+                                "text": "🎰 Lucky Jet | Серия <2x",
+                                "reply_markup": self._streak_markup(),
+                                "disable_notification": user_id in self.silent_users,
+                            },
+                        )
+                        message_id = result.get("result", {}).get("message_id")
+                        if message_id is not None:
+                            self.active_messages[user_id] = int(message_id)
+                    except (httpx.HTTPError, RuntimeError):
+                        log.warning("Private streak create failed: user_id=%s", user_id)
             return
 
         for user_id, message_id in list(self.active_messages.items()):

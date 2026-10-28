@@ -39,11 +39,15 @@ def callback(user_id, data):
 
 def test_password_unlocks_private_menu():
     request = FakeRequest()
-    gate = TelegramPasswordGate(request, history_provider=lambda: ["1.20x", "3.40x"])
+    gate = TelegramPasswordGate(
+        request,
+        history_provider=lambda: ["1.20x", "3.40x"],
+        password="test-secret",
+    )
 
     async def run():
         await gate.handle_update(private_message(42, "/start"))
-        await gate.handle_update(private_message(42, "122011", 2))
+        await gate.handle_update(private_message(42, "test-secret", 2))
 
     asyncio.run(run())
 

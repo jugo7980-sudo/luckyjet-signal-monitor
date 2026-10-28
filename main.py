@@ -53,6 +53,16 @@ def prepend_history(
     return [coefficient, *list(history)][:size]
 
 
+def colored_coefficient_label(value: str) -> str:
+    """Use screenshot's coefficient tiers in Telegram's unstyled buttons."""
+    formatted = format_history_coefficient(value)
+    if formatted is None:
+        return str(value)
+    coefficient = float(formatted[:-1])
+    marker = "🟦" if coefficient < 2 else "🟪" if coefficient < 10 else "🟧"
+    return f"{marker} {formatted}"
+
+
 def build_history_keyboard(
     history: list[str],
     *,
@@ -67,7 +77,7 @@ def build_history_keyboard(
         for value in history[start:start + width]:
             row.append(
                 {
-                    "text": value,
+                    "text": colored_coefficient_label(value),
                     "callback_data": "noop",
                 }
             )

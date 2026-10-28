@@ -475,12 +475,22 @@ class TelegramPasswordGate:
             )
             return
 
+        if data == "menu_history":
+            # Never remove the navigation message before history is confirmed visible.
+            # Telegram may return "message is not modified" for an unchanged panel.
+            if await self.ensure_private_history(user_id):
+                await self._delete_transient_source(user_id, chat_id, callback)
+            else:
+                await self._send_transient(
+                    user_id, chat_id,
+                    "⚠️ Историю пока не удалось открыть. Повторите попытку.",
+                    self.menu(user_id),
+                )
+            return
+
         await self._delete_transient_source(user_id, chat_id, callback)
 
         if data == "menu_close":
-            return
-        if data == "menu_history":
-            await self.ensure_private_history(user_id)
             return
         if data == "menu_main":
             answer = "🎰 Lucky Jet Monitor\nВыберите раздел."
@@ -671,10 +681,20 @@ class TelegramPasswordGate:
                     {"chat_id": chat_id, "message_id": message_id, "reply_markup": markup},
                 )
                 return True
-            except (httpx.HTTPError, RuntimeError):
-                log.warning("Private history edit failed; recreating: user_id=%s", user_id)
-                self.history_messages.pop(user_id, None)
-                await self._persist_user(user_id)
+            except httpx.HTTPStatusError as exc:
+                description = ""
+                try:
+                    description = str(exc.response.json().get("description", "")).lower()
+                except (ValueError, AttributeError):
+                    pass
+                if exc.response.status_code == 400 and "message is not modified" in description:
+                    return True
+                log.warning("Private history edit rejected: user_id=%s status=%s", user_id, exc.response.status_code)
+                # Keep the existing panel ID on transient failures; do not flood the chat.
+                return False
+            except (httpx.RequestError, RuntimeError):
+                log.warning("Private history edit failed: user_id=%s", user_id)
+                return False
         try:
             result = await self.request(
                 "sendMessage",

@@ -151,7 +151,7 @@ def test_streak_is_silent_before_four_and_uses_one_full_width_button():
     assert [method for method, _ in calls] == ["sendMessage"]
     assert calls[0][1]["text"] == "Серия"
     rows = calls[0][1]["reply_markup"]["inline_keyboard"]
-    assert rows == [[{"text": "🔵4<2x", "callback_data": "noop"}]]
+    assert rows == [[{"text": "Серия 4 · 🟦1.44x", "callback_data": "noop"}], [{"text": "🟦1.11x", "callback_data": "noop"}, {"text": "🟦1.22x", "callback_data": "noop"}, {"text": "🟦1.33x", "callback_data": "noop"}, {"text": "🟦1.44x", "callback_data": "noop"}]]
 
 
 def test_streak_edits_same_button_until_break_then_schedules_delete():
@@ -185,8 +185,8 @@ def test_streak_edits_same_button_until_break_then_schedules_delete():
         "scheduled_delete",
     ]
     assert calls[1][1]["message_id"] == 77
-    assert calls[1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "🔵5<2x"
-    assert calls[2][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "🟪5→2.00x"
+    assert calls[1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Серия 5 · 🟦1.55x"
+    assert calls[2][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Серия 5 · 🟪2.00x"
 
 
 def test_streak_has_no_maximum_length():
@@ -207,7 +207,7 @@ def test_streak_has_no_maximum_length():
     asyncio.run(run())
 
     assert len(panel.values) == 21
-    assert calls[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "🔵21<2x"
+    assert calls[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Серия 21 · 🟦1.50x"
 
 
 def test_run_monitor_reuses_supplied_state_without_reloading(monkeypatch):
@@ -227,3 +227,18 @@ def test_run_monitor_reuses_supplied_state_without_reloading(monkeypatch):
 
     with pytest.raises(StopHere):
         asyncio.run(app_main.monitor.run_monitor(config(), state=supplied_state))
+
+
+def test_streak_shows_only_last_five_coefficients_in_chronological_order():
+    panel = app_main.TelegramStreakPanel(config(), lambda *args: None)
+    panel.values = ["1.01x", "1.02x", "1.03x", "1.04x", "1.05x", "1.06x", "1.07x"]
+    rows = panel._reply_markup()["inline_keyboard"]
+    assert len(rows) == 2
+    assert rows[0][0]["text"] == "Серия 7 · 🟦1.07x"
+    assert [button["text"] for button in rows[1]] == [
+        "🟦1.03x", "🟦1.04x", "🟦1.05x", "🟦1.06x", "🟦1.07x"
+    ]
+    ending = panel._reply_markup(ending="14.19x")["inline_keyboard"]
+    assert ending[0][0]["text"] == "Серия 7 · 🟧14.19x"
+    assert ending[1][-1]["text"] == "🟧14.19x"
+    assert ending[1][0]["text"] == "🟦1.04x"

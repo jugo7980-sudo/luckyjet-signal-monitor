@@ -37,10 +37,11 @@ def test_refresh_without_browser_requires_fresh_direct_response(monkeypatch):
     monkeypatch.setattr(monitor, "poll_direct_gateways", no_fresh_response)
     monkeypatch.setattr(monitor, "process_network_history", stale_history_would_look_working)
 
+    state = SimpleNamespace(last_round_id=None, previous=[])
     outcome = asyncio.run(
         monitor.refresh_live_history(
             SimpleNamespace(),
-            object(),
+            state,
             StaleCapture(),
             None,
         )

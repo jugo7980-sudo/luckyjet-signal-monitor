@@ -1,5 +1,4 @@
 import asyncio
-from types import SimpleNamespace
 
 from luckyjet_password_gate import TelegramPasswordGate
 
@@ -28,16 +27,19 @@ def private_message(user_id, text, message_id=1):
     }
 
 
-def callback(user_id, data):
+def callback(user_id, data, message_id=50):
     return {
         "id": f"cb-{user_id}-{data}",
         "data": data,
         "from": {"id": user_id},
-        "message": {"chat": {"id": user_id, "type": "private"}},
+        "message": {
+            "message_id": message_id,
+            "chat": {"id": user_id, "type": "private"},
+        },
     }
 
 
-def test_password_unlocks_private_menu():
+def test_password_unlocks_into_clean_history_panel():
     request = FakeRequest()
     gate = TelegramPasswordGate(
         request,
@@ -46,34 +48,69 @@ def test_password_unlocks_private_menu():
     )
 
     async def run():
-        await gate.handle_update(private_message(42, "/start"))
+        await gate.handle_update(private_message(42, "/start", 1))
         await gate.handle_update(private_message(42, "test-secret", 2))
 
     asyncio.run(run())
 
     assert 42 in gate.authorized
     assert gate.chats[42] == 42
-    last = [payload for method, payload in request.calls if method == "sendMessage"][-1]
-    assert last["text"] == "✅ Пароль верный. Доступ открыт."
-    buttons = last["reply_markup"]["inline_keyboard"]
-    assert any(button["callback_data"] == "menu_settings" for row in buttons for button in row)
+    assert gate.history_messages[42] == 102
+    sent = [payload for method, payload in request.calls if method == "sendMessage"]
+    assert sent[-1]["text"] == "🎰 Lucky Jet — история"
+    buttons = sent[-1]["reply_markup"]["inline_keyboard"]
+    assert buttons[-1][0]["callback_data"] == "menu_open"
+    deleted = [payload["message_id"] for method, payload in request.calls if method == "deleteMessage"]
+    assert 1 in deleted
+    assert 2 in deleted
+    assert 101 in deleted
 
 
-def test_user_can_set_threshold_and_delete_timer():
+def test_menu_is_transient_and_close_removes_it_without_touching_history():
+    request = FakeRequest()
+    gate = TelegramPasswordGate(request, history_provider=lambda: ["1.10x", "2.20x"])
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+
+    async def run():
+        await gate.ensure_private_history(42)
+        await gate.handle_callback(callback(42, "menu_open", 101))
+        await gate.handle_callback(callback(42, "menu_status", 102))
+        await gate.handle_callback(callback(42, "menu_close", 103))
+
+    asyncio.run(run())
+
+    deleted = [payload["message_id"] for method, payload in request.calls if method == "deleteMessage"]
+    assert 101 not in deleted
+    assert 102 in deleted
+    assert 103 in deleted
+    sent = [payload for method, payload in request.calls if method == "sendMessage"]
+    assert sent[1]["text"].startswith("🎰 Lucky Jet Monitor")
+    assert "📡 Статус" in sent[2]["text"]
+    assert any(
+        button["callback_data"] == "menu_close"
+        for row in sent[2]["reply_markup"]["inline_keyboard"]
+        for button in row
+    )
+
+
+def test_user_can_set_threshold_and_delete_timer_with_replaced_menu_messages():
     request = FakeRequest()
     gate = TelegramPasswordGate(request)
     gate.authorized.add(42)
     gate.chats[42] = 42
 
     async def run():
-        await gate.handle_callback(callback(42, "threshold:6"))
-        await gate.handle_callback(callback(42, "delete:60"))
-        await gate.handle_callback(callback(42, "delete:off"))
+        await gate.handle_callback(callback(42, "threshold:6", 70))
+        await gate.handle_callback(callback(42, "delete:60", 71))
+        await gate.handle_callback(callback(42, "delete:off", 72))
 
     asyncio.run(run())
 
     assert gate.user_threshold(42) == 6
     assert gate.user_delete_seconds(42) == 0
+    deleted = [payload["message_id"] for method, payload in request.calls if method == "deleteMessage"]
+    assert deleted == [70, 71, 72]
 
 
 def test_private_streak_uses_user_threshold_updates_and_finishes():
@@ -127,8 +164,8 @@ def test_admin_can_list_and_revoke_authorized_user():
     gate.chats.update({42: 42, 99: 99})
 
     async def run():
-        await gate.handle_callback(callback(99, "admin_users"))
-        await gate.handle_callback(callback(99, "admin_revoke:42"))
+        await gate.handle_callback(callback(99, "admin_users", 80))
+        await gate.handle_callback(callback(99, "admin_revoke:42", 81))
 
     asyncio.run(run())
 
@@ -147,7 +184,7 @@ def test_status_reports_last_round_and_uptime():
 
     async def run():
         await gate.on_round("1.23x")
-        await gate.handle_callback(callback(42, "menu_status"))
+        await gate.handle_callback(callback(42, "menu_status", 90))
 
     asyncio.run(run())
 
@@ -177,5 +214,7 @@ def test_authorized_user_gets_live_history_panel_and_updates_same_message():
     assert sent["text"] == "🎰 Lucky Jet — история"
     rows = sent["reply_markup"]["inline_keyboard"]
     assert rows[0][0]["text"] == "🟦1.10x"
+    assert rows[-1][0]["callback_data"] == "menu_open"
     updated = request.calls[1][1]["reply_markup"]["inline_keyboard"]
     assert updated[0][0]["text"] == "🟪3.30x"
+    assert updated[-1][0]["callback_data"] == "menu_open"

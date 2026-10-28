@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import httpx
+
 import main as base
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
 from luckyjet_source_guard import install_source_guard
@@ -28,6 +30,36 @@ def seed_private_streak(gate, values) -> None:
             gate.current_streak.clear()
 
 
+def record_history_coefficient(panel, coefficient):
+    """Update the in-memory history; Telegram rendering belongs to private user panels."""
+    formatted = base.format_history_coefficient(coefficient)
+    if formatted is None:
+        return None
+    panel.history = base.prepend_history(
+        panel.history,
+        formatted,
+        limit=panel.limit,
+    )
+    return formatted
+
+
+async def retire_legacy_history_panel(panel) -> None:
+    """Remove the pre-auth shared history so only authenticated histories remain."""
+    message_id = panel.message_id
+    chat_id = panel.config.telegram_chat_id
+    if message_id is None or not chat_id:
+        return
+    try:
+        await panel._request(
+            "deleteMessage",
+            {"chat_id": chat_id, "message_id": message_id},
+        )
+    except (httpx.HTTPError, RuntimeError):
+        log.info("Legacy shared history panel already absent or not removable")
+    finally:
+        panel.message_id = None
+
+
 async def main_async() -> None:
     config = Config.from_env()
     install_source_guard(monitor)
@@ -46,31 +78,23 @@ async def main_async() -> None:
     async def handle_round(config_or_message, message=None):
         actual = str(config_or_message) if message is None else message
         coefficient = base.coefficient_from_message(actual)
+        if coefficient is None:
+            return True
 
-        if coefficient is not None and len(panel.history) < 2 and len(state.previous) >= 2:
-            latest = base.format_history_coefficient(coefficient)
-            saved = base.format_history_coefficient(state.previous[0])
-            if latest == saved:
-                panel.history = [
-                    formatted
-                    for value in state.previous[: panel.limit]
-                    if (formatted := base.format_history_coefficient(value)) is not None
-                ]
-                seed_private_streak(password_gate, state.previous)
-                return await panel.ensure_panel()
+        formatted = record_history_coefficient(panel, coefficient)
+        if formatted is None:
+            return False
 
-        result = await panel.handle_monitor_message(config_or_message, message)
-        if coefficient is not None:
-            await password_gate.on_round(coefficient)
-        return result
+        await password_gate.on_round(formatted)
+        return True
 
     monitor.send = handle_round
+    await retire_legacy_history_panel(panel)
 
     try:
         await asyncio.gather(
             base.health_server(),
             password_gate.start(),
-            panel.ensure_panel(),
             monitor.run_monitor(config, state=state),
         )
     finally:

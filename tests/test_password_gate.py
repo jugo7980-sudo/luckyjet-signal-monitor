@@ -130,7 +130,7 @@ def test_each_menu_choice_replaces_old_transient_message_and_history_stays():
     assert "⚙️ Настройки" in sent[3]["text"]
 
 
-def test_history_menu_choice_only_refreshes_history_and_closes_menu():
+def test_history_menu_choice_refreshes_history_and_keeps_menu_visible():
     request = FakeRequest()
     history = ["1.10x", "2.20x"]
     gate = TelegramPasswordGate(request, history_provider=lambda: history)
@@ -146,9 +146,8 @@ def test_history_menu_choice_only_refreshes_history_and_closes_menu():
     asyncio.run(run())
 
     assert 101 not in deleted_ids(request)
-    assert 102 in deleted_ids(request)
-    assert gate.menu_messages.get(42) is None
-    assert sent_messages(request)[-1]["text"].startswith("🎰 Lucky Jet Monitor")
+    assert 102 not in deleted_ids(request)
+    assert gate.menu_messages.get(42) == 102
     edited = [p for m, p in request.calls if m == "editMessageReplyMarkup"][-1]
     assert edited["message_id"] == 101
     assert edited["reply_markup"]["inline_keyboard"][0][0]["text"] == "🟪3.30x"

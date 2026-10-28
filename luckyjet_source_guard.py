@@ -25,7 +25,7 @@ def install_source_guard(monitor, *, direct_hold_seconds=15.0):
         )
 
         if direct_is_fresh and not incoming_direct:
-            return len(getattr(self, "_rounds", []))
+            return 0
 
         result = await original_ingest(self, payload, source, event_name=event_name)
         if result:

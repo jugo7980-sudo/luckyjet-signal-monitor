@@ -3,7 +3,9 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
 from luckyjet_signal.browser_runtime import make_low_memory_async_playwright, LOW_MEMORY_ARGS
 import main as app_main

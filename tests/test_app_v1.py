@@ -26,3 +26,17 @@ def test_seed_private_streak_handles_invalid_values():
     gate = Gate()
     app_v1.seed_private_streak(gate, ["1.50x", "bad", "1.40x"])
     assert gate.current_streak == ["1.40x", "1.50x"]
+
+
+def test_runtime_configuration_installs_fast_direct_poll(monkeypatch):
+    calls = []
+    monkeypatch.setattr(app_v1, "install_source_guard", lambda module: calls.append("guard"))
+    monkeypatch.setattr(app_v1, "install_fast_poll", lambda module: calls.append("fast"))
+    monkeypatch.setattr(app_v1, "low_memory_async_playwright", "playwright-wrapper")
+    monkeypatch.setattr(app_v1, "wrap_click_demo_mode", lambda fn: "demo-wrapper")
+
+    app_v1.configure_monitor_runtime()
+
+    assert calls == ["guard", "fast"]
+    assert app_v1.monitor.async_playwright == "playwright-wrapper"
+    assert app_v1.monitor.click_demo_mode == "demo-wrapper"

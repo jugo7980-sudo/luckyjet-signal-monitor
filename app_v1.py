@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 import httpx
 
@@ -12,6 +13,7 @@ from luckyjet_signal import monitor
 from luckyjet_signal.browser_runtime import low_memory_async_playwright
 from luckyjet_signal.demo_mode import wrap_click_demo_mode
 from luckyjet_signal.settings import Config
+from telegram_polling_lease import TelegramPollingLease
 
 
 log = logging.getLogger("luckyjet.v1")
@@ -137,6 +139,7 @@ async def main_async() -> None:
         history_provider=lambda: panel.history,
         admin_chat_id=config.telegram_chat_id,
     )
+    polling_lease = TelegramPollingLease(os.getenv("REDIS_URL", ""))
     seed_private_streak(password_gate, state.previous)
 
     async def handle_round(config_or_message, message=None):
@@ -158,11 +161,13 @@ async def main_async() -> None:
     try:
         await asyncio.gather(
             base.health_server(),
-            password_gate.start(),
+            polling_lease.run(password_gate.start()),
             monitor.run_monitor(config, state=state),
         )
     finally:
         await password_gate.close()
+        await polling_lease.release()
+        await polling_lease.close()
         await panel.close()
 
 

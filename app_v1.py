@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 import main as base
-from luckyjet_password_gate import TelegramPasswordGate
+from luckyjet_reliable_gate import ReliableTelegramPasswordGate
 from luckyjet_source_guard import install_source_guard
 from luckyjet_signal import monitor
 from luckyjet_signal.browser_runtime import low_memory_async_playwright
@@ -36,7 +36,7 @@ async def main_async() -> None:
 
     state = await monitor.load_state(config)
     panel = base.TelegramHistoryPanel(config, initial_history=state.previous)
-    password_gate = TelegramPasswordGate(
+    password_gate = ReliableTelegramPasswordGate(
         panel._request,
         history_provider=lambda: panel.history,
         admin_chat_id=config.telegram_chat_id,

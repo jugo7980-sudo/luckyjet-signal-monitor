@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 
-from luckyjet_signal.config import Config
+from luckyjet_signal.settings import Config
 from luckyjet_signal.monitor import run_monitor
 
 

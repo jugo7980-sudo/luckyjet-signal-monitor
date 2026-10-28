@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 
 import httpx
 
@@ -103,6 +104,7 @@ class TelegramHistoryPanel:
         self.message_id = None
         self._request = request or self._telegram_request
         self._lock = asyncio.Lock()
+        self._http_client = None
         self.history = []
 
         for value in list(initial_history or []):
@@ -119,15 +121,22 @@ class TelegramHistoryPanel:
 
         url = f"https://api.telegram.org/bot{token}/{method}"
 
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(timeout=15)
+
+        response = await self._http_client.post(url, json=payload)
+        response.raise_for_status()
+        data = response.json()
 
         if not data.get("ok", False):
             raise RuntimeError(data.get("description", "Telegram API rejected request"))
 
         return data
+
+    async def close(self) -> None:
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     def _reply_markup(self) -> dict:
         return build_history_keyboard(
@@ -177,6 +186,7 @@ class TelegramHistoryPanel:
         if self.message_id is None:
             return await self._create_locked()
 
+        started = time.monotonic()
         try:
             await self._request(
                 "editMessageReplyMarkup",
@@ -220,10 +230,11 @@ class TelegramHistoryPanel:
             return await self._create_locked()
 
         log.info(
-            "Telegram history panel updated: message_id=%s latest=%s items=%s",
+            "Telegram history panel updated: message_id=%s latest=%s items=%s telegram_request_ms=%.1f",
             self.message_id,
             self.history[0] if self.history else "-",
             len(self.history),
+            (time.monotonic() - started) * 1000,
         )
         return True
 
@@ -298,11 +309,14 @@ async def main_async() -> None:
     )
     monitor.send = panel.handle_monitor_message
 
-    await asyncio.gather(
-        health_server(),
-        panel.ensure_panel(),
-        monitor.run_monitor(config),
-    )
+    try:
+        await asyncio.gather(
+            health_server(),
+            panel.ensure_panel(),
+            monitor.run_monitor(config),
+        )
+    finally:
+        await panel.close()
 
 
 def main() -> None:

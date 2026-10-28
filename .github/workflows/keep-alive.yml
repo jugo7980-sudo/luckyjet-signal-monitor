@@ -2,7 +2,8 @@ name: Keep Render bot awake
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Every 5 minutes, deliberately offset from :00 to reduce GitHub Actions cron delays.
+    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"
   workflow_dispatch:
   push:
     branches:

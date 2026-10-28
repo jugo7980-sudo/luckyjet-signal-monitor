@@ -15,12 +15,10 @@ from .settings import Config
 log = logging.getLogger("luckyjet.monitor")
 STATE = Path("data/state.json")
 
-# Do not expose Telegram tokens in HTTP request logs.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 DIAGNOSTIC_INTERVAL = 60
-HISTORY_LIMIT = 30
 
 HISTORY_SCRIPT = r"""
 (() => {
@@ -63,9 +61,7 @@ HISTORY_SCRIPT = r"""
         candidates.push({
             value,
             x: r.left,
-            y: r.top,
-            width: r.width,
-            height: r.height
+            y: r.top
         });
     }
 
@@ -107,7 +103,6 @@ HISTORY_SCRIPT = r"""
 DIAGNOSTIC_SCRIPT = r"""
 (() => {
     const body = document.body;
-
     const text = body
         ? (body.innerText || "").slice(0, 350)
         : "";
@@ -135,7 +130,6 @@ DIAGNOSTIC_SCRIPT = r"""
 
     return {
         title: document.title.slice(0, 100),
-        url: location.origin + location.pathname,
         ready: document.readyState,
         bodyLength: body
             ? (body.innerText || "").length
@@ -445,7 +439,7 @@ async def open_game(context, config):
     page = await context.new_page()
 
     try:
-        log.info("Opening game page")
+        log.info("Opening Lucky Jet page")
 
         response = await page.goto(
             config.game_url,
@@ -454,11 +448,67 @@ async def open_game(context, config):
         )
 
         log.info(
-            "Game navigation completed: "
-            "HTTP %s, frames=%s",
+            "Game page opened: HTTP %s",
             response.status if response else "unknown",
+        )
+
+        await page.wait_for_timeout(8000)
+
+        demo_labels = [
+            "Демо-режим",
+            "Демо режим",
+            "Играть бесплатно",
+            "Demo mode",
+            "Play demo",
+            "Play for free",
+        ]
+
+        demo_started = False
+
+        for frame in page.frames:
+            if demo_started:
+                break
+
+            for label in demo_labels:
+                try:
+                    button = frame.get_by_role(
+                        "button",
+                        name=label,
+                        exact=True,
+                    )
+
+                    if await button.count() == 1:
+                        if await button.is_visible():
+                            await button.click(timeout=5000)
+
+                            log.info(
+                                "Demo mode button clicked: %s",
+                                label,
+                            )
+
+                            demo_started = True
+                            break
+
+                except Exception as exc:
+                    log.debug(
+                        "Demo button unavailable: %s",
+                        type(exc).__name__,
+                    )
+
+        if not demo_started:
+            log.warning(
+                "Demo mode button not found; "
+                "no other controls were clicked"
+            )
+
+        await page.wait_for_timeout(12000)
+
+        log.info(
+            "After demo attempt: frames=%d",
             len(page.frames),
         )
+
+        await diagnose_frames(page)
 
         return page
 

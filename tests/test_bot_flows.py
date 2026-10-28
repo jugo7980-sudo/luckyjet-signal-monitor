@@ -39,7 +39,7 @@ def callback(user_id, data, message_id=400):
     }
 
 
-def test_authorized_commands_delete_user_message_and_render_expected_screen():
+def test_authorized_commands_keep_user_message_and_render_expected_screen():
     request = FakeRequest()
     gate = TelegramPasswordGate(request, history_provider=lambda: ["1.10x"])
     gate.authorized.add(42)
@@ -59,7 +59,7 @@ def test_authorized_commands_delete_user_message_and_render_expected_screen():
 
     deleted = [p["message_id"] for m, p in request.calls if m == "deleteMessage"]
     for command_id in (10, 11, 12, 13):
-        assert command_id in deleted
+        assert command_id not in deleted
     for transient_id in (menu_id, status_id, settings_id):
         assert transient_id in deleted
 

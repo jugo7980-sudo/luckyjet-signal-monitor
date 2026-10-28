@@ -689,10 +689,23 @@ class TelegramPasswordGate:
                     pass
                 if exc.response.status_code == 400 and "message is not modified" in description:
                     return True
-                log.warning("Private history edit rejected: user_id=%s status=%s", user_id, exc.response.status_code)
-                # Keep the existing panel ID on transient failures; do not flood the chat.
-                return False
-            except (httpx.RequestError, RuntimeError):
+                if exc.response.status_code == 400 and ("message to edit not found" in description or "message_id_invalid" in description):
+                    log.info("Private history message deleted; recreating: user_id=%s", user_id)
+                    self.history_messages.pop(user_id, None)
+                    await self._persist_user(user_id)
+                else:
+                    log.warning("Private history edit rejected: user_id=%s status=%s", user_id, exc.response.status_code)
+                    return False
+            except httpx.HTTPError as exc:
+                # A deleted message cannot be edited; recreate it. Network errors
+                # should not cause duplicates, so only recover known missing-message errors.
+                if "message missing" not in str(exc).lower() and "message to edit not found" not in str(exc).lower():
+                    log.warning("Private history edit failed: user_id=%s error=%s", user_id, type(exc).__name__)
+                    return False
+                log.info("Private history message missing; recreating: user_id=%s", user_id)
+                self.history_messages.pop(user_id, None)
+                await self._persist_user(user_id)
+            except RuntimeError:
                 log.warning("Private history edit failed: user_id=%s", user_id)
                 return False
         try:

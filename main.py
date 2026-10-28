@@ -306,15 +306,17 @@ class TelegramStreakPanel:
 
     def _reply_markup(self, ending=None):
         count = len(self.values)
-        if ending is None:
-            label = f"🔵{count}<2x"
-        else:
-            label = f"🟪{count}→{ending}"
+        latest = ending if ending is not None else self.values[-1]
+        title = f"Серия {count} · {colored_coefficient_label(latest)}"
+        recent = [*self.values, *([ending] if ending is not None else [])][-5:]
         return {
-            "inline_keyboard": [[{
-                "text": label,
-                "callback_data": "noop",
-            }]]
+            "inline_keyboard": [
+                [{"text": title, "callback_data": "noop"}],
+                [
+                    {"text": colored_coefficient_label(value), "callback_data": "noop"}
+                    for value in recent
+                ],
+            ]
         }
 
     async def _send_or_edit(self, ending=None):
@@ -324,7 +326,7 @@ class TelegramStreakPanel:
                 "sendMessage",
                 {
                     "chat_id": self.config.telegram_chat_id,
-                    "text": "Серия",
+                    "text": "🎰 Lucky Jet | Серия <2x",
                     "reply_markup": reply_markup,
                 },
             )

@@ -11,8 +11,10 @@ log = logging.getLogger("luckyjet.auth")
 
 
 class TelegramPasswordGate:
-    def __init__(self, request):
+    def __init__(self, request, history_provider=None):
         self.request = request
+        self.history_provider = history_provider
+        self.notifications_disabled = set()
         self.password = os.getenv("TELEGRAM_ACCESS_PASSWORD", "122011")
         self.redis_url = os.getenv("REDIS_URL")
         self.redis = None
@@ -35,7 +37,7 @@ class TelegramPasswordGate:
                     result = await self.request("getUpdates", {
                         "timeout": 15,
                         "offset": self.offset,
-                        "allowed_updates": ["message"],
+                        "allowed_updates": ["message", "callback_query"],
                     })
                     for update in result.get("result", []):
                         self.offset = update["update_id"] + 1
@@ -54,7 +56,19 @@ class TelegramPasswordGate:
             return bool(await self.redis.sismember("luckyjet:authorized_users", str(user_id)))
         return user_id in self.authorized
 
+    def menu(self):
+        return {"inline_keyboard": [
+            [{"text": "📊 История", "callback_data": "menu_history"},
+             {"text": "📡 Статус", "callback_data": "menu_status"}],
+            [{"text": "🔔 Уведомления", "callback_data": "menu_notifications"},
+             {"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
+        ]}
+
     async def handle_update(self, update):
+        callback = update.get("callback_query")
+        if callback:
+            await self.handle_callback(callback)
+            return
         msg = update.get("message") or {}
         chat = msg.get("chat") or {}
         sender = msg.get("from") or {}
@@ -94,4 +108,30 @@ class TelegramPasswordGate:
                 answer = "Слишком много ошибок. Повторите через 5 минут."
             else:
                 answer = "❌ Неверный пароль. Попробуйте ещё раз."
-        await self.request("sendMessage", {"chat_id": chat_id, "text": answer})
+        payload = {"chat_id": chat_id, "text": answer}
+        if await self.is_authorized(user_id):
+            payload["reply_markup"] = self.menu()
+        await self.request("sendMessage", payload)
+
+    async def handle_callback(self, callback):
+        user_id = (callback.get("from") or {}).get("id")
+        chat_id = ((callback.get("message") or {}).get("chat") or {}).get("id")
+        data = callback.get("data", "")
+        try:
+            await self.request("answerCallbackQuery", {"callback_query_id": callback["id"]})
+        except (httpx.HTTPError, RuntimeError):
+            pass
+        if not chat_id or not user_id or not await self.is_authorized(user_id):
+            return
+        if data == "menu_history":
+            values = list(self.history_provider() if self.history_provider else [])[:20]
+            answer = "📊 Последние коэффициенты:\n" + ("  ".join(values) if values else "Пока нет данных")
+        elif data == "menu_status":
+            answer = "📡 Бот запущен. Статус источника данных проверяйте по обновлению истории."
+        elif data == "menu_notifications":
+            answer = "🔔 Настройка персональных уведомлений появится после подключения рассылки в личные чаты."
+        elif data == "menu_settings":
+            answer = "⚙️ Настройки: порог серии 4, автоудаление 30 секунд."
+        else:
+            return
+        await self.request("sendMessage", {"chat_id": chat_id, "text": answer, "reply_markup": self.menu()})

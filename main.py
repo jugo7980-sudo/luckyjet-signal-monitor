@@ -221,7 +221,14 @@ class TelegramHistoryPanel:
         async with self._lock:
             return await self._edit_locked()
 
-    async def handle_monitor_message(self, message: str) -> bool:
+    async def handle_monitor_message(
+        self,
+        config_or_message,
+        message: str | None = None,
+    ) -> bool:
+        if message is None:
+            message = str(config_or_message)
+
         coefficient = coefficient_from_message(message)
 
         if coefficient is None:

@@ -8,10 +8,11 @@ from luckyjet_signal.demo_mode import wrap_click_demo_mode
 
 
 class Page:
-    def __init__(self):
+    def __init__(self, *, js_result=True):
         self.url = "https://example.test/casino/play/luckyjet?x=1"
         self.gotos = []
         self.evals = 0
+        self.js_result = js_result
 
     async def wait_for_timeout(self, ms):
         pass
@@ -22,17 +23,17 @@ class Page:
 
     async def evaluate(self, script):
         self.evals += 1
-        return True
+        return self.js_result
 
 
 def test_reopens_original_game_after_demo_redirect():
-    page = Page()
+    page = Page(js_result=False)
 
     async def delegate(p):
         p.url = "https://example.test/"
         return True
 
-    wrapped = wrap_click_demo_mode(delegate)
+    wrapped = wrap_click_demo_mode(delegate, js_attempts=1)
     result = asyncio.run(wrapped(page))
 
     assert result is True

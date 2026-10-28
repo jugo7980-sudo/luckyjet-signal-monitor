@@ -113,3 +113,35 @@ def test_live_history_panel_creates_once_then_edits_same_message():
     assert calls[1][1]["message_id"] == 777
     first_button = calls[1][1]["reply_markup"]["inline_keyboard"][0][0]
     assert first_button["text"] == "🟪 4.45x"
+
+def test_v03_history_default_has_twenty_buttons_in_five_columns():
+    assert app_main._HISTORY_LIMIT == 20
+    assert app_main._HISTORY_COLUMNS == 5
+    rows = app_main.build_history_keyboard(["1.10x"] * 20)["inline_keyboard"]
+    assert [len(row) for row in rows] == [5, 5, 5, 5]
+
+
+def test_v03_streak_edits_one_message_and_deletes_after_completion():
+    calls = []
+    async def request(method, payload):
+        calls.append((method, payload))
+        return {"ok": True, "result": {"message_id": 77}}
+
+    async def run():
+        from types import SimpleNamespace
+        panel = app_main.TelegramStreakPanel(
+            SimpleNamespace(telegram_chat_id="chat"), request
+        )
+        async def no_wait_delete(message_id):
+            calls.append(("scheduled_delete", {"message_id": message_id}))
+        panel._delete_later = no_wait_delete
+        for coefficient in ["1.11x", "1.22x", "1.33x", "1.44x", "1.55x", "2.00x"]:
+            await panel.on_round(coefficient)
+        await asyncio.sleep(0)
+        await panel.close()
+
+    asyncio.run(run())
+    assert [method for method, _ in calls] == [
+        "sendMessage", "editMessageText", "editMessageText", "scheduled_delete"
+    ]
+    assert "6-м раунде: 2.00x" in calls[2][1]["text"]

@@ -132,6 +132,26 @@ def configure_monitor_runtime() -> None:
     monitor.click_demo_mode = wrap_click_demo_mode(monitor.click_demo_mode)
 
 
+async def render_self_keepalive(interval_seconds=240) -> None:
+    """Keep a free Render web service active with light inbound self-traffic."""
+    url = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+    if not url:
+        return
+    url = url.rstrip("/") + "/"
+
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        while True:
+            await asyncio.sleep(float(interval_seconds))
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                log.info("Render self keepalive succeeded")
+            except asyncio.CancelledError:
+                raise
+            except httpx.HTTPError as exc:
+                log.warning("Render self keepalive failed: %s", type(exc).__name__)
+
+
 async def main_async() -> None:
     config = Config.from_env()
     configure_monitor_runtime()
@@ -175,6 +195,7 @@ async def main_async() -> None:
     try:
         await asyncio.gather(
             base.health_server(),
+            render_self_keepalive(),
             polling_lease.run(password_gate.start()),
             direct_only.run_monitor(monitor, config, state=state),
         )

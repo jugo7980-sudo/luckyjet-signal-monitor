@@ -193,7 +193,7 @@ class TelegramPasswordGate:
 
     def user_threshold(self, user_id):
         value = int(self.thresholds.get(int(user_id), 4))
-        return min(10, max(4, value))
+        return min(10, max(3, value))
 
     def user_delete_seconds(self, user_id):
         value = int(self.delete_seconds.get(int(user_id), 30))
@@ -241,9 +241,9 @@ class TelegramPasswordGate:
         sound_enabled = user_id not in self.silent_users
 
         threshold_rows = []
-        for start in (4, 7):
+        for start in (3, 7):
             row = []
-            stop = 7 if start == 4 else 11
+            stop = 7 if start == 3 else 11
             for value in range(start, stop):
                 prefix = "✓ " if value == threshold else ""
                 row.append({"text": f"{prefix}{value}", "callback_data": f"threshold:{value}"})
@@ -543,7 +543,7 @@ class TelegramPasswordGate:
                 value = int(data.split(":", 1)[1])
             except ValueError:
                 return
-            if value not in range(4, 11):
+            if value not in range(3, 11):
                 return
             self.thresholds[user_id] = value
             await self._persist_user(user_id)

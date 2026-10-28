@@ -138,7 +138,7 @@ def test_settings_are_top_to_bottom_and_keep_navigation():
     callbacks = [[button["callback_data"] for button in row] for row in markup]
 
     assert callbacks[0] == ["settings_notifications"]
-    assert callbacks[1] == ["threshold:4", "threshold:5", "threshold:6"]
+    assert callbacks[1] == ["threshold:3", "threshold:4", "threshold:5", "threshold:6"]
     assert callbacks[2] == ["threshold:7", "threshold:8", "threshold:9", "threshold:10"]
     assert callbacks[3] == ["delete:15", "delete:30", "delete:60", "delete:off"]
     assert callbacks[4] == ["settings_sound"]

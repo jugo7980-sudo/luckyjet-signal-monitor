@@ -138,12 +138,12 @@ def test_hidden_history_and_visible_menu_survive_restart():
     asyncio.run(run())
 
 
-def test_streak_never_starts_before_four_even_with_old_three_setting():
+def test_selected_three_round_threshold_triggers_after_three():
     gate, request, _ = setup()
     gate.thresholds[42] = 3
 
     async def run():
-        for _ in range(3):
+        for _ in range(2):
             await gate.on_round("1.10x")
         assert not gate.active_messages
         await gate.on_round("1.20x")

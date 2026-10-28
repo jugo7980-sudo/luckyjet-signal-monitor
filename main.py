@@ -331,6 +331,7 @@ class TelegramStreakPanel:
                 },
             )
             self.message_id = int(result["result"]["message_id"])
+            log.info("Streak message created: message_id=%s count=%s", self.message_id, len(self.values))
             return
 
         await self._request(
@@ -341,6 +342,7 @@ class TelegramStreakPanel:
                 "reply_markup": reply_markup,
             },
         )
+        log.info("Streak message updated: message_id=%s count=%s ending=%s", self.message_id, len(self.values), ending)
 
     async def _delete_later(self, message_id):
         try:
@@ -349,6 +351,7 @@ class TelegramStreakPanel:
                 "chat_id": self.config.telegram_chat_id,
                 "message_id": message_id,
             })
+            log.info("Streak message deleted: message_id=%s", message_id)
         except asyncio.CancelledError:
             raise
         except (httpx.HTTPError, RuntimeError) as exc:

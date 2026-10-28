@@ -55,7 +55,10 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         except Exception:
             return ""
 
-    async def ensure_private_history(self, user_id):
+    async def open_private_history(self, user_id, source_message_id):
+        return await self.ensure_private_history(user_id, after_message_id=source_message_id)
+
+    async def ensure_private_history(self, user_id, *, after_message_id=None):
         """Keep one history panel and serialize its recovery."""
         user_id = int(user_id)
         lock = self._history_locks.setdefault(user_id, asyncio.Lock())
@@ -66,7 +69,13 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
 
             markup = self._history_markup()
             message_id = self.history_messages.get(user_id)
-            if message_id is not None:
+            # Editing an older message does not bring it into the current chat view.
+            # Explicit navigation presents the panel after the menu, once per menu.
+            replace_id = (
+                message_id if message_id is not None and after_message_id is not None
+                and message_id < after_message_id else None
+            )
+            if message_id is not None and replace_id is None:
                 try:
                     await self.request(
                         "editMessageReplyMarkup",
@@ -110,6 +119,10 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
                     return False
                 self.history_messages[user_id] = int(message_id)
                 await self._persist_user(user_id)
+                # Keep the old panel and menu until the replacement is confirmed.
+                if replace_id is not None:
+                    await self._safe_delete(chat_id, replace_id)
+                    log.info("Private history opened after menu")
                 log.info("Private history panel ready")
                 return True
             except httpx.HTTPStatusError as exc:

@@ -476,13 +476,12 @@ class TelegramPasswordGate:
             return
 
         if data == "menu_history":
-            # Never remove the navigation message before history is confirmed visible.
-            # Telegram may return "message is not modified" for an unchanged panel.
-            if not await self.ensure_private_history(user_id):
-                await self._send_transient(
-                    user_id, chat_id,
-                    "⚠️ Историю пока не удалось открыть. Повторите попытку.",
-                    self.menu(user_id),
+            source_id = self._to_int((callback.get("message") or {}).get("message_id"))
+            if not await self.open_private_history(user_id, source_id):
+                await self.request(
+                    "sendMessage",
+                    {"chat_id": chat_id,
+                     "text": "⚠️ Историю пока не удалось открыть. Повторите попытку."},
                 )
             return
 
@@ -664,6 +663,9 @@ class TelegramPasswordGate:
             )
         rows.append([{"text": "☰ Меню", "callback_data": "menu_open"}])
         return {"inline_keyboard": rows}
+
+    async def open_private_history(self, user_id, source_message_id):
+        return await self.ensure_private_history(user_id)
 
     async def ensure_private_history(self, user_id):
         user_id = int(user_id)

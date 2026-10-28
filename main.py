@@ -50,7 +50,7 @@ async def send_with_coefficient_button(config: Config, message: str) -> bool:
                 url,
                 json={
                     "chat_id": chat_id,
-                    "text": "⠀",
+                    "text": coefficient,
                     "reply_markup": {
                         "inline_keyboard": [
                             [

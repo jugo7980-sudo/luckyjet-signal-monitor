@@ -20,6 +20,33 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         super().__init__(*args, **kwargs)
         self.pending_deletions = {}
 
+    async def handle_update(self, update):
+        """Keep normal handling, but make /start visibly open the bot for authorized users."""
+        msg = update.get("message") or {}
+        chat = msg.get("chat") or {}
+        sender = msg.get("from") or {}
+        user_id = self._to_int(sender.get("id"))
+        chat_id = self._to_int(chat.get("id"))
+        value = (msg.get("text") or "").strip()
+        command = value.split("@", 1)[0].split(" ", 1)[0].lower()
+        authorized_start = (
+            chat.get("type") == "private"
+            and user_id is not None
+            and chat_id is not None
+            and user_id in self.authorized
+            and command == "/start"
+        )
+
+        await super().handle_update(update)
+
+        if authorized_start and user_id in self.authorized:
+            await self._send_transient(
+                user_id,
+                chat_id,
+                "🎰 Lucky Jet Monitor\nВыберите раздел.",
+                self.menu(user_id),
+            )
+
     async def _load_persisted_state(self):
         await super()._load_persisted_state()
         if self.redis:

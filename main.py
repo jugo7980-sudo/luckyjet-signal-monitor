@@ -16,8 +16,8 @@ from luckyjet_signal.demo_mode import wrap_click_demo_mode
 log = logging.getLogger("luckyjet.telegram_ui")
 _COEFFICIENT_PREFIX = "Последний коэффициент: "
 _PANEL_TITLE = "🎰 Lucky Jet — история"
-_HISTORY_LIMIT = 15
-_HISTORY_COLUMNS = 3
+_HISTORY_LIMIT = 20
+_HISTORY_COLUMNS = 5
 
 
 def coefficient_from_message(message: str) -> str | None:
@@ -270,6 +270,113 @@ class TelegramHistoryPanel:
             return await self._edit_locked()
 
 
+
+class TelegramStreakPanel:
+    """One temporary message per consecutive sub-2x run."""
+
+    def __init__(self, config, request, initial_history=None):
+        self.config = config
+        self._request = request
+        self._lock = asyncio.Lock()
+        self.values = []
+        self.message_id = None
+        self._deletion_tasks = set()
+        for value in reversed(list(initial_history or [])):
+            number = format_history_coefficient(value)
+            if number is None:
+                continue
+            if float(number[:-1]) < 2:
+                self.values.append(number)
+            else:
+                self.values.clear()
+        self._startup_latest = format_history_coefficient(
+            list(initial_history or [None])[0]
+        )
+        self._startup_pending = True
+
+    def _text(self, ending=None):
+        count = len(self.values)
+        if ending is None:
+            return (
+                "🎰 Lucky Jet | Серия активна\\n\\n"
+                f"🔵 {count} раундов подряд ниже 2.00x\\n"
+                f"Коэффициенты: {', '.join(self.values)}\\n\\n"
+                f"⏳ Ожидание {count + 1}-го раунда"
+            )
+        return (
+            "🎰 Lucky Jet | Серия завершена\\n\\n"
+            f"🔵 {count} раундов подряд ниже 2.00x\\n"
+            f"Коэффициенты: {', '.join(self.values)}\\n\\n"
+            f"Прервалась на {count + 1}-м раунде: {ending}\\n"
+            "🕒 Сообщение удалится через 60 секунд"
+        )
+
+    async def _send_or_edit(self, text):
+        payload = {"chat_id": self.config.telegram_chat_id, "text": text}
+        if self.message_id is None:
+            result = await self._request("sendMessage", payload)
+            self.message_id = int(result["result"]["message_id"])
+        else:
+            await self._request("editMessageText", {
+                **payload, "message_id": self.message_id
+            })
+
+    async def _delete_later(self, message_id):
+        try:
+            await asyncio.sleep(60)
+            await self._request("deleteMessage", {
+                "chat_id": self.config.telegram_chat_id,
+                "message_id": message_id,
+            })
+        except asyncio.CancelledError:
+            raise
+        except (httpx.HTTPError, RuntimeError) as exc:
+            log.warning("Streak message deletion failed: %s", type(exc).__name__)
+
+    async def start(self):
+        async with self._lock:
+            if len(self.values) >= 4:
+                try:
+                    await self._send_or_edit(self._text())
+                except (httpx.HTTPError, RuntimeError) as exc:
+                    log.warning("Streak startup notification failed: %s", type(exc).__name__)
+
+    async def on_round(self, coefficient):
+        value = format_history_coefficient(coefficient)
+        if value is None:
+            return
+        async with self._lock:
+            if self._startup_pending:
+                self._startup_pending = False
+                if value == self._startup_latest:
+                    return
+            if float(value[:-1]) < 2:
+                self.values.append(value)
+                if len(self.values) >= 4:
+                    try:
+                        await self._send_or_edit(self._text())
+                    except (httpx.HTTPError, RuntimeError) as exc:
+                        log.warning("Streak update failed: %s", type(exc).__name__)
+            else:
+                if len(self.values) >= 4:
+                    try:
+                        await self._send_or_edit(self._text(ending=value))
+                        old_message = self.message_id
+                        task = asyncio.create_task(self._delete_later(old_message))
+                        self._deletion_tasks.add(task)
+                        task.add_done_callback(self._deletion_tasks.discard)
+                    except (httpx.HTTPError, RuntimeError) as exc:
+                        log.warning("Streak completion failed: %s", type(exc).__name__)
+                self.values = []
+                self.message_id = None
+
+    async def close(self):
+        for task in self._deletion_tasks:
+            task.cancel()
+        if self._deletion_tasks:
+            await asyncio.gather(*self._deletion_tasks, return_exceptions=True)
+
+
 async def health_server() -> None:
     port = int(os.getenv("PORT", "10000"))
 
@@ -307,15 +414,27 @@ async def main_async() -> None:
         config,
         initial_history=state.previous,
     )
-    monitor.send = panel.handle_monitor_message
+    streak = TelegramStreakPanel(config, panel._request, initial_history=state.previous)
+
+    async def handle_round(config_or_message, message=None):
+        actual = str(config_or_message) if message is None else message
+        coefficient = coefficient_from_message(actual)
+        result = await panel.handle_monitor_message(config_or_message, message)
+        if coefficient is not None:
+            await streak.on_round(coefficient)
+        return result
+
+    monitor.send = handle_round
 
     try:
         await asyncio.gather(
             health_server(),
             panel.ensure_panel(),
+            streak.start(),
             monitor.run_monitor(config),
         )
     finally:
+        await streak.close()
         await panel.close()
 
 

@@ -6,6 +6,8 @@ import os
 
 import httpx
 
+from history_refresh import HistoryRefresh
+
 import main as base
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
 from luckyjet_source_guard import install_source_guard
@@ -134,9 +136,13 @@ async def main_async() -> None:
 
     await prepare_telegram_polling(telegram_request, config.telegram_chat_id)
 
+    refresh = HistoryRefresh()
+    monitor.history_refresh = refresh
+
     password_gate = ReliableTelegramPasswordGate(
         telegram_request,
         history_provider=lambda: panel.history,
+        history_refresher=refresh.request,
         admin_chat_id=config.telegram_chat_id,
     )
     polling_lease = TelegramPollingLease(os.getenv("REDIS_URL", ""))
@@ -166,6 +172,8 @@ async def main_async() -> None:
         )
     finally:
         await password_gate.close()
+        await refresh.close()
+        monitor.history_refresh = None
         await polling_lease.release()
         await polling_lease.close()
         await panel.close()

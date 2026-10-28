@@ -2150,6 +2150,26 @@ async def process_dom_history(
     return True
 
 
+# Installed by app_v1; automatic and manual refreshes share the same state path.
+history_refresh = None
+
+
+async def refresh_live_history(config, state, capture, page):
+    before = (state.last_round_id, list(state.previous))
+    received = await poll_direct_gateways(capture)
+    network_rounds, _ = await capture.snapshot()
+    if network_rounds:
+        worked = await process_network_history(config, state, network_rounds)
+    else:
+        dom_history = await read_dom_history(page)
+        worked = await process_dom_history(config, state, dom_history)
+    return {
+        "ok": bool(received and worked),
+        "worked": worked,
+        "changed": before != (state.last_round_id, list(state.previous)),
+    }
+
+
 async def run_monitor(
     config: Config,
 ):
@@ -2192,6 +2212,8 @@ async def run_monitor(
                         page is None
                         or page.is_closed()
                     ):
+                        if history_refresh is not None:
+                            history_refresh.bind(None)
                         capture = LiveCapture()
 
                         page = await open_game(
@@ -2244,40 +2266,14 @@ async def run_monitor(
 
                         continue
 
-                    await poll_direct_gateways(
-                        capture
-                    )
-
-                    (
-                        network_rounds,
-                        source,
-                    ) = (
-                        await capture.snapshot()
-                    )
-
-                    if network_rounds:
-                        worked = (
-                            await process_network_history(
-                                config,
-                                state,
-                                network_rounds,
-                            )
-                        )
-
+                    if history_refresh is not None:
+                        async def fetch_current():
+                            return await refresh_live_history(config, state, capture, page)
+                        history_refresh.bind(fetch_current)
+                        outcome = await history_refresh.request()
                     else:
-                        dom_history = (
-                            await read_dom_history(
-                                page
-                            )
-                        )
-
-                        worked = (
-                            await process_dom_history(
-                                config,
-                                state,
-                                dom_history,
-                            )
-                        )
+                        outcome = await refresh_live_history(config, state, capture, page)
+                    worked = outcome["worked"]
 
                     if worked:
                         missing_since = None
@@ -2303,6 +2299,8 @@ async def run_monitor(
                             except Exception:
                                 pass
 
+                            if history_refresh is not None:
+                                history_refresh.bind(None)
                             page = None
                             missing_since = None
 

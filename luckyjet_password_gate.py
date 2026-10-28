@@ -11,9 +11,11 @@ log = logging.getLogger("luckyjet.auth")
 
 
 class TelegramPasswordGate:
-    def __init__(self, request, history_provider=None, admin_chat_id=None, password=None):
+    def __init__(self, request, history_provider=None, admin_chat_id=None, password=None, history_refresher=None):
         self.request = request
         self.history_provider = history_provider
+        self.history_refresher = history_refresher
+        self._refresh_tasks = set()
         self.password = password if password is not None else os.getenv("TELEGRAM_ACCESS_PASSWORD", "").strip()
         self.redis_url = os.getenv("REDIS_URL", "").strip()
         self.redis = None
@@ -112,6 +114,11 @@ class TelegramPasswordGate:
             await self.close()
 
     async def close(self):
+        for task in list(self._refresh_tasks):
+            task.cancel()
+        if self._refresh_tasks:
+            await asyncio.gather(*self._refresh_tasks, return_exceptions=True)
+            self._refresh_tasks.clear()
         for task in list(self._deletion_tasks):
             task.cancel()
         if self._deletion_tasks:
@@ -463,7 +470,15 @@ class TelegramPasswordGate:
             and user_id in self.authorized
             and (user_id not in self.blocked or self.is_admin(user_id))
         )
-        if not history_toggle:
+        message_id = self._to_int((callback.get("message") or {}).get("message_id"))
+        history_refresh = (
+            data in {"history_refresh", "noop"} and user_id is not None
+            and chat_id is not None and user_id in self.authorized
+            and (user_id not in self.blocked or self.is_admin(user_id))
+            and message_id == self.history_messages.get(user_id)
+            and user_id not in self.history_hidden
+        )
+        if not history_toggle and not history_refresh:
             try:
                 await self.request("answerCallbackQuery", {"callback_query_id": callback["id"]})
             except (httpx.HTTPError, RuntimeError, KeyError):
@@ -476,7 +491,13 @@ class TelegramPasswordGate:
 
         self.chats[user_id] = chat_id
 
-        if data == "noop":
+        if history_refresh:
+            task = asyncio.create_task(self._refresh_history_callback(user_id, callback))
+            self._refresh_tasks.add(task)
+            task.add_done_callback(self._refresh_tasks.discard)
+            return
+
+        if data in {"noop", "history_refresh"}:
             return
 
         if data == "menu_open":
@@ -622,6 +643,31 @@ class TelegramPasswordGate:
 
         await self._send_transient(user_id, chat_id, answer, markup)
 
+    async def _refresh_history_callback(self, user_id, callback):
+        text = "Не удалось обновить. Повторите попытку."
+        try:
+            if self.history_refresher is not None:
+                # A slow source must not leave Telegram's button spinner hanging.
+                # The shared refresh keeps running for automatic processing.
+                result = await asyncio.wait_for(self.history_refresher(), timeout=8)
+                if result.get("ok"):
+                    if user_id in self.authorized and user_id not in self.history_hidden:
+                        visible = await self.ensure_private_history(user_id)
+                        if visible:
+                            text = "История обновлена" if result.get("changed") else "История актуальна"
+            await self.request("answerCallbackQuery", {
+                "callback_query_id": callback["id"], "text": text,
+            })
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, httpx.HTTPError, RuntimeError, KeyError):
+            try:
+                await self.request("answerCallbackQuery", {
+                    "callback_query_id": callback["id"], "text": text,
+                })
+            except (httpx.HTTPError, RuntimeError, KeyError):
+                pass
+
     async def _revoke_user(self, user_id, *, block):
         chat_id = self.chats.get(user_id)
         history_message_id = self.history_messages.pop(user_id, None)
@@ -672,7 +718,7 @@ class TelegramPasswordGate:
         for start in range(0, len(values), 5):
             rows.append(
                 [
-                    {"text": self._colored_label(value), "callback_data": "noop"}
+                    {"text": self._colored_label(value), "callback_data": "history_refresh"}
                     for value in values[start : start + 5]
                 ]
             )

@@ -114,6 +114,10 @@ async def send(config, message):
         return False
 
 
+def format_last_multiplier(multiplier):
+    return f"Последний коэффициент: {multiplier:.2f}x"
+
+
 def new_results(previous, current):
     """History is newest-first. Return newly completed results oldest-first."""
     if not previous or not current or previous == current:
@@ -274,6 +278,10 @@ async def run_monitor(config: Config):
                                 )
                             for multiplier in results:
                                 log.info("Completed round: %.2fx", multiplier)
+                                await send(
+                                    config,
+                                    format_last_multiplier(multiplier),
+                                )
                                 if multiplier < config.threshold:
                                     state.streak += 1
                                     if state.streak == config.trigger_streak:

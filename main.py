@@ -396,6 +396,29 @@ class TelegramStreakPanel:
             await asyncio.gather(*self._deletion_tasks, return_exceptions=True)
 
 
+_original_run_monitor = monitor.run_monitor
+
+
+async def _run_monitor_with_state(config, state=None):
+    """Reuse the state already loaded by main so UI and monitor stay synchronized."""
+    if state is None:
+        return await _original_run_monitor(config)
+
+    original_load_state = monitor.load_state
+
+    async def shared_load_state(_config):
+        return state
+
+    monitor.load_state = shared_load_state
+    try:
+        return await _original_run_monitor(config)
+    finally:
+        monitor.load_state = original_load_state
+
+
+monitor.run_monitor = _run_monitor_with_state
+
+
 async def health_server() -> None:
     port = int(os.getenv("PORT", "10000"))
 
@@ -473,7 +496,7 @@ async def main_async() -> None:
             health_server(),
             panel.ensure_panel(),
             streak.start(),
-            monitor.run_monitor(config),
+            monitor.run_monitor(config, state=state),
         )
     finally:
         await streak.close()

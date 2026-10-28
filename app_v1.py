@@ -17,6 +17,64 @@ from luckyjet_signal.settings import Config
 log = logging.getLogger("luckyjet.v1")
 
 
+async def telegram_request_with_diagnostics(request, method, payload):
+    """Call Telegram while preserving the API error description in Render logs."""
+    try:
+        return await request(method, payload)
+    except httpx.HTTPStatusError as exc:
+        description = ""
+        try:
+            description = str(exc.response.json().get("description", ""))
+        except Exception:
+            description = ""
+        log.error(
+            "Telegram API %s failed: HTTP %s %s",
+            method,
+            exc.response.status_code,
+            description[:300],
+        )
+        raise
+    except RuntimeError as exc:
+        log.error("Telegram API %s failed: %s", method, str(exc)[:300])
+        raise
+
+
+async def prepare_telegram_polling(request, admin_chat_id=None):
+    """Validate the bot token and remove any webhook that blocks getUpdates."""
+    me = await request("getMe", {})
+    bot = me.get("result", {})
+    log.info(
+        "Telegram bot connected: id=%s username=@%s",
+        bot.get("id", "?"),
+        bot.get("username", "?"),
+    )
+
+    webhook = await request("getWebhookInfo", {})
+    info = webhook.get("result", {})
+    webhook_url = str(info.get("url") or "").strip()
+    pending = int(info.get("pending_update_count") or 0)
+    log.info(
+        "Telegram webhook state: configured=%s pending_updates=%s",
+        bool(webhook_url),
+        pending,
+    )
+    if webhook_url:
+        await request("deleteWebhook", {"drop_pending_updates": False})
+        log.warning("Telegram webhook removed so long polling can start")
+
+    if admin_chat_id:
+        try:
+            chat = await request("getChat", {"chat_id": admin_chat_id})
+            result = chat.get("result", {})
+            log.info(
+                "Telegram admin chat reachable: id=%s type=%s",
+                result.get("id", admin_chat_id),
+                result.get("type", "unknown"),
+            )
+        except (httpx.HTTPError, RuntimeError):
+            log.exception("Telegram admin chat is not reachable")
+
+
 def seed_private_streak(gate, values) -> None:
     """Restore the current chronological <2x run from newest-first history."""
     gate.current_streak = []
@@ -68,8 +126,14 @@ async def main_async() -> None:
 
     state = await monitor.load_state(config)
     panel = base.TelegramHistoryPanel(config, initial_history=state.previous)
+
+    async def telegram_request(method, payload):
+        return await telegram_request_with_diagnostics(panel._request, method, payload)
+
+    await prepare_telegram_polling(telegram_request, config.telegram_chat_id)
+
     password_gate = ReliableTelegramPasswordGate(
-        panel._request,
+        telegram_request,
         history_provider=lambda: panel.history,
         admin_chat_id=config.telegram_chat_id,
     )

@@ -36,47 +36,25 @@ HISTORY_SCRIPT = r"""
     for (const el of document.querySelectorAll("body *")) {
         if (el.children.length || !visible(el)) continue;
 
-        const text = (
-            el.innerText || el.textContent || ""
-        ).trim();
-
-        const match = text.match(
-            /^(\d+(?:[.,]\d{1,2})?)\s*x$/i
-        );
-
+        const text = (el.innerText || el.textContent || "").trim();
+        const match = text.match(/^(\d+(?:[.,]\d{1,2})?)\s*x$/i);
         if (!match) continue;
 
-        const value = Number(
-            match[1].replace(",", ".")
-        );
-
-        if (
-            !Number.isFinite(value) ||
-            value < 1 ||
-            value > 100000
-        ) continue;
+        const value = Number(match[1].replace(",", "."));
+        if (!Number.isFinite(value) || value < 1 || value > 100000) continue;
 
         const r = el.getBoundingClientRect();
-
-        candidates.push({
-            value,
-            x: r.left,
-            y: r.top
-        });
+        candidates.push({ value, x: r.left, y: r.top });
     }
 
     const groups = [];
 
     for (const item of candidates) {
-        let group = groups.find(
-            g => Math.abs(g.y - item.y) < 14
-        );
-
+        let group = groups.find(g => Math.abs(g.y - item.y) < 14);
         if (!group) {
-            group = {y: item.y, items: []};
+            group = { y: item.y, items: [] };
             groups.push(group);
         }
-
         group.items.push(item);
     }
 
@@ -86,10 +64,7 @@ HISTORY_SCRIPT = r"""
             a.y - b.y
     );
 
-    const best = groups.find(
-        g => g.items.length >= 3
-    );
-
+    const best = groups.find(g => g.items.length >= 3);
     if (!best) return [];
 
     best.items.sort((a, b) => a.x - b.x);
@@ -103,10 +78,7 @@ HISTORY_SCRIPT = r"""
 DIAGNOSTIC_SCRIPT = r"""
 (() => {
     const body = document.body;
-    const text = body
-        ? (body.innerText || "").slice(0, 350)
-        : "";
-
+    const text = body ? (body.innerText || "").slice(0, 350) : "";
     const elements = document.querySelectorAll("*");
 
     let canvasCount = 0;
@@ -119,10 +91,7 @@ DIAGNOSTIC_SCRIPT = r"""
 
         if (el.children.length) continue;
 
-        const value = (
-            el.innerText || el.textContent || ""
-        ).trim();
-
+        const value = (el.innerText || el.textContent || "").trim();
         if (/^\d+(?:[.,]\d+)?\s*x$/i.test(value)) {
             multiplierCount++;
         }
@@ -131,15 +100,64 @@ DIAGNOSTIC_SCRIPT = r"""
     return {
         title: document.title.slice(0, 100),
         ready: document.readyState,
-        bodyLength: body
-            ? (body.innerText || "").length
-            : 0,
+        bodyLength: body ? (body.innerText || "").length : 0,
         elements: elements.length,
         canvases: canvasCount,
         iframes: iframeCount,
         multipliers: multiplierCount,
         sample: text.replace(/\s+/g, " ")
     };
+})()
+"""
+
+DEMO_DIAGNOSTIC_SCRIPT = r"""
+(() => {
+    const norm = s => (s || "").replace(/\s+/g, " ").trim();
+
+    const wanted = new Set([
+        "Демо-режим",
+        "Демо режим",
+        "Играть бесплатно",
+        "Demo mode",
+        "Play demo",
+        "Play for free"
+    ]);
+
+    const result = [];
+
+    for (const el of document.querySelectorAll("body *")) {
+        const text = norm(el.innerText || el.textContent);
+
+        if (!wanted.has(text)) continue;
+
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+
+        result.push({
+            tag: el.tagName,
+            role: el.getAttribute("role") || "",
+            text,
+            visible:
+                r.width > 0 &&
+                r.height > 0 &&
+                s.display !== "none" &&
+                s.visibility !== "hidden" &&
+                Number(s.opacity) !== 0,
+            disabled:
+                el.hasAttribute("disabled") ||
+                el.getAttribute("aria-disabled") === "true",
+            href:
+                el.tagName === "A"
+                    ? (el.getAttribute("href") || "")
+                    : "",
+            className:
+                typeof el.className === "string"
+                    ? el.className.slice(0, 160)
+                    : ""
+        });
+    }
+
+    return result.slice(0, 20);
 })()
 """
 
@@ -205,7 +223,9 @@ async def load_state(config):
 
         if STATE.exists():
             d = json.loads(
-                STATE.read_text(encoding="utf-8")
+                STATE.read_text(
+                    encoding="utf-8"
+                )
             )
 
             return State(
@@ -221,7 +241,9 @@ async def load_state(config):
     except Exception:
         log.exception("State load failed")
 
-    return State(next_amount=config.base_amount)
+    return State(
+        next_amount=config.base_amount
+    )
 
 
 async def save_state(config, state):
@@ -232,7 +254,10 @@ async def save_state(config, state):
 
         if r:
             try:
-                await r.set("luckyjet:state", raw)
+                await r.set(
+                    "luckyjet:state",
+                    raw,
+                )
                 return
             finally:
                 await r.aclose()
@@ -256,7 +281,9 @@ async def send(config, message):
     chat_id = config.telegram_chat_id
 
     if not token or not chat_id:
-        log.warning("Telegram credentials missing")
+        log.warning(
+            "Telegram credentials missing"
+        )
         return False
 
     url = (
@@ -278,7 +305,9 @@ async def send(config, message):
 
             response.raise_for_status()
 
-        log.info("Telegram message delivered")
+        log.info(
+            "Telegram message delivered"
+        )
         return True
 
     except httpx.HTTPStatusError as exc:
@@ -305,12 +334,18 @@ def new_results(previous, current):
 
     limit = min(
         6,
-        max(1, len(current) - 1),
+        max(
+            1,
+            len(current) - 1,
+        ),
     )
 
     candidates = []
 
-    for count in range(1, limit + 1):
+    for count in range(
+        1,
+        limit + 1,
+    ):
         overlap = min(
             len(previous),
             len(current) - count,
@@ -320,13 +355,19 @@ def new_results(previous, current):
             continue
 
         if (
-            current[count:count + overlap]
+            current[
+                count:count + overlap
+            ]
             == previous[:overlap]
         ):
             candidates.append(
                 (
                     overlap,
-                    list(reversed(current[:count])),
+                    list(
+                        reversed(
+                            current[:count]
+                        )
+                    ),
                 )
             )
 
@@ -342,7 +383,10 @@ def new_results(previous, current):
         3,
         max(
             1,
-            min(len(previous), len(current)) - 1,
+            min(
+                len(previous),
+                len(current),
+            ) - 1,
         ),
     )
 
@@ -358,7 +402,9 @@ async def read_history(page, config):
     for frame in page.frames:
         try:
             values = await asyncio.wait_for(
-                frame.evaluate(HISTORY_SCRIPT),
+                frame.evaluate(
+                    HISTORY_SCRIPT
+                ),
                 timeout=10,
             )
 
@@ -385,10 +431,14 @@ async def diagnose_frames(page):
         len(page.frames),
     )
 
-    for index, frame in enumerate(page.frames):
+    for index, frame in enumerate(
+        page.frames
+    ):
         try:
             data = await asyncio.wait_for(
-                frame.evaluate(DIAGNOSTIC_SCRIPT),
+                frame.evaluate(
+                    DIAGNOSTIC_SCRIPT
+                ),
                 timeout=10,
             )
 
@@ -409,6 +459,133 @@ async def diagnose_frames(page):
             )
 
 
+async def diagnose_demo_controls(page):
+    total = 0
+
+    for index, frame in enumerate(
+        page.frames
+    ):
+        try:
+            controls = await asyncio.wait_for(
+                frame.evaluate(
+                    DEMO_DIAGNOSTIC_SCRIPT
+                ),
+                timeout=10,
+            )
+
+            total += len(controls)
+
+            if controls:
+                log.info(
+                    "Demo controls frame=%d: %s",
+                    index,
+                    json.dumps(
+                        controls,
+                        ensure_ascii=False,
+                    ),
+                )
+
+        except Exception as exc:
+            log.warning(
+                "Demo diagnostics failed "
+                "in frame %d: %s",
+                index,
+                type(exc).__name__,
+            )
+
+    log.info(
+        "Demo controls found: %d",
+        total,
+    )
+
+
+async def click_demo_mode(page):
+    labels = [
+        "Демо-режим",
+        "Демо режим",
+        "Играть бесплатно",
+        "Demo mode",
+        "Play demo",
+        "Play for free",
+    ]
+
+    await diagnose_demo_controls(page)
+
+    for frame_index, frame in enumerate(
+        page.frames
+    ):
+        for label in labels:
+            try:
+                locator = frame.get_by_text(
+                    label,
+                    exact=True,
+                )
+
+                count = await locator.count()
+
+                for item_index in range(
+                    count
+                ):
+                    item = locator.nth(
+                        item_index
+                    )
+
+                    try:
+                        if not await item.is_visible():
+                            continue
+
+                        await (
+                            item
+                            .scroll_into_view_if_needed(
+                                timeout=3000
+                            )
+                        )
+
+                        await item.click(
+                            timeout=5000,
+                            force=False,
+                        )
+
+                        log.info(
+                            "Demo mode clicked: "
+                            "frame=%d "
+                            "label=%s "
+                            "item=%d",
+                            frame_index,
+                            label,
+                            item_index,
+                        )
+
+                        return True
+
+                    except Exception as exc:
+                        log.info(
+                            "Demo candidate click "
+                            "failed: "
+                            "frame=%d "
+                            "label=%s "
+                            "item=%d "
+                            "error=%s",
+                            frame_index,
+                            label,
+                            item_index,
+                            type(exc).__name__,
+                        )
+
+            except Exception as exc:
+                log.debug(
+                    "Demo locator failed: %s",
+                    type(exc).__name__,
+                )
+
+    log.warning(
+        "Demo mode exact-text "
+        "element was not clickable"
+    )
+
+    return False
+
+
 async def page_issue(page):
     for frame in page.frames:
         try:
@@ -416,15 +593,20 @@ async def page_issue(page):
                 (
                     await frame.locator(
                         "body"
-                    ).inner_text(timeout=1000)
-                ).lower().split()
+                    ).inner_text(
+                        timeout=1000
+                    )
+                )
+                .lower()
+                .split()
             )
 
         except Exception:
             continue
 
         if (
-            "site is not available in your region"
+            "site is not available "
+            "in your region"
             in text
         ):
             return (
@@ -435,11 +617,16 @@ async def page_issue(page):
     return None
 
 
-async def open_game(context, config):
+async def open_game(
+    context,
+    config,
+):
     page = await context.new_page()
 
     try:
-        log.info("Opening Lucky Jet page")
+        log.info(
+            "Opening Lucky Jet page"
+        )
 
         response = await page.goto(
             config.game_url,
@@ -449,59 +636,32 @@ async def open_game(context, config):
 
         log.info(
             "Game page opened: HTTP %s",
-            response.status if response else "unknown",
+            response.status
+            if response
+            else "unknown",
         )
 
-        await page.wait_for_timeout(8000)
+        await page.wait_for_timeout(
+            8000
+        )
 
-        demo_labels = [
-            "Демо-режим",
-            "Демо режим",
-            "Играть бесплатно",
-            "Demo mode",
-            "Play demo",
-            "Play for free",
-        ]
+        demo_started = (
+            await click_demo_mode(page)
+        )
 
-        demo_started = False
-
-        for frame in page.frames:
-            if demo_started:
-                break
-
-            for label in demo_labels:
-                try:
-                    button = frame.get_by_role(
-                        "button",
-                        name=label,
-                        exact=True,
-                    )
-
-                    if await button.count() == 1:
-                        if await button.is_visible():
-                            await button.click(timeout=5000)
-
-                            log.info(
-                                "Demo mode button clicked: %s",
-                                label,
-                            )
-
-                            demo_started = True
-                            break
-
-                except Exception as exc:
-                    log.debug(
-                        "Demo button unavailable: %s",
-                        type(exc).__name__,
-                    )
-
-        if not demo_started:
+        if demo_started:
+            log.info(
+                "Demo mode click completed; "
+                "waiting for game frame"
+            )
+        else:
             log.warning(
-                "Demo mode button not found; "
-                "no other controls were clicked"
+                "Demo mode was not started"
             )
 
-        await page.wait_for_timeout(12000)
+        await page.wait_for_timeout(
+            12000
+        )
 
         log.info(
             "After demo attempt: frames=%d",
@@ -517,14 +677,17 @@ async def open_game(context, config):
         raise
 
 
-async def run_monitor(config: Config):
+async def run_monitor(
+    config: Config
+):
     state = await load_state(config)
 
     last_error_notice = 0.0
     last_diagnostic = 0.0
 
     log.info(
-        "Monitor starting; read-only mode"
+        "Monitor starting; "
+        "read-only mode"
     )
 
     async with async_playwright() as p:
@@ -533,11 +696,13 @@ async def run_monitor(config: Config):
         )
 
         try:
-            context = await browser.new_context(
-                viewport={
-                    "width": 430,
-                    "height": 932,
-                }
+            context = (
+                await browser.new_context(
+                    viewport={
+                        "width": 430,
+                        "height": 932,
+                    }
+                )
             )
 
             page = None
@@ -559,10 +724,14 @@ async def run_monitor(config: Config):
                             config,
                             "Монитор запущен. "
                             "Ставки не выполняются. "
-                            "Отслеживаются завершённые раунды.",
+                            "Отслеживаются "
+                            "завершённые раунды.",
                         )
 
-                    issue = await page_issue(page)
+                    issue = await page_issue(
+                        page
+                    )
+
                     now = time.monotonic()
 
                     if issue:
@@ -572,32 +741,46 @@ async def run_monitor(config: Config):
                         )
 
                         if (
-                            now - last_error_notice
-                            >= config.error_notify_cooldown
+                            now
+                            - last_error_notice
+                            >= config
+                            .error_notify_cooldown
                         ):
-                            await send(config, issue)
+                            await send(
+                                config,
+                                issue,
+                            )
+
                             last_error_notice = now
 
                         await asyncio.sleep(
                             config.poll_seconds
                         )
+
                         continue
 
                     if (
-                        now - last_diagnostic
+                        now
+                        - last_diagnostic
                         >= DIAGNOSTIC_INTERVAL
                     ):
-                        await diagnose_frames(page)
+                        await diagnose_frames(
+                            page
+                        )
+
                         last_diagnostic = now
 
-                    current = await read_history(
-                        page,
-                        config,
+                    current = (
+                        await read_history(
+                            page,
+                            config,
+                        )
                     )
 
                     if (
                         len(current)
-                        >= config.minimum_history_items
+                        >= config
+                        .minimum_history_items
                     ):
                         if not state.previous:
                             state.previous = current
@@ -612,7 +795,10 @@ async def run_monitor(config: Config):
                                 current,
                             )
 
-                        elif current != state.previous:
+                        elif (
+                            current
+                            != state.previous
+                        ):
                             results = new_results(
                                 state.previous,
                                 current,
@@ -620,16 +806,19 @@ async def run_monitor(config: Config):
 
                             if not results:
                                 log.warning(
-                                    "History changed but "
-                                    "could not align: "
-                                    "previous=%s current=%s",
+                                    "History changed "
+                                    "but could not "
+                                    "align: "
+                                    "previous=%s "
+                                    "current=%s",
                                     state.previous[:8],
                                     current[:8],
                                 )
 
                             for multiplier in results:
                                 log.info(
-                                    "Completed round: %.2fx",
+                                    "Completed round: "
+                                    "%.2fx",
                                     multiplier,
                                 )
 
@@ -641,7 +830,8 @@ async def run_monitor(config: Config):
 
                                     if (
                                         state.streak
-                                        == config.trigger_streak
+                                        == config
+                                        .trigger_streak
                                     ):
                                         state.active = True
 
@@ -650,7 +840,8 @@ async def run_monitor(config: Config):
                                             (
                                                 f"Зафиксировано "
                                                 f"{state.streak} "
-                                                f"раунда подряд ниже "
+                                                f"раунда подряд "
+                                                f"ниже "
                                                 f"{config.threshold:g}x.\n"
                                                 f"Последний: "
                                                 f"{multiplier:.2f}x"
@@ -661,7 +852,8 @@ async def run_monitor(config: Config):
                                         await send(
                                             config,
                                             (
-                                                f"Ещё один раунд ниже "
+                                                f"Ещё один раунд "
+                                                f"ниже "
                                                 f"{config.threshold:g}x: "
                                                 f"{multiplier:.2f}x.\n"
                                                 f"Длина серии: "
@@ -692,9 +884,11 @@ async def run_monitor(config: Config):
 
                     else:
                         log.debug(
-                            "Insufficient history: %d/%d",
+                            "Insufficient history: "
+                            "%d/%d",
                             len(current),
-                            config.minimum_history_items,
+                            config
+                            .minimum_history_items,
                         )
 
                     await asyncio.sleep(
@@ -706,7 +900,8 @@ async def run_monitor(config: Config):
 
                 except Exception as exc:
                     log.error(
-                        "Monitor iteration failed: %s",
+                        "Monitor iteration "
+                        "failed: %s",
                         type(exc).__name__,
                     )
 
@@ -718,8 +913,10 @@ async def run_monitor(config: Config):
                     now = time.monotonic()
 
                     if (
-                        now - last_error_notice
-                        >= config.error_notify_cooldown
+                        now
+                        - last_error_notice
+                        >= config
+                        .error_notify_cooldown
                     ):
                         await send(
                             config,

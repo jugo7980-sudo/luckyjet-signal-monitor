@@ -7,6 +7,7 @@ import time
 
 import httpx
 
+from luckyjet_password_gate import TelegramPasswordGate
 from luckyjet_signal.settings import Config
 from luckyjet_signal import monitor
 from luckyjet_signal.browser_runtime import low_memory_async_playwright
@@ -462,6 +463,7 @@ async def main_async() -> None:
         initial_history=state.previous,
     )
     streak = TelegramStreakPanel(config, panel._request, initial_history=state.previous)
+    password_gate = TelegramPasswordGate(panel._request)
 
     async def handle_round(config_or_message, message=None):
         actual = str(config_or_message) if message is None else message
@@ -499,6 +501,7 @@ async def main_async() -> None:
     try:
         await asyncio.gather(
             health_server(),
+            password_gate.start(),
             panel.ensure_panel(),
             streak.start(),
             monitor.run_monitor(config, state=state),

@@ -48,12 +48,80 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
                 self.menu(user_id),
             )
 
+    @staticmethod
+    def _telegram_description(exc):
+        try:
+            return str(exc.response.json().get("description", ""))
+        except Exception:
+            return ""
+
     async def ensure_private_history(self, user_id):
-        """Serialize recovery so two concurrent updates cannot create duplicate history panels."""
+        """Keep one history panel and serialize its recovery."""
         user_id = int(user_id)
         lock = self._history_locks.setdefault(user_id, asyncio.Lock())
         async with lock:
-            return await super().ensure_private_history(user_id)
+            chat_id = self.chats.get(user_id)
+            if chat_id is None:
+                return False
+
+            markup = self._history_markup()
+            message_id = self.history_messages.get(user_id)
+            if message_id is not None:
+                try:
+                    await self.request(
+                        "editMessageReplyMarkup",
+                        {
+                            "chat_id": chat_id,
+                            "message_id": message_id,
+                            "reply_markup": markup,
+                        },
+                    )
+                    return True
+                except httpx.HTTPStatusError as exc:
+                    description = self._telegram_description(exc).lower()
+                    if exc.response.status_code == 400 and "message is not modified" in description:
+                        return True
+                    log.warning(
+                        "Private history edit rejected: status=%s description=%s",
+                        exc.response.status_code,
+                        self._telegram_description(exc)[:180],
+                    )
+                    self.history_messages.pop(user_id, None)
+                    await self._persist_user(user_id)
+                except (httpx.RequestError, RuntimeError, httpx.HTTPError) as exc:
+                    log.warning(
+                        "Private history edit failed; recreating: error=%s",
+                        type(exc).__name__,
+                    )
+                    self.history_messages.pop(user_id, None)
+                    await self._persist_user(user_id)
+
+            try:
+                result = await self.request(
+                    "sendMessage",
+                    {
+                        "chat_id": chat_id,
+                        "text": "🎰 Lucky Jet — история",
+                        "reply_markup": markup,
+                    },
+                )
+                message_id = result.get("result", {}).get("message_id")
+                if message_id is None:
+                    return False
+                self.history_messages[user_id] = int(message_id)
+                await self._persist_user(user_id)
+                log.info("Private history panel ready")
+                return True
+            except httpx.HTTPStatusError as exc:
+                log.warning(
+                    "Private history create rejected: status=%s description=%s",
+                    exc.response.status_code,
+                    self._telegram_description(exc)[:180],
+                )
+                return False
+            except (httpx.RequestError, RuntimeError, httpx.HTTPError) as exc:
+                log.warning("Private history create failed: error=%s", type(exc).__name__)
+                return False
 
     async def _load_persisted_state(self):
         await super()._load_persisted_state()

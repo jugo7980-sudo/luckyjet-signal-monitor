@@ -6,17 +6,17 @@ import time
 from pathlib import Path
 import httpx
 from playwright.async_api import async_playwright
-from .config import Config
+from .settings import Config
 
 log = logging.getLogger("luckyjet.monitor")
 STATE = Path("data/state.json")
 
 class State:
     def __init__(self, active=False, streak=0, next_amount=150, previous=None):
-        self.active = bool(active)
-        self.streak = int(streak)
-        self.next_amount = int(next_amount)
-        self.previous = list(previous or [])
+ self.active = bool(active)
+ self.streak = int(streak)
+ self.next_amount = int( ext_amount)
+ self.previous = list(previous or [])
 
     def dump(self):
         return {
@@ -27,7 +27,7 @@ class State:
         }
 
 async def _redis(config):
-    url = __import__("os").getenv("REDIS_URL", "").strip()
+ url = __import__("os").getenv("REDIS_URL", "").strip()
     if not url:
         return None
     import redis.asyncio as redis

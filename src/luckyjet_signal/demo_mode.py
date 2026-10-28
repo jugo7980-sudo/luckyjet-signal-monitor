@@ -47,15 +47,32 @@ async def _js_click(page):
         return False
 
 
-def wrap_click_demo_mode(delegate):
+async def _wait_for_js_click(page, *, attempts, retry_ms):
+    total = max(1, attempts)
+    for attempt in range(total):
+        if await _js_click(page):
+            return True
+        if attempt + 1 < total:
+            try:
+                await page.wait_for_timeout(retry_ms)
+            except Exception:
+                pass
+    return False
+
+
+def wrap_click_demo_mode(delegate, *, js_attempts=12, retry_ms=1000):
     async def wrapped(page):
         original_url = str(getattr(page, "url", ""))
-        clicked = await delegate(page)
 
-        if not clicked:
-            clicked = await _js_click(page)
-            if clicked:
-                log.info("Demo mode clicked with JS fallback")
+        clicked = await _wait_for_js_click(
+            page,
+            attempts=js_attempts,
+            retry_ms=retry_ms,
+        )
+        if clicked:
+            log.info("Demo mode clicked with JS exact-match")
+        else:
+            clicked = await delegate(page)
 
         if not clicked:
             return False

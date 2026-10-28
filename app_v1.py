@@ -14,6 +14,19 @@ from luckyjet_signal.settings import Config
 log = logging.getLogger("luckyjet.v1")
 
 
+def seed_private_streak(gate, values) -> None:
+    """Restore the current chronological <2x run from newest-first history."""
+    gate.current_streak = []
+    for value in reversed(list(values or [])):
+        formatted = base.format_history_coefficient(value)
+        if formatted is None:
+            continue
+        if float(formatted[:-1]) < 2:
+            gate.current_streak.append(formatted)
+        else:
+            gate.current_streak.clear()
+
+
 async def main_async() -> None:
     config = Config.from_env()
     monitor.async_playwright = low_memory_async_playwright
@@ -21,12 +34,12 @@ async def main_async() -> None:
 
     state = await monitor.load_state(config)
     panel = base.TelegramHistoryPanel(config, initial_history=state.previous)
-    streak = base.TelegramStreakPanel(config, panel._request, initial_history=state.previous)
     password_gate = TelegramPasswordGate(
         panel._request,
         history_provider=lambda: panel.history,
         admin_chat_id=config.telegram_chat_id,
     )
+    seed_private_streak(password_gate, state.previous)
 
     async def handle_round(config_or_message, message=None):
         actual = str(config_or_message) if message is None else message
@@ -41,24 +54,11 @@ async def main_async() -> None:
                     for value in state.previous[: panel.limit]
                     if (formatted := base.format_history_coefficient(value)) is not None
                 ]
-                streak.values = []
-                for value in reversed(state.previous):
-                    formatted = base.format_history_coefficient(value)
-                    if formatted is None:
-                        continue
-                    if float(formatted[:-1]) < 2:
-                        streak.values.append(formatted)
-                    else:
-                        streak.values.clear()
-                streak._startup_pending = True
-                streak._startup_latest = latest
-                result = await panel.ensure_panel()
-                await streak.start()
-                return result
+                seed_private_streak(password_gate, state.previous)
+                return await panel.ensure_panel()
 
         result = await panel.handle_monitor_message(config_or_message, message)
         if coefficient is not None:
-            await streak.on_round(coefficient)
             await password_gate.on_round(coefficient)
         return result
 
@@ -69,12 +69,10 @@ async def main_async() -> None:
             base.health_server(),
             password_gate.start(),
             panel.ensure_panel(),
-            streak.start(),
             monitor.run_monitor(config, state=state),
         )
     finally:
         await password_gate.close()
-        await streak.close()
         await panel.close()
 
 

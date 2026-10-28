@@ -24,6 +24,8 @@ class TelegramPasswordGate:
         self.pending = set()
         self.chats = {}
         self.history_messages = {}
+        self.prompt_messages = {}
+        self.menu_messages = {}
         self.notifications_disabled = set()
         self.thresholds = {}
         self.delete_seconds = {}
@@ -168,19 +170,23 @@ class TelegramPasswordGate:
         value = int(self.delete_seconds.get(int(user_id), 30))
         return value if value in {0, 15, 30, 60} else 30
 
+    def _navigation_rows(self):
+        return [[
+            {"text": "⬅️ Меню", "callback_data": "menu_main"},
+            {"text": "✖ Закрыть меню", "callback_data": "menu_close"},
+        ]]
+
     def menu(self, user_id=None):
         rows = [
             [
-                {"text": "📊 История", "callback_data": "menu_history"},
                 {"text": "📡 Статус", "callback_data": "menu_status"},
-            ],
-            [
                 {"text": "🔔 Уведомления", "callback_data": "menu_notifications"},
-                {"text": "⚙️ Настройки", "callback_data": "menu_settings"},
             ],
+            [{"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
         ]
         if user_id is not None and self.is_admin(user_id):
             rows.append([{"text": "🛡 Админ", "callback_data": "admin_users"}])
+        rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
 
     def settings_menu(self, user_id):
@@ -199,13 +205,7 @@ class TelegramPasswordGate:
             prefix = "✓ " if value == delete else ""
             callback_value = "off" if value == 0 else str(value)
             delete_row.append({"text": f"{prefix}{label}", "callback_data": f"delete:{callback_value}"})
-        return {
-            "inline_keyboard": [
-                *threshold_rows,
-                delete_row,
-                [{"text": "⬅️ Меню", "callback_data": "menu_main"}],
-            ]
-        }
+        return {"inline_keyboard": [*threshold_rows, delete_row, *self._navigation_rows()]}
 
     def _admin_menu(self):
         rows = []
@@ -222,8 +222,59 @@ class TelegramPasswordGate:
             rows.append(
                 [{"text": f"Разблокировать {user_id}", "callback_data": f"admin_unblock:{user_id}"}]
             )
-        rows.append([{"text": "⬅️ Меню", "callback_data": "menu_main"}])
+        rows.extend(self._navigation_rows())
         return {"inline_keyboard": rows}
+
+    async def _safe_delete(self, chat_id, message_id):
+        if chat_id is None or message_id is None:
+            return
+        try:
+            await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+        except (httpx.HTTPError, RuntimeError, KeyError, TypeError):
+            pass
+
+    async def _replace_prompt(self, user_id, chat_id, text):
+        message_id = self.prompt_messages.get(user_id)
+        if message_id is not None:
+            try:
+                await self.request(
+                    "editMessageText",
+                    {"chat_id": chat_id, "message_id": message_id, "text": text},
+                )
+                return
+            except (httpx.HTTPError, RuntimeError):
+                self.prompt_messages.pop(user_id, None)
+        result = await self.request("sendMessage", {"chat_id": chat_id, "text": text})
+        message_id = result.get("result", {}).get("message_id")
+        if message_id is not None:
+            self.prompt_messages[user_id] = int(message_id)
+
+    async def _delete_prompt(self, user_id, chat_id):
+        message_id = self.prompt_messages.pop(user_id, None)
+        await self._safe_delete(chat_id, message_id)
+
+    async def _delete_transient_source(self, user_id, chat_id, callback):
+        message_id = self._to_int((callback.get("message") or {}).get("message_id"))
+        if message_id is None:
+            return
+        if message_id == self.history_messages.get(user_id):
+            return
+        if message_id == self.active_messages.get(user_id):
+            return
+        if self.menu_messages.get(user_id) == message_id:
+            self.menu_messages.pop(user_id, None)
+        await self._safe_delete(chat_id, message_id)
+
+    async def _send_transient(self, user_id, chat_id, text, reply_markup):
+        old_message_id = self.menu_messages.pop(user_id, None)
+        await self._safe_delete(chat_id, old_message_id)
+        result = await self.request(
+            "sendMessage",
+            {"chat_id": chat_id, "text": text, "reply_markup": reply_markup},
+        )
+        message_id = result.get("result", {}).get("message_id")
+        if message_id is not None:
+            self.menu_messages[user_id] = int(message_id)
 
     async def handle_update(self, update):
         callback = update.get("callback_query")
@@ -239,6 +290,7 @@ class TelegramPasswordGate:
 
         user_id = self._to_int(sender.get("id"))
         chat_id = self._to_int(chat.get("id"))
+        message_id = self._to_int(msg.get("message_id"))
         if user_id is None or chat_id is None:
             return
 
@@ -246,60 +298,52 @@ class TelegramPasswordGate:
         command = value.split("@", 1)[0].split(" ", 1)[0]
 
         if user_id in self.blocked and not self.is_admin(user_id):
-            await self.request("sendMessage", {"chat_id": chat_id, "text": "⛔ Доступ заблокирован."})
+            await self._safe_delete(chat_id, message_id)
+            await self._replace_prompt(user_id, chat_id, "⛔ Доступ заблокирован.")
             return
 
         if await self.is_authorized(user_id):
             self.chats[user_id] = chat_id
-
-        newly_authorized = False
-        if command == "/start":
-            if await self.is_authorized(user_id):
-                answer = "🎰 Lucky Jet Monitor\nДоступ открыт."
-            else:
-                self.pending.add(user_id)
-                answer = "🔐 Введите пароль для доступа к боту."
-        elif await self.is_authorized(user_id):
+            await self._safe_delete(chat_id, message_id)
+            if command == "/start":
+                await self.ensure_private_history(user_id)
             return
-        elif user_id not in self.pending:
-            answer = "Для начала нажмите /start."
-        elif self.blocked_until.get(user_id, 0) > time.monotonic():
-            answer = "⏳ Повторите попытку через 5 минут."
-        elif hmac.compare_digest(value, self.password):
+
+        if command == "/start":
+            await self._safe_delete(chat_id, message_id)
+            self.pending.add(user_id)
+            await self._replace_prompt(user_id, chat_id, "🔐 Введите пароль для доступа к боту.")
+            return
+
+        await self._safe_delete(chat_id, message_id)
+        if user_id not in self.pending:
+            await self._replace_prompt(user_id, chat_id, "Для начала нажмите /start.")
+            return
+
+        if self.blocked_until.get(user_id, 0) > time.monotonic():
+            await self._replace_prompt(user_id, chat_id, "⏳ Повторите попытку через 5 минут.")
+            return
+
+        if hmac.compare_digest(value, self.password):
             self.authorized.add(user_id)
             self.chats[user_id] = chat_id
             self.pending.discard(user_id)
             self.failures.pop(user_id, None)
             self.blocked_until.pop(user_id, None)
             await self._persist_user(user_id)
-            newly_authorized = True
-            answer = "✅ Пароль верный. Доступ открыт."
-        else:
-            count = self.failures.get(user_id, 0) + 1
-            self.failures[user_id] = count
-            if count >= 5:
-                self.blocked_until[user_id] = time.monotonic() + 300
-                self.failures[user_id] = 0
-                answer = "⏳ 5 неверных попыток. Повторите через 5 минут."
-            else:
-                answer = "❌ Неверный пароль. Попробуйте ещё раз."
-
-        if user_id in self.pending and value and not value.startswith("/"):
-            try:
-                await self.request(
-                    "deleteMessage",
-                    {"chat_id": chat_id, "message_id": msg.get("message_id")},
-                )
-            except (httpx.HTTPError, RuntimeError, KeyError, TypeError):
-                pass
-
-        if newly_authorized:
+            await self._delete_prompt(user_id, chat_id)
             await self.ensure_private_history(user_id)
+            return
 
-        payload = {"chat_id": chat_id, "text": answer}
-        if await self.is_authorized(user_id):
-            payload["reply_markup"] = self.menu(user_id)
-        await self.request("sendMessage", payload)
+        count = self.failures.get(user_id, 0) + 1
+        self.failures[user_id] = count
+        if count >= 5:
+            self.blocked_until[user_id] = time.monotonic() + 300
+            self.failures[user_id] = 0
+            answer = "⏳ 5 неверных попыток. Повторите через 5 минут."
+        else:
+            answer = "❌ Неверный пароль. Попробуйте ещё раз."
+        await self._replace_prompt(user_id, chat_id, answer)
 
     async def handle_callback(self, callback):
         user_id = self._to_int((callback.get("from") or {}).get("id"))
@@ -317,12 +361,24 @@ class TelegramPasswordGate:
 
         self.chats[user_id] = chat_id
 
+        if data == "noop":
+            return
+
+        if data == "menu_open":
+            await self._send_transient(
+                user_id,
+                chat_id,
+                "🎰 Lucky Jet Monitor\nВыберите раздел.",
+                self.menu(user_id),
+            )
+            return
+
+        await self._delete_transient_source(user_id, chat_id, callback)
+
+        if data == "menu_close":
+            return
         if data == "menu_main":
             answer = "🎰 Lucky Jet Monitor\nВыберите раздел."
-            markup = self.menu(user_id)
-        elif data == "menu_history":
-            await self.ensure_private_history(user_id)
-            answer = "📊 История обновлена."
             markup = self.menu(user_id)
         elif data == "menu_status":
             uptime = max(0, int(time.monotonic() - self.started_at))
@@ -335,7 +391,7 @@ class TelegramPasswordGate:
                 f"Текущая серия <2x: {len(self.current_streak)}\n"
                 f"Аптайм: {hours:02d}:{minutes:02d}:{seconds:02d}"
             )
-            markup = self.menu(user_id)
+            markup = {"inline_keyboard": self._navigation_rows()}
         elif data == "menu_notifications":
             if user_id in self.notifications_disabled:
                 self.notifications_disabled.remove(user_id)
@@ -343,14 +399,8 @@ class TelegramPasswordGate:
             else:
                 self.notifications_disabled.add(user_id)
                 answer = "🔕 Уведомления выключены."
-                message_id = self.active_messages.pop(user_id, None)
-                if message_id is not None:
-                    try:
-                        await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-                    except (httpx.HTTPError, RuntimeError):
-                        pass
             await self._persist_user(user_id)
-            markup = self.menu(user_id)
+            markup = {"inline_keyboard": self._navigation_rows()}
         elif data == "menu_settings":
             delete = self.user_delete_seconds(user_id)
             delete_label = "выкл." if delete == 0 else f"{delete} сек."
@@ -410,11 +460,12 @@ class TelegramPasswordGate:
         else:
             return
 
-        await self.request("sendMessage", {"chat_id": chat_id, "text": answer, "reply_markup": markup})
+        await self._send_transient(user_id, chat_id, answer, markup)
 
     async def _revoke_user(self, user_id, *, block):
         chat_id = self.chats.get(user_id)
         history_message_id = self.history_messages.pop(user_id, None)
+        menu_message_id = self.menu_messages.pop(user_id, None)
         self.authorized.discard(user_id)
         self.pending.discard(user_id)
         self.notifications_disabled.discard(user_id)
@@ -427,14 +478,9 @@ class TelegramPasswordGate:
         else:
             self.blocked.discard(user_id)
         await self._persist_user(user_id)
-        if chat_id is not None and history_message_id is not None:
-            try:
-                await self.request(
-                    "deleteMessage",
-                    {"chat_id": chat_id, "message_id": history_message_id},
-                )
-            except (httpx.HTTPError, RuntimeError):
-                pass
+        if chat_id is not None:
+            await self._safe_delete(chat_id, menu_message_id)
+            await self._safe_delete(chat_id, history_message_id)
 
     @staticmethod
     def _format_coefficient(value):
@@ -465,6 +511,7 @@ class TelegramPasswordGate:
                     for value in values[start : start + 5]
                 ]
             )
+        rows.append([{"text": "☰ Меню", "callback_data": "menu_open"}])
         return {"inline_keyboard": rows}
 
     async def ensure_private_history(self, user_id):
@@ -473,8 +520,6 @@ class TelegramPasswordGate:
         if chat_id is None:
             return False
         markup = self._history_markup()
-        if not markup["inline_keyboard"]:
-            return True
         message_id = self.history_messages.get(user_id)
         if message_id is not None:
             try:

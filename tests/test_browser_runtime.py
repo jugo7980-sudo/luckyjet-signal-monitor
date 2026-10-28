@@ -149,7 +149,7 @@ def test_streak_is_silent_before_four_and_uses_one_full_width_button():
     asyncio.run(run())
 
     assert [method for method, _ in calls] == ["sendMessage"]
-    assert calls[0][1]["text"] == "Серия"
+    assert calls[0][1]["text"] == "🎰 Lucky Jet | Серия <2x"
     rows = calls[0][1]["reply_markup"]["inline_keyboard"]
     assert rows == [[{"text": "Серия 4 · 🟦1.44x", "callback_data": "noop"}], [{"text": "🟦1.11x", "callback_data": "noop"}, {"text": "🟦1.22x", "callback_data": "noop"}, {"text": "🟦1.33x", "callback_data": "noop"}, {"text": "🟦1.44x", "callback_data": "noop"}]]
 

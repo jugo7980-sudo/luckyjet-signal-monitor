@@ -381,7 +381,7 @@ class TelegramPasswordGate:
 
         if await self.is_authorized(user_id):
             self.chats[user_id] = chat_id
-            await self._safe_delete(chat_id, message_id)
+            # Keep user commands visible; never erase the only chat content.
             if command == "/start":
                 await self.ensure_private_history(user_id)
             elif command == "/menu":
@@ -478,9 +478,7 @@ class TelegramPasswordGate:
         if data == "menu_history":
             # Never remove the navigation message before history is confirmed visible.
             # Telegram may return "message is not modified" for an unchanged panel.
-            if await self.ensure_private_history(user_id):
-                await self._delete_transient_source(user_id, chat_id, callback)
-            else:
+            if not await self.ensure_private_history(user_id):
                 await self._send_transient(
                     user_id, chat_id,
                     "⚠️ Историю пока не удалось открыть. Повторите попытку.",

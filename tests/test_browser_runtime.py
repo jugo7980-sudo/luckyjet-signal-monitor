@@ -73,8 +73,8 @@ def test_live_history_helpers_keep_duplicates_trim_and_build_three_columns():
     )
     rows = keyboard["inline_keyboard"]
     assert [len(row) for row in rows] == [3, 1]
-    assert rows[0][0]["text"] == "4.45x"
-    assert rows[1][0]["text"] == "2.28x"
+    assert rows[0][0]["text"] == "🟪 4.45x"
+    assert rows[1][0]["text"] == "🟪 2.28x"
 
 
 def test_live_history_panel_creates_once_then_edits_same_message():
@@ -112,4 +112,4 @@ def test_live_history_panel_creates_once_then_edits_same_message():
     assert calls[0][1]["text"] == "🎰 Lucky Jet — история"
     assert calls[1][1]["message_id"] == 777
     first_button = calls[1][1]["reply_markup"]["inline_keyboard"][0][0]
-    assert first_button["text"] == "4.45x"
+    assert first_button["text"] == "🟪 4.45x"

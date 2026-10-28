@@ -11,10 +11,10 @@ log = logging.getLogger("luckyjet.auth")
 
 
 class TelegramPasswordGate:
-    def __init__(self, request, history_provider=None, admin_chat_id=None):
+    def __init__(self, request, history_provider=None, admin_chat_id=None, password=None):
         self.request = request
         self.history_provider = history_provider
-        self.password = os.getenv("TELEGRAM_ACCESS_PASSWORD", "122011")
+        self.password = password if password is not None else os.getenv("TELEGRAM_ACCESS_PASSWORD", "").strip()
         self.redis_url = os.getenv("REDIS_URL", "").strip()
         self.redis = None
         self.admin_chat_id = self._to_int(admin_chat_id)
@@ -46,6 +46,9 @@ class TelegramPasswordGate:
             return None
 
     async def start(self):
+        if not self.password:
+            raise RuntimeError("TELEGRAM_ACCESS_PASSWORD missing")
+
         if self.redis_url:
             from redis.asyncio import from_url
 

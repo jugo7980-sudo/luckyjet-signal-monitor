@@ -12,6 +12,26 @@ def should_release_browser_page(rounds, source) -> bool:
     return bool(rounds) and str(source or "").startswith("direct:")
 
 
+def stale_direct_history(
+    *,
+    direct_only_mode,
+    worked,
+    changed,
+    stale_since,
+    now,
+    timeout_seconds=90.0,
+):
+    """Detect a direct source that keeps replying but never advances history."""
+    if not direct_only_mode or not worked or changed:
+        return None, False
+
+    if stale_since is None:
+        stale_since = float(now)
+
+    stale = float(now) - float(stale_since) >= float(timeout_seconds)
+    return stale_since, stale
+
+
 async def refresh_live_history(monitor, config, state, capture, page):
     """Refresh from the direct API first; only use DOM while a live page exists."""
     before = (state.last_round_id, list(state.previous))
@@ -50,6 +70,7 @@ async def run_monitor(monitor, config, *, state=None):
         capture = None
         direct_only = False
         missing_since = None
+        stale_since = None
         last_diagnostic = 0.0
 
         async def close_browser_stack():
@@ -98,6 +119,7 @@ async def run_monitor(monitor, config, *, state=None):
                         await close_browser_stack()
                         await open_browser_stack()
                         missing_since = None
+                        stale_since = None
                         last_diagnostic = 0.0
 
                         if not startup_sent:
@@ -142,6 +164,29 @@ async def run_monitor(monitor, config, *, state=None):
 
                     worked = outcome["worked"]
                     rounds, source = await capture.snapshot()
+                    refresh_done_at = time.monotonic()
+                    stale_since, stale = stale_direct_history(
+                        direct_only_mode=direct_only,
+                        worked=worked,
+                        changed=bool(outcome.get("changed")),
+                        stale_since=stale_since,
+                        now=refresh_done_at,
+                        timeout_seconds=90.0,
+                    )
+
+                    if stale:
+                        log.warning(
+                            "Direct history unchanged for 90s; reopening browser"
+                        )
+                        if monitor.history_refresh is not None:
+                            monitor.history_refresh.bind(None)
+                        await close_browser_stack()
+                        direct_only = False
+                        capture = None
+                        missing_since = None
+                        stale_since = None
+                        await asyncio.sleep(3)
+                        continue
 
                     if worked:
                         missing_since = None
@@ -170,6 +215,7 @@ async def run_monitor(monitor, config, *, state=None):
                             direct_only = False
                             capture = None
                             missing_since = None
+                            stale_since = None
                             await asyncio.sleep(3)
                             continue
 
@@ -223,6 +269,7 @@ async def run_monitor(monitor, config, *, state=None):
                     await close_browser_stack()
                     direct_only = False
                     capture = None
+                    stale_since = None
 
                     await asyncio.sleep(max(3.0, config.poll_seconds))
 

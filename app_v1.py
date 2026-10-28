@@ -9,6 +9,7 @@ import httpx
 from history_refresh import HistoryRefresh
 
 import main as base
+from luckyjet_fast_poll import install_fast_poll
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
 from luckyjet_source_guard import install_source_guard
 from luckyjet_signal import direct_only
@@ -123,11 +124,17 @@ async def retire_legacy_history_panel(panel) -> None:
         panel.message_id = None
 
 
-async def main_async() -> None:
-    config = Config.from_env()
+def configure_monitor_runtime() -> None:
+    """Install production runtime patches in one testable place."""
     install_source_guard(monitor)
+    install_fast_poll(monitor)
     monitor.async_playwright = low_memory_async_playwright
     monitor.click_demo_mode = wrap_click_demo_mode(monitor.click_demo_mode)
+
+
+async def main_async() -> None:
+    config = Config.from_env()
+    configure_monitor_runtime()
 
     state = await monitor.load_state(config)
     panel = base.TelegramHistoryPanel(config, initial_history=state.previous)

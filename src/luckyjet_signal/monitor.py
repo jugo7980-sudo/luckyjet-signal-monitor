@@ -7,7 +7,7 @@ import os
 import re
 import time
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 import httpx
 from playwright.async_api import async_playwright
@@ -29,13 +29,21 @@ DEMO_LABELS = (
     "Play for free",
 )
 
-NETWORK_URL_HINTS = (
+KNOWN_STATE_URLS = (
+    "https://crash-gateway-grm-cr.100hp.app/state",
+)
+
+FINAL_STATUS_WORDS = (
+    "finished",
+    "finish",
+    "ended",
+    "end",
+    "complete",
+    "completed",
+    "closed",
+    "crashed",
     "crash",
-    "100hp",
-    "round",
-    "history",
-    "state",
-    "lucky",
+    "done",
 )
 
 
@@ -52,11 +60,7 @@ class State:
         self.streak = int(streak)
         self.next_amount = int(next_amount)
         self.previous = list(previous or [])
-        self.last_round_id = (
-            str(last_round_id)
-            if last_round_id
-            else None
-        )
+        self.last_round_id = str(last_round_id) if last_round_id else None
 
     def dump(self):
         return {
@@ -73,12 +77,16 @@ class LiveCapture:
         self._lock = asyncio.Lock()
         self._rounds = []
         self._source = ""
-        self._gateway_url = None
-        self._gateway_headers = {}
+        self._candidate_urls = set(KNOWN_STATE_URLS)
+        self._headers = {}
+        self._event_names = set()
         self._logged_urls = set()
 
-    async def ingest(self, payload, source):
-        rounds = extract_rounds_from_payload(payload)
+    async def ingest(self, payload, source, event_name=""):
+        rounds = extract_rounds_from_payload(
+            payload,
+            event_name=event_name,
+        )
 
         if not rounds:
             return 0
@@ -86,7 +94,6 @@ class LiveCapture:
         async with self._lock:
             if len(rounds) >= 2:
                 self._rounds = rounds[:50]
-
             else:
                 item = rounds[0]
                 rid = item.get("id")
@@ -112,7 +119,6 @@ class LiveCapture:
                     ][:50]
 
             self._source = source
-
             return len(self._rounds)
 
     async def snapshot(self):
@@ -122,12 +128,31 @@ class LiveCapture:
                 self._source,
             )
 
-    async def remember_gateway(
+    async def remember_request(
         self,
         url,
         headers,
     ):
+        headers_l = {
+            str(k).lower(): str(v)
+            for k, v in headers.items()
+        }
+
         safe = safe_url(url)
+
+        interesting = any(
+            host in url.lower()
+            for host in (
+                "100hp.app",
+                "100hp.game",
+                "gamedev",
+                "1win",
+            )
+        )
+
+        if not interesting:
+            return
+
         selected = {}
 
         for key in (
@@ -137,31 +162,94 @@ class LiveCapture:
             "referer",
             "session-id",
             "customer-id",
+            "x-session-id",
+            "x-customer-id",
+            "authorization",
             "cookie",
         ):
-            value = headers.get(key)
+            value = headers_l.get(key)
 
             if value:
                 selected[key] = value
 
-        async with self._lock:
-            self._gateway_url = url
-            self._gateway_headers = selected
+        try:
+            qs = parse_qs(
+                urlsplit(url).query
+            )
 
-            if safe not in self._logged_urls:
+            for qkey, hkey in (
+                ("session-id", "session-id"),
+                ("session_id", "session-id"),
+                ("sessionId", "session-id"),
+                ("customer-id", "customer-id"),
+                ("customer_id", "customer-id"),
+                ("customerId", "customer-id"),
+            ):
+                values = qs.get(qkey)
+
+                if values and values[0]:
+                    selected[hkey] = values[0]
+
+        except Exception:
+            pass
+
+        async with self._lock:
+            self._headers.update(selected)
+
+            low = url.lower()
+
+            if (
+                any(
+                    x in low
+                    for x in (
+                        "/state",
+                        "history",
+                        "round",
+                    )
+                )
+                and (
+                    "100hp" in low
+                    or "crash" in low
+                )
+            ):
+                self._candidate_urls.add(url)
+
+            if (
+                safe
+                not in self._logged_urls
+                and (
+                    "100hp" in low
+                    or "crash" in low
+                )
+            ):
                 self._logged_urls.add(safe)
 
                 log.info(
-                    "Discovered crash data endpoint: %s",
+                    "Observed game-data request: %s",
                     safe,
                 )
 
-    async def gateway(self):
+    async def direct_targets(self):
         async with self._lock:
             return (
-                self._gateway_url,
-                dict(self._gateway_headers),
+                list(self._candidate_urls),
+                dict(self._headers),
             )
+
+    async def note_event(self, name):
+        if not name:
+            return
+
+        async with self._lock:
+            if name in self._event_names:
+                return
+
+            self._event_names.add(name)
+
+        log.info(
+            "Socket.IO event: %s",
+            name[:120],
+        )
 
 
 async def _redis(config):
@@ -196,7 +284,6 @@ async def load_state(config):
                         json.loads(raw),
                         config,
                     )
-
             finally:
                 await r.aclose()
 
@@ -263,9 +350,7 @@ async def save_state(
                     "luckyjet:state",
                     raw,
                 )
-
                 return
-
             finally:
                 await r.aclose()
 
@@ -296,7 +381,6 @@ async def send(
         log.warning(
             "Telegram credentials missing"
         )
-
         return False
 
     url = (
@@ -396,10 +480,10 @@ def _number(value):
     ):
         try:
             result = float(
-                value.replace(
-                    ",",
-                    ".",
-                ).strip()
+                value
+                .replace(",", ".")
+                .strip()
+                .rstrip("xX")
             )
 
         except ValueError:
@@ -414,12 +498,98 @@ def _number(value):
     return None
 
 
+def _dict_status_is_final(node):
+    values = []
+
+    for key in (
+        "status",
+        "state",
+        "phase",
+        "gameStatus",
+        "roundStatus",
+    ):
+        value = node.get(key)
+
+        if isinstance(
+            value,
+            str,
+        ):
+            values.append(
+                value.lower()
+            )
+
+    joined = " ".join(values)
+
+    return any(
+        word in joined
+        for word in FINAL_STATUS_WORDS
+    )
+
+
+def _looks_like_finished_round(
+    node,
+    context="",
+):
+    keys = {
+        str(k)
+        for k in node.keys()
+    }
+
+    if keys.intersection(
+        {
+            "topCoefficient",
+            "top_coefficient",
+            "finalValues",
+            "final_values",
+        }
+    ):
+        return True
+
+    if _dict_status_is_final(node):
+        return True
+
+    if (
+        (
+            node.get("salt")
+            or node.get("hash")
+        )
+        and (
+            node.get("roundId")
+            or node.get("round_id")
+            or node.get("id")
+        )
+    ):
+        return True
+
+    context_l = context.lower()
+
+    return any(
+        word in context_l
+        for word in (
+            "history",
+            "round_end",
+            "roundend",
+            "round-ended",
+            "game_end",
+            "gameend",
+            "crash",
+            "finished",
+            "last_round",
+            "last-round",
+        )
+    )
+
+
 def extract_rounds_from_payload(
     payload,
+    event_name="",
 ):
     found = []
 
-    def visit(node):
+    def visit(
+        node,
+        context="",
+    ):
         if isinstance(
             node,
             dict,
@@ -459,18 +629,39 @@ def extract_rounds_from_payload(
                         if coefficient is not None:
                             break
 
+            if (
+                coefficient is None
+                and _looks_like_finished_round(
+                    node,
+                    context or event_name,
+                )
+            ):
+                for key in (
+                    "crashPoint",
+                    "crash_point",
+                    "crashCoefficient",
+                    "crash_coefficient",
+                    "multiplier",
+                    "coefficient",
+                    "coef",
+                    "value",
+                ):
+                    if key in node:
+                        coefficient = _number(
+                            node.get(key)
+                        )
+
+                        if coefficient is not None:
+                            break
+
             if coefficient is not None:
                 rid = (
                     node.get("id")
-                    or node.get(
-                        "roundId"
-                    )
-                    or node.get(
-                        "round_id"
-                    )
-                    or node.get(
-                        "hash"
-                    )
+                    or node.get("roundId")
+                    or node.get("round_id")
+                    or node.get("gameId")
+                    or node.get("game_id")
+                    or node.get("hash")
                 )
 
                 found.append(
@@ -484,36 +675,56 @@ def extract_rounds_from_payload(
                     }
                 )
 
-            for value in node.values():
-                visit(value)
+            for key, value in node.items():
+                child_context = (
+                    f"{context}.{key}"
+                    if context
+                    else str(key)
+                )
+
+                visit(
+                    value,
+                    child_context,
+                )
 
         elif isinstance(
             node,
             list,
         ):
             for value in node:
-                visit(value)
+                visit(
+                    value,
+                    context,
+                )
 
-    visit(payload)
+    visit(
+        payload,
+        event_name,
+    )
 
     result = []
-    seen_ids = set()
+    seen = set()
 
     for item in found:
-        rid = item.get("id")
+        marker = (
+            item.get("id")
+            or (
+                "coef",
+                item["coefficient"],
+                len(result),
+            )
+        )
 
-        if rid:
-            if rid in seen_ids:
-                continue
+        if marker in seen:
+            continue
 
-            seen_ids.add(rid)
-
+        seen.add(marker)
         result.append(item)
 
     return result
 
 
-def parse_possible_json(
+def decode_socketio_packets(
     payload,
 ):
     if isinstance(
@@ -527,44 +738,129 @@ def parse_possible_json(
             )
 
         except Exception:
-            return None
+            return []
 
     if not isinstance(
         payload,
         str,
     ):
-        if isinstance(
-            payload,
-            (dict, list),
-        ):
-            return payload
+        return []
 
-        return None
+    packets = []
 
-    text = payload.strip()
-    candidates = [text]
-
-    for marker in (
-        "{",
-        "[",
+    for raw in payload.split(
+        "\x1e"
     ):
-        pos = text.find(marker)
+        text = raw.strip()
 
-        if pos > 0:
-            candidates.append(
-                text[pos:]
-            )
-
-    for candidate in candidates:
-        try:
-            return json.loads(
-                candidate
-            )
-
-        except Exception:
+        if not text:
             continue
 
-    return None
+        event_name = ""
+        parsed = None
+
+        starts = [
+            pos
+            for pos in (
+                text.find("["),
+                text.find("{"),
+            )
+            if pos >= 0
+        ]
+
+        if starts:
+            pos = min(starts)
+            candidate = text[pos:]
+
+            try:
+                parsed = json.loads(
+                    candidate
+                )
+
+            except Exception:
+                parsed = None
+
+        if (
+            isinstance(
+                parsed,
+                list,
+            )
+            and parsed
+        ):
+            if isinstance(
+                parsed[0],
+                str,
+            ):
+                event_name = parsed[0]
+
+                if len(parsed) > 2:
+                    data = parsed[1:]
+
+                elif len(parsed) == 2:
+                    data = parsed[1]
+
+                else:
+                    data = None
+
+            else:
+                data = parsed
+
+            packets.append(
+                (
+                    event_name,
+                    data,
+                )
+            )
+
+        elif parsed is not None:
+            packets.append(
+                (
+                    event_name,
+                    parsed,
+                )
+            )
+
+    return packets
+
+
+def parse_possible_json(
+    payload,
+):
+    if isinstance(
+        payload,
+        (dict, list),
+    ):
+        return payload
+
+    packets = decode_socketio_packets(
+        payload
+    )
+
+    if packets:
+        return packets[0][1]
+
+    if isinstance(
+        payload,
+        bytes,
+    ):
+        payload = payload.decode(
+            "utf-8",
+            errors="ignore",
+        )
+
+    if not isinstance(
+        payload,
+        str,
+    ):
+        return None
+
+    try:
+        return json.loads(
+            payload.strip()
+        )
+
+    except Exception:
+        return None
 
 
 def new_results(
@@ -642,7 +938,9 @@ def new_results(
     return []
 
 
-async def read_dom_history(page):
+async def read_dom_history(
+    page,
+):
     script = r"""
 (() => {
     const visible = el => {
@@ -697,11 +995,12 @@ async def read_dom_history(page):
             continue;
         }
 
-        const r = el.getBoundingClientRect();
+        const r =
+            el.getBoundingClientRect();
 
         if (
             r.top < 0 ||
-            r.top > innerHeight * 0.5
+            r.top > innerHeight * 0.55
         ) {
             continue;
         }
@@ -717,7 +1016,10 @@ async def read_dom_history(page):
 
     for (const item of points) {
         let row = rows.find(
-            r => Math.abs(r.y - item.y) < 14
+            r =>
+                Math.abs(
+                    r.y - item.y
+                ) < 14
         );
 
         if (!row) {
@@ -741,7 +1043,8 @@ async def read_dom_history(page):
     );
 
     const best = rows.find(
-        r => r.items.length >= 3
+        r =>
+            r.items.length >= 3
     );
 
     if (!best) {
@@ -765,11 +1068,13 @@ async def read_dom_history(page):
         page.frames
     ):
         try:
-            values = await asyncio.wait_for(
-                frame.evaluate(
-                    script
-                ),
-                timeout=5,
+            values = (
+                await asyncio.wait_for(
+                    frame.evaluate(
+                        script
+                    ),
+                    timeout=5,
+                )
             )
 
             values = [
@@ -786,185 +1091,53 @@ async def read_dom_history(page):
     return best
 
 
-async def _click_demo_js(
-    frame,
-    labels,
+async def click_demo_mode(
+    page,
 ):
-    script = r"""
-(labels) => {
-    const norm = s =>
-        (s || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-    const visible = el => {
-        const r = el.getBoundingClientRect();
-        const s = getComputedStyle(el);
-
-        return (
-            r.width > 1 &&
-            r.height > 1 &&
-            s.display !== 'none' &&
-            s.visibility !== 'hidden' &&
-            Number(s.opacity) !== 0
-        );
-    };
-
-    for (const label of labels) {
-        const all = Array.from(
-            document.querySelectorAll('body *')
-        );
-
-        const candidates = all.filter(
-            el =>
-                norm(
-                    el.innerText ||
-                    el.textContent
-                ) === label
-        );
-
-        candidates.sort(
-            (a, b) =>
-                a.children.length -
-                b.children.length
-        );
-
-        for (const el of candidates) {
-            if (!visible(el)) {
-                continue;
-            }
-
-            const target =
-                el.closest(
-                    'button,a,[role="button"],[onclick],[tabindex]'
-                ) || el;
-
-            if (!visible(target)) {
-                continue;
-            }
-
-            target.scrollIntoView({
-                block: 'center',
-                inline: 'center'
-            });
-
-            const r =
-                target.getBoundingClientRect();
-
-            const hit =
-                document.elementFromPoint(
-                    r.left + r.width / 2,
-                    r.top + r.height / 2
-                );
-
-            const clickable =
-                hit &&
-                (
-                    hit === target ||
-                    target.contains(hit)
-                )
-                    ? hit
-                    : target;
-
-            clickable.dispatchEvent(
-                new PointerEvent(
-                    'pointerdown',
-                    {
-                        bubbles: true,
-                        cancelable: true
-                    }
-                )
-            );
-
-            clickable.dispatchEvent(
-                new PointerEvent(
-                    'pointerup',
-                    {
-                        bubbles: true,
-                        cancelable: true
-                    }
-                )
-            );
-
-            clickable.dispatchEvent(
-                new MouseEvent(
-                    'click',
-                    {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window
-                    }
-                )
-            );
-
-            return {
-                ok: true,
-                label,
-                tag: target.tagName,
-                role:
-                    target.getAttribute(
-                        'role'
-                    ) || '',
-                className:
-                    typeof target.className
-                        === 'string'
-                        ? target.className.slice(
-                            0,
-                            120
-                        )
-                        : ''
-            };
-        }
-    }
-
-    return {
-        ok: false
-    };
-}
-"""
-
-    try:
-        return await frame.evaluate(
-            script,
-            list(labels),
-        )
-
-    except Exception:
-        return {
-            "ok": False
-        }
-
-
-async def click_demo_mode(page):
     for frame in list(
         page.frames
     ):
         for label in DEMO_LABELS:
             try:
-                locator = frame.get_by_text(
-                    label,
-                    exact=True,
+                locator = (
+                    frame
+                    .get_by_text(
+                        label,
+                        exact=False,
+                    )
                 )
 
                 count = min(
                     await locator.count(),
-                    6,
+                    12,
                 )
 
                 for i in range(count):
                     item = locator.nth(i)
 
-                    if await item.is_visible():
+                    try:
+                        if not (
+                            await item.is_visible()
+                        ):
+                            continue
+
                         await (
                             item
                             .scroll_into_view_if_needed(
-                                timeout=2000
+                                timeout=1500
                             )
                         )
 
-                        await item.click(
-                            timeout=4000
-                        )
+                        try:
+                            await item.click(
+                                timeout=2500
+                            )
+
+                        except Exception:
+                            await item.click(
+                                timeout=2500,
+                                force=True,
+                            )
 
                         log.info(
                             "Demo mode clicked "
@@ -974,32 +1147,144 @@ async def click_demo_mode(page):
 
                         return True
 
+                    except Exception:
+                        continue
+
             except Exception:
                 continue
 
-    for frame in list(
-        page.frames
-    ):
-        result = await _click_demo_js(
-            frame,
-            DEMO_LABELS,
+    script = r"""
+(labels) => {
+    const norm = s =>
+        (s || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const visible = el => {
+        const r =
+            el.getBoundingClientRect();
+
+        const s =
+            getComputedStyle(el);
+
+        return (
+            r.width > 2 &&
+            r.height > 2 &&
+            s.display !== 'none' &&
+            s.visibility !== 'hidden' &&
+            Number(s.opacity) !== 0
+        );
+    };
+
+    const all =
+        Array.from(
+            document.querySelectorAll(
+                'body *'
+            )
+        );
+
+    let best = null;
+
+    for (const label of labels) {
+        for (const el of all) {
+            if (!visible(el)) {
+                continue;
+            }
+
+            const text = norm(
+                el.innerText ||
+                el.textContent
+            );
+
+            if (
+                !text.includes(label)
+            ) {
+                continue;
+            }
+
+            const r =
+                el.getBoundingClientRect();
+
+            const area =
+                r.width * r.height;
+
+            if (area <= 0) {
+                continue;
+            }
+
+            const score =
+                Math.abs(
+                    text.length -
+                    label.length
+                ) *
+                100000 +
+                area;
+
+            if (
+                !best ||
+                score < best.score
+            ) {
+                best = {
+                    score,
+                    label,
+                    x:
+                        r.left +
+                        r.width / 2,
+                    y:
+                        r.top +
+                        r.height / 2,
+                    tag: el.tagName,
+                    text:
+                        text.slice(
+                            0,
+                            120
+                        )
+                };
+            }
+        }
+    }
+
+    return best;
+}
+"""
+
+    try:
+        target = (
+            await page
+            .main_frame
+            .evaluate(
+                script,
+                list(DEMO_LABELS),
+            )
         )
 
-        if result.get("ok"):
+        if target:
+            await page.mouse.click(
+                float(
+                    target["x"]
+                ),
+                float(
+                    target["y"]
+                ),
+                delay=80,
+            )
+
             log.info(
                 "Demo mode clicked "
-                "with DOM fallback: "
-                "label=%s tag=%s role=%s",
-                result.get("label"),
-                result.get("tag"),
-                result.get("role"),
+                "by coordinates: "
+                "label=%s tag=%s text=%s",
+                target.get("label"),
+                target.get("tag"),
+                target.get("text"),
             )
 
             return True
 
+    except Exception:
+        pass
+
     log.warning(
-        "Exact demo control "
-        "was not clickable"
+        "Demo control could not be clicked"
     )
 
     return False
@@ -1063,15 +1348,32 @@ async def diagnose_page(
                 "<frame-error>"
             )
 
+    urls, headers = (
+        await capture.direct_targets()
+    )
+
     log.info(
         "Diagnostics: frames=%d "
         "frame_urls=%s "
         "network_rounds=%d "
-        "source=%s",
+        "source=%s "
+        "api_targets=%d "
+        "ids=%s",
         len(page.frames),
         frame_info,
         len(rounds),
         source or "none",
+        len(urls),
+        sorted(
+            k
+            for k in headers
+            if k in (
+                "session-id",
+                "customer-id",
+                "x-session-id",
+                "x-customer-id",
+            )
+        ),
     )
 
 
@@ -1080,24 +1382,27 @@ async def handle_response(
     capture,
 ):
     try:
-        url = response.url.lower()
+        url = response.url
+        low = url.lower()
 
-        if not any(
-            hint in url
-            for hint
-            in NETWORK_URL_HINTS
-        ):
-            return
-
-        if any(
-            bad in url
-            for bad in (
-                "leaderboard",
-                "top-coefficient",
-                "top_coeff",
+        interesting_host = any(
+            x in low
+            for x in (
+                "100hp",
+                "crash",
+                "lucky",
+                "round",
+                "history",
             )
-        ):
+        )
+
+        if not interesting_host:
             return
+
+        await capture.remember_request(
+            url,
+            await response.request.all_headers(),
+        )
 
         if (
             response.request.resource_type
@@ -1110,18 +1415,23 @@ async def handle_response(
         ):
             return
 
-        content_type = (
+        headers = (
             await response.all_headers()
-        ).get(
-            "content-type",
-            "",
-        ).lower()
+        )
+
+        content_type = (
+            headers.get(
+                "content-type",
+                "",
+            )
+            .lower()
+        )
 
         if (
             "json"
             not in content_type
             and not any(
-                x in url
+                x in low
                 for x in (
                     "/state",
                     "history",
@@ -1147,9 +1457,7 @@ async def handle_response(
             payload,
             (
                 "response:"
-                + safe_url(
-                    response.url
-                )
+                + safe_url(url)
             ),
         )
 
@@ -1170,49 +1478,23 @@ async def handle_request(
     capture,
 ):
     try:
-        url_l = request.url.lower()
-
-        if (
-            "crash-gateway"
-            not in url_l
-            and "100hp.app"
-            not in url_l
-        ):
-            return
-
-        if (
-            request.method.upper()
-            != "GET"
-        ):
-            return
+        low = request.url.lower()
 
         if not any(
-            hint in url_l
-            for hint in (
-                "/state",
-                "history",
+            x in low
+            for x in (
+                "100hp",
+                "crash",
+                "lucky",
                 "round",
+                "history",
             )
         ):
             return
 
-        if any(
-            bad in url_l
-            for bad in (
-                "leaderboard",
-                "top-coefficient",
-                "top_coeff",
-            )
-        ):
-            return
-
-        headers = (
-            await request.all_headers()
-        )
-
-        await capture.remember_gateway(
+        await capture.remember_request(
             request.url,
-            headers,
+            await request.all_headers(),
         )
 
     except Exception:
@@ -1225,25 +1507,44 @@ async def handle_ws_frame(
     source,
 ):
     try:
-        parsed = parse_possible_json(
+        packets = decode_socketio_packets(
             payload
         )
 
-        if parsed is None:
+        if not packets:
+            parsed = parse_possible_json(
+                payload
+            )
+
+            if parsed is not None:
+                await capture.ingest(
+                    parsed,
+                    source,
+                )
+
             return
 
-        count = await capture.ingest(
-            parsed,
-            source,
-        )
-
-        if count:
-            log.info(
-                "Captured completed "
-                "round(s) from WebSocket: "
-                "%d stored",
-                count,
+        for event_name, data in packets:
+            await capture.note_event(
+                event_name
             )
+
+            count = await capture.ingest(
+                data,
+                (
+                    f"{source}:"
+                    f"{event_name or 'packet'}"
+                ),
+                event_name=event_name,
+            )
+
+            if count:
+                log.info(
+                    "Captured completed "
+                    "round(s) from WebSocket: "
+                    "%d stored",
+                    count,
+                )
 
     except Exception:
         return
@@ -1299,26 +1600,6 @@ def attach_network_capture(
             type(exc).__name__,
         )
 
-    def on_request_failed(request):
-        try:
-            url = safe_url(
-                request.url
-            )
-
-            if any(
-                h
-                in request.url.lower()
-                for h
-                in NETWORK_URL_HINTS
-            ):
-                log.warning(
-                    "Game request failed: %s",
-                    url,
-                )
-
-        except Exception:
-            pass
-
     page.on(
         "request",
         on_request,
@@ -1339,52 +1620,93 @@ def attach_network_capture(
         on_page_error,
     )
 
-    page.on(
-        "requestfailed",
-        on_request_failed,
-    )
 
-
-async def poll_discovered_gateway(
+async def poll_direct_gateways(
     capture,
 ):
-    url, headers = (
-        await capture.gateway()
+    urls, headers = (
+        await capture.direct_targets()
     )
 
-    if not url:
+    if not urls:
         return 0
 
-    try:
-        async with httpx.AsyncClient(
-            timeout=10,
-            follow_redirects=True,
-        ) as client:
-            response = await client.get(
-                url,
-                headers=headers,
-            )
+    request_headers = dict(
+        headers
+    )
 
-        if response.status_code >= 400:
-            return 0
+    request_headers.setdefault(
+        "accept",
+        "application/json, "
+        "text/plain, */*",
+    )
 
-        payload = parse_possible_json(
-            response.text
-        )
+    request_headers.setdefault(
+        "user-agent",
+        (
+            "Mozilla/5.0 "
+            "(Linux; Android 13) "
+            "AppleWebKit/537.36 "
+            "Chrome/137.0 "
+            "Mobile Safari/537.36"
+        ),
+    )
 
-        if payload is None:
-            return 0
+    best = 0
 
-        return await capture.ingest(
-            payload,
-            (
-                "direct:"
-                + safe_url(url)
-            ),
-        )
+    async with httpx.AsyncClient(
+        timeout=8,
+        follow_redirects=True,
+    ) as client:
+        for url in urls[:8]:
+            try:
+                response = await client.get(
+                    url,
+                    headers=request_headers,
+                )
 
-    except Exception:
-        return 0
+                if (
+                    response.status_code
+                    >= 400
+                ):
+                    continue
+
+                payload = (
+                    parse_possible_json(
+                        response.text
+                    )
+                )
+
+                if payload is None:
+                    continue
+
+                count = await capture.ingest(
+                    payload,
+                    (
+                        "direct:"
+                        + safe_url(url)
+                    ),
+                )
+
+                best = max(
+                    best,
+                    count,
+                )
+
+                if count:
+                    log.info(
+                        "Direct state endpoint "
+                        "returned %d "
+                        "completed rounds",
+                        count,
+                    )
+
+                    break
+
+            except Exception:
+                continue
+
+    return best
 
 
 async def wait_for_game_data(
@@ -1397,7 +1719,14 @@ async def wait_for_game_data(
         + timeout_seconds
     )
 
-    while time.monotonic() < end:
+    while (
+        time.monotonic()
+        < end
+    ):
+        await poll_direct_gateways(
+            capture
+        )
+
         rounds, _ = (
             await capture.snapshot()
         )
@@ -1448,25 +1777,37 @@ async def navigate_and_start_demo(
         6000
     )
 
+    await poll_direct_gateways(
+        capture
+    )
+
+    rounds, _ = (
+        await capture.snapshot()
+    )
+
+    if rounds:
+        await diagnose_page(
+            page,
+            capture,
+        )
+
+        return True
+
     clicked = await click_demo_mode(
         page
     )
 
     if clicked:
         await page.wait_for_timeout(
-            2500
+            3000
         )
 
-    else:
-        log.warning(
-            "Demo click did not "
-            "fire on this route"
+    ready = (
+        await wait_for_game_data(
+            page,
+            capture,
+            timeout_seconds=20,
         )
-
-    ready = await wait_for_game_data(
-        page,
-        capture,
-        timeout_seconds=15,
     )
 
     await diagnose_page(
@@ -1509,17 +1850,19 @@ async def open_game(
                 "Lucky Jet route"
             )
 
-            if await navigate_and_start_demo(
-                page,
-                canonical,
-                capture,
+            if (
+                await navigate_and_start_demo(
+                    page,
+                    canonical,
+                    capture,
+                )
             ):
                 return page
 
         log.warning(
-            "Game opened but no "
+            "Game opened but "
             "completed-round history "
-            "is visible yet"
+            "is not visible yet"
         )
 
         return page
@@ -1602,10 +1945,6 @@ async def process_network_history(
     if not rounds:
         return False
 
-    ids_available = bool(
-        rounds[0].get("id")
-    )
-
     coefficients = [
         float(
             r["coefficient"]
@@ -1613,9 +1952,13 @@ async def process_network_history(
         for r in rounds
     ]
 
+    ids_available = bool(
+        rounds[0].get("id")
+    )
+
     if ids_available:
-        newest_id = rounds[0].get(
-            "id"
+        newest_id = (
+            rounds[0].get("id")
         )
 
         if not state.last_round_id:
@@ -1623,9 +1966,7 @@ async def process_network_history(
                 newest_id
             )
 
-            state.previous = (
-                coefficients
-            )
+            state.previous = coefficients
 
             await send(
                 config,
@@ -1816,10 +2157,7 @@ async def run_monitor(
         config
     )
 
-    capture = None
     last_error_notice = 0.0
-    last_diagnostic = 0.0
-    missing_since = None
     startup_sent = False
 
     log.info(
@@ -1844,6 +2182,9 @@ async def run_monitor(
             )
 
             page = None
+            capture = None
+            missing_since = None
+            last_diagnostic = 0.0
 
             while True:
                 try:
@@ -1882,11 +2223,6 @@ async def run_monitor(
                     now = time.monotonic()
 
                     if issue:
-                        log.warning(
-                            "Game page issue: %s",
-                            issue,
-                        )
-
                         if (
                             now
                             - last_error_notice
@@ -1908,16 +2244,16 @@ async def run_monitor(
 
                         continue
 
-                    await poll_discovered_gateway(
+                    await poll_direct_gateways(
                         capture
                     )
 
                     (
                         network_rounds,
                         source,
-                    ) = await capture.snapshot()
-
-                    worked = False
+                    ) = (
+                        await capture.snapshot()
+                    )
 
                     if network_rounds:
                         worked = (
@@ -1977,12 +2313,14 @@ async def run_monitor(
                     if (
                         now
                         - last_diagnostic
-                        >= 60
+                        >= 45
                     ):
                         (
                             network_rounds,
                             source,
-                        ) = await capture.snapshot()
+                        ) = (
+                            await capture.snapshot()
+                        )
 
                         if network_rounds:
                             dom = []
@@ -2011,9 +2349,7 @@ async def run_monitor(
                             capture,
                         )
 
-                        last_diagnostic = (
-                            now
-                        )
+                        last_diagnostic = now
 
                     await asyncio.sleep(
                         config.poll_seconds

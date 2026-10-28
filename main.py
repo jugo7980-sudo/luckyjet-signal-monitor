@@ -493,7 +493,19 @@ async def main_async() -> None:
                 return result
         result = await panel.handle_monitor_message(config_or_message, message)
         if coefficient is not None:
+            previous_count = len(streak.values)
             await streak.on_round(coefficient)
+            if previous_count == 3 and len(streak.values) == 4:
+                for user_id, chat_id in list(password_gate.chats.items()):
+                    if user_id in password_gate.notifications_disabled:
+                        continue
+                    try:
+                        await panel._request("sendMessage", {
+                            "chat_id": chat_id,
+                            "text": "Lucky Jet: 4 результата подряд ниже 2x.",
+                        })
+                    except (httpx.HTTPError, RuntimeError):
+                        log.warning("Private notification failed: user_id=%s", user_id)
         return result
 
     monitor.send = handle_round

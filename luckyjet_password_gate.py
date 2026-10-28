@@ -1,4 +1,4 @@
-"""Telegram /start password gate using Telegram Bot API long polling."""
+"""Private Telegram bot access, settings, alerts, and admin controls."""
 import asyncio
 import hmac
 import logging
@@ -11,79 +11,234 @@ log = logging.getLogger("luckyjet.auth")
 
 
 class TelegramPasswordGate:
-    def __init__(self, request, history_provider=None):
+    def __init__(self, request, history_provider=None, admin_chat_id=None):
         self.request = request
         self.history_provider = history_provider
-        self.notifications_disabled = set()
-        self.chats = {}
         self.password = os.getenv("TELEGRAM_ACCESS_PASSWORD", "122011")
-        self.redis_url = os.getenv("REDIS_URL")
+        self.redis_url = os.getenv("REDIS_URL", "").strip()
         self.redis = None
+        self.admin_chat_id = self._to_int(admin_chat_id)
+
         self.authorized = set()
+        self.blocked = set()
         self.pending = set()
-        self.offset = None
+        self.chats = {}
+        self.notifications_disabled = set()
+        self.thresholds = {}
+        self.delete_seconds = {}
         self.failures = {}
         self.blocked_until = {}
+        self.offset = None
+
+        self.current_streak = []
+        self.active_messages = {}
+        self.last_round = None
+        self.last_round_at = None
+        self.started_at = time.monotonic()
+        self._deletion_tasks = set()
+
+    @staticmethod
+    def _to_int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     async def start(self):
         if self.redis_url:
             from redis.asyncio import from_url
+
             self.redis = from_url(self.redis_url, decode_responses=True)
-            await self.redis.ping()
+            try:
+                await self.redis.ping()
+                await self._load_persisted_state()
+                log.info("Telegram private state loaded from Redis")
+            except Exception:
+                log.exception("Redis initialization failed; using in-memory state")
+                await self.redis.aclose()
+                self.redis = None
         else:
-            log.warning("REDIS_URL missing: authorizations will not survive restart")
+            log.warning("REDIS_URL missing: private bot state is in-memory only")
+
         try:
             while True:
                 try:
-                    result = await self.request("getUpdates", {
-                        "timeout": 15,
-                        "offset": self.offset,
-                        "allowed_updates": ["message", "callback_query"],
-                    })
+                    result = await self.request(
+                        "getUpdates",
+                        {
+                            "timeout": 8,
+                            "offset": self.offset,
+                            "allowed_updates": ["message", "callback_query"],
+                        },
+                    )
                     for update in result.get("result", []):
                         self.offset = update["update_id"] + 1
                         await self.handle_update(update)
                 except asyncio.CancelledError:
                     raise
                 except (httpx.HTTPError, RuntimeError, ValueError, KeyError) as exc:
-                    log.warning("Password polling failed: %s", type(exc).__name__)
-                    await asyncio.sleep(3)
+                    log.warning("Telegram polling failed: %s", type(exc).__name__)
+                    await asyncio.sleep(2)
         finally:
-            if self.redis:
-                await self.redis.aclose()
+            await self.close()
+
+    async def close(self):
+        for task in list(self._deletion_tasks):
+            task.cancel()
+        if self._deletion_tasks:
+            await asyncio.gather(*self._deletion_tasks, return_exceptions=True)
+            self._deletion_tasks.clear()
+        if self.redis:
+            await self.redis.aclose()
+            self.redis = None
+
+    async def _load_persisted_state(self):
+        if not self.redis:
+            return
+        self.authorized = {int(x) for x in await self.redis.smembers("luckyjet:authorized_users")}
+        self.blocked = {int(x) for x in await self.redis.smembers("luckyjet:blocked_users")}
+        self.notifications_disabled = {
+            int(x) for x in await self.redis.smembers("luckyjet:notifications_disabled")
+        }
+        self.chats = {
+            int(k): int(v)
+            for k, v in (await self.redis.hgetall("luckyjet:chats")).items()
+        }
+        self.thresholds = {
+            int(k): int(v)
+            for k, v in (await self.redis.hgetall("luckyjet:thresholds")).items()
+        }
+        self.delete_seconds = {
+            int(k): int(v)
+            for k, v in (await self.redis.hgetall("luckyjet:delete_seconds")).items()
+        }
+
+    async def _persist_user(self, user_id):
+        if not self.redis:
+            return
+        uid = str(user_id)
+        pipe = self.redis.pipeline()
+        if user_id in self.authorized:
+            pipe.sadd("luckyjet:authorized_users", uid)
+        else:
+            pipe.srem("luckyjet:authorized_users", uid)
+        if user_id in self.blocked:
+            pipe.sadd("luckyjet:blocked_users", uid)
+        else:
+            pipe.srem("luckyjet:blocked_users", uid)
+        if user_id in self.notifications_disabled:
+            pipe.sadd("luckyjet:notifications_disabled", uid)
+        else:
+            pipe.srem("luckyjet:notifications_disabled", uid)
+        if user_id in self.chats:
+            pipe.hset("luckyjet:chats", uid, str(self.chats[user_id]))
+        else:
+            pipe.hdel("luckyjet:chats", uid)
+        pipe.hset("luckyjet:thresholds", uid, str(self.user_threshold(user_id)))
+        pipe.hset("luckyjet:delete_seconds", uid, str(self.user_delete_seconds(user_id)))
+        await pipe.execute()
 
     async def is_authorized(self, user_id):
-        if self.redis:
-            return bool(await self.redis.sismember("luckyjet:authorized_users", str(user_id)))
-        return user_id in self.authorized
+        return int(user_id) in self.authorized
 
-    def menu(self):
-        return {"inline_keyboard": [
-            [{"text": "📊 История", "callback_data": "menu_history"},
-             {"text": "📡 Статус", "callback_data": "menu_status"}],
-            [{"text": "🔔 Уведомления", "callback_data": "menu_notifications"},
-             {"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
-        ]}
+    def is_admin(self, user_id):
+        return self.admin_chat_id is not None and int(user_id) == self.admin_chat_id
+
+    def user_threshold(self, user_id):
+        value = int(self.thresholds.get(int(user_id), 4))
+        return min(10, max(3, value))
+
+    def user_delete_seconds(self, user_id):
+        value = int(self.delete_seconds.get(int(user_id), 30))
+        return value if value in {0, 15, 30, 60} else 30
+
+    def menu(self, user_id=None):
+        rows = [
+            [
+                {"text": "📊 История", "callback_data": "menu_history"},
+                {"text": "📡 Статус", "callback_data": "menu_status"},
+            ],
+            [
+                {"text": "🔔 Уведомления", "callback_data": "menu_notifications"},
+                {"text": "⚙️ Настройки", "callback_data": "menu_settings"},
+            ],
+        ]
+        if user_id is not None and self.is_admin(user_id):
+            rows.append([{"text": "🛡 Админ", "callback_data": "admin_users"}])
+        return {"inline_keyboard": rows}
+
+    def settings_menu(self, user_id):
+        threshold = self.user_threshold(user_id)
+        delete = self.user_delete_seconds(user_id)
+        threshold_rows = []
+        for start in (3, 7):
+            row = []
+            stop = 7 if start == 3 else 11
+            for value in range(start, stop):
+                prefix = "✓ " if value == threshold else ""
+                row.append({"text": f"{prefix}{value}", "callback_data": f"threshold:{value}"})
+            threshold_rows.append(row)
+        delete_row = []
+        for value, label in ((15, "15с"), (30, "30с"), (60, "60с"), (0, "Без удаления")):
+            prefix = "✓ " if value == delete else ""
+            callback_value = "off" if value == 0 else str(value)
+            delete_row.append({"text": f"{prefix}{label}", "callback_data": f"delete:{callback_value}"})
+        return {
+            "inline_keyboard": [
+                *threshold_rows,
+                delete_row,
+                [{"text": "⬅️ Меню", "callback_data": "menu_main"}],
+            ]
+        }
+
+    def _admin_menu(self):
+        rows = []
+        for user_id in sorted(self.authorized):
+            if self.is_admin(user_id):
+                continue
+            rows.append(
+                [
+                    {"text": f"Отозвать {user_id}", "callback_data": f"admin_revoke:{user_id}"},
+                    {"text": f"Блок {user_id}", "callback_data": f"admin_block:{user_id}"},
+                ]
+            )
+        for user_id in sorted(self.blocked):
+            rows.append(
+                [{"text": f"Разблокировать {user_id}", "callback_data": f"admin_unblock:{user_id}"}]
+            )
+        rows.append([{"text": "⬅️ Меню", "callback_data": "menu_main"}])
+        return {"inline_keyboard": rows}
 
     async def handle_update(self, update):
         callback = update.get("callback_query")
         if callback:
             await self.handle_callback(callback)
             return
+
         msg = update.get("message") or {}
         chat = msg.get("chat") or {}
         sender = msg.get("from") or {}
         if chat.get("type") != "private" or sender.get("is_bot"):
             return
-        user_id, chat_id = sender.get("id"), chat.get("id")
+
+        user_id = self._to_int(sender.get("id"))
+        chat_id = self._to_int(chat.get("id"))
         if user_id is None or chat_id is None:
             return
+
         value = (msg.get("text") or "").strip()
+        command = value.split("@", 1)[0].split(" ", 1)[0]
+
+        if user_id in self.blocked and not self.is_admin(user_id):
+            await self.request("sendMessage", {"chat_id": chat_id, "text": "⛔ Доступ заблокирован."})
+            return
+
         if await self.is_authorized(user_id):
             self.chats[user_id] = chat_id
-        if value.split("@", 1)[0].split(" ", 1)[0] == "/start":
+
+        if command == "/start":
             if await self.is_authorized(user_id):
-                answer = "Доступ уже открыт."
+                answer = "🎰 Lucky Jet Monitor\nДоступ открыт."
             else:
                 self.pending.add(user_id)
                 answer = "🔐 Введите пароль для доступа к боту."
@@ -92,16 +247,14 @@ class TelegramPasswordGate:
         elif user_id not in self.pending:
             answer = "Для начала нажмите /start."
         elif self.blocked_until.get(user_id, 0) > time.monotonic():
-            answer = "Повторите попытку через 5 минут."
+            answer = "⏳ Повторите попытку через 5 минут."
         elif hmac.compare_digest(value, self.password):
-            if self.redis:
-                await self.redis.sadd("luckyjet:authorized_users", str(user_id))
-            else:
-                self.authorized.add(user_id)
-            self.pending.discard(user_id)
+            self.authorized.add(user_id)
             self.chats[user_id] = chat_id
+            self.pending.discard(user_id)
             self.failures.pop(user_id, None)
             self.blocked_until.pop(user_id, None)
+            await self._persist_user(user_id)
             answer = "✅ Пароль верный. Доступ открыт."
         else:
             count = self.failures.get(user_id, 0) + 1
@@ -109,29 +262,59 @@ class TelegramPasswordGate:
             if count >= 5:
                 self.blocked_until[user_id] = time.monotonic() + 300
                 self.failures[user_id] = 0
-                answer = "Слишком много ошибок. Повторите через 5 минут."
+                answer = "⏳ 5 неверных попыток. Повторите через 5 минут."
             else:
                 answer = "❌ Неверный пароль. Попробуйте ещё раз."
+
+        if user_id in self.pending and value and not value.startswith("/"):
+            try:
+                await self.request(
+                    "deleteMessage",
+                    {"chat_id": chat_id, "message_id": msg.get("message_id")},
+                )
+            except (httpx.HTTPError, RuntimeError, KeyError, TypeError):
+                pass
+
         payload = {"chat_id": chat_id, "text": answer}
         if await self.is_authorized(user_id):
-            payload["reply_markup"] = self.menu()
+            payload["reply_markup"] = self.menu(user_id)
         await self.request("sendMessage", payload)
 
     async def handle_callback(self, callback):
-        user_id = (callback.get("from") or {}).get("id")
-        chat_id = ((callback.get("message") or {}).get("chat") or {}).get("id")
+        user_id = self._to_int((callback.get("from") or {}).get("id"))
+        chat_id = self._to_int(((callback.get("message") or {}).get("chat") or {}).get("id"))
         data = callback.get("data", "")
         try:
             await self.request("answerCallbackQuery", {"callback_query_id": callback["id"]})
-        except (httpx.HTTPError, RuntimeError):
+        except (httpx.HTTPError, RuntimeError, KeyError):
             pass
-        if not chat_id or not user_id or not await self.is_authorized(user_id):
+
+        if user_id is None or chat_id is None or not await self.is_authorized(user_id):
             return
-        if data == "menu_history":
+        if user_id in self.blocked and not self.is_admin(user_id):
+            return
+
+        self.chats[user_id] = chat_id
+
+        if data == "menu_main":
+            answer = "🎰 Lucky Jet Monitor\nВыберите раздел."
+            markup = self.menu(user_id)
+        elif data == "menu_history":
             values = list(self.history_provider() if self.history_provider else [])[:20]
-            answer = "📊 Последние коэффициенты:\n" + ("  ".join(values) if values else "Пока нет данных")
+            answer = "📊 Последние 20 коэффициентов:\n" + ("  ".join(values) if values else "Пока нет данных")
+            markup = self.menu(user_id)
         elif data == "menu_status":
-            answer = "📡 Бот запущен. Статус источника данных проверяйте по обновлению истории."
+            uptime = max(0, int(time.monotonic() - self.started_at))
+            hours, rem = divmod(uptime, 3600)
+            minutes, seconds = divmod(rem, 60)
+            latest = self.last_round or "нет данных"
+            answer = (
+                "📡 Статус: работает\n"
+                f"Последний коэффициент: {latest}\n"
+                f"Текущая серия <2x: {len(self.current_streak)}\n"
+                f"Аптайм: {hours:02d}:{minutes:02d}:{seconds:02d}"
+            )
+            markup = self.menu(user_id)
         elif data == "menu_notifications":
             if user_id in self.notifications_disabled:
                 self.notifications_disabled.remove(user_id)
@@ -139,8 +322,195 @@ class TelegramPasswordGate:
             else:
                 self.notifications_disabled.add(user_id)
                 answer = "🔕 Уведомления выключены."
+                message_id = self.active_messages.pop(user_id, None)
+                if message_id is not None:
+                    try:
+                        await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+                    except (httpx.HTTPError, RuntimeError):
+                        pass
+            await self._persist_user(user_id)
+            markup = self.menu(user_id)
         elif data == "menu_settings":
-            answer = "⚙️ Настройки: порог серии 4, автоудаление 30 секунд."
+            delete = self.user_delete_seconds(user_id)
+            delete_label = "выкл." if delete == 0 else f"{delete} сек."
+            answer = (
+                "⚙️ Настройки\n"
+                f"Порог серии: {self.user_threshold(user_id)} подряд ниже 2x\n"
+                f"Автоудаление: {delete_label}"
+            )
+            markup = self.settings_menu(user_id)
+        elif data.startswith("threshold:"):
+            try:
+                value = int(data.split(":", 1)[1])
+            except ValueError:
+                return
+            if value not in range(3, 11):
+                return
+            self.thresholds[user_id] = value
+            await self._persist_user(user_id)
+            answer = f"✅ Порог серии: {value}."
+            markup = self.settings_menu(user_id)
+        elif data.startswith("delete:"):
+            raw = data.split(":", 1)[1]
+            value = 0 if raw == "off" else self._to_int(raw)
+            if value not in {0, 15, 30, 60}:
+                return
+            self.delete_seconds[user_id] = value
+            await self._persist_user(user_id)
+            answer = "✅ Автоудаление выключено." if value == 0 else f"✅ Автоудаление: {value} сек."
+            markup = self.settings_menu(user_id)
+        elif data == "admin_users" and self.is_admin(user_id):
+            users = ", ".join(str(x) for x in sorted(self.authorized)) or "нет"
+            blocked = ", ".join(str(x) for x in sorted(self.blocked)) or "нет"
+            answer = f"🛡 Пользователи с доступом: {users}\nЗаблокированы: {blocked}"
+            markup = self._admin_menu()
+        elif data.startswith("admin_revoke:") and self.is_admin(user_id):
+            target = self._to_int(data.split(":", 1)[1])
+            if target is None or self.is_admin(target):
+                return
+            await self._revoke_user(target, block=False)
+            answer = f"✅ Доступ пользователя {target} отозван."
+            markup = self._admin_menu()
+        elif data.startswith("admin_block:") and self.is_admin(user_id):
+            target = self._to_int(data.split(":", 1)[1])
+            if target is None or self.is_admin(target):
+                return
+            await self._revoke_user(target, block=True)
+            answer = f"⛔ Пользователь {target} заблокирован."
+            markup = self._admin_menu()
+        elif data.startswith("admin_unblock:") and self.is_admin(user_id):
+            target = self._to_int(data.split(":", 1)[1])
+            if target is None:
+                return
+            self.blocked.discard(target)
+            await self._persist_user(target)
+            answer = f"✅ Пользователь {target} разблокирован."
+            markup = self._admin_menu()
         else:
             return
-        await self.request("sendMessage", {"chat_id": chat_id, "text": answer, "reply_markup": self.menu()})
+
+        await self.request("sendMessage", {"chat_id": chat_id, "text": answer, "reply_markup": markup})
+
+    async def _revoke_user(self, user_id, *, block):
+        self.authorized.discard(user_id)
+        self.pending.discard(user_id)
+        self.notifications_disabled.discard(user_id)
+        self.thresholds.pop(user_id, None)
+        self.delete_seconds.pop(user_id, None)
+        self.chats.pop(user_id, None)
+        message_id = self.active_messages.pop(user_id, None)
+        if block:
+            self.blocked.add(user_id)
+        else:
+            self.blocked.discard(user_id)
+        await self._persist_user(user_id)
+        return message_id
+
+    @staticmethod
+    def _format_coefficient(value):
+        try:
+            number = float(str(value).strip().rstrip("xX").replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+        if number < 1:
+            return None
+        return f"{number:.2f}x"
+
+    @classmethod
+    def _colored_label(cls, value):
+        formatted = cls._format_coefficient(value)
+        if formatted is None:
+            return str(value)
+        number = float(formatted[:-1])
+        marker = "🟦" if number < 2 else "🟪" if number < 10 else "🟧"
+        return f"{marker}{formatted}"
+
+    def _streak_markup(self, ending=None):
+        count = len(self.current_streak)
+        latest = ending if ending is not None else self.current_streak[-1]
+        recent = [*self.current_streak, *([ending] if ending is not None else [])][-5:]
+        return {
+            "inline_keyboard": [
+                [{"text": f"Серия {count} · {self._colored_label(latest)}", "callback_data": "noop"}],
+                [
+                    {"text": self._colored_label(item), "callback_data": "noop"}
+                    for item in recent
+                ],
+            ]
+        }
+
+    async def on_round(self, coefficient):
+        value = self._format_coefficient(coefficient)
+        if value is None:
+            return
+        self.last_round = value
+        self.last_round_at = time.time()
+        number = float(value[:-1])
+
+        if number < 2:
+            self.current_streak.append(value)
+            for user_id, chat_id in list(self.chats.items()):
+                if user_id not in self.authorized or user_id in self.notifications_disabled:
+                    continue
+                threshold = self.user_threshold(user_id)
+                if len(self.current_streak) == threshold:
+                    try:
+                        result = await self.request(
+                            "sendMessage",
+                            {
+                                "chat_id": chat_id,
+                                "text": "🎰 Lucky Jet | Серия <2x",
+                                "reply_markup": self._streak_markup(),
+                            },
+                        )
+                        message_id = result.get("result", {}).get("message_id")
+                        if message_id is not None:
+                            self.active_messages[user_id] = int(message_id)
+                    except (httpx.HTTPError, RuntimeError):
+                        log.warning("Private streak create failed: user_id=%s", user_id)
+                elif len(self.current_streak) > threshold and user_id in self.active_messages:
+                    try:
+                        await self.request(
+                            "editMessageReplyMarkup",
+                            {
+                                "chat_id": chat_id,
+                                "message_id": self.active_messages[user_id],
+                                "reply_markup": self._streak_markup(),
+                            },
+                        )
+                    except (httpx.HTTPError, RuntimeError):
+                        log.warning("Private streak update failed: user_id=%s", user_id)
+            return
+
+        for user_id, message_id in list(self.active_messages.items()):
+            chat_id = self.chats.get(user_id)
+            if chat_id is None:
+                continue
+            try:
+                await self.request(
+                    "editMessageReplyMarkup",
+                    {
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "reply_markup": self._streak_markup(ending=value),
+                    },
+                )
+                delay = self.user_delete_seconds(user_id)
+                if delay > 0:
+                    task = asyncio.create_task(self._schedule_delete(chat_id, message_id, delay))
+                    self._deletion_tasks.add(task)
+                    task.add_done_callback(self._deletion_tasks.discard)
+                    await asyncio.sleep(0)
+            except (httpx.HTTPError, RuntimeError):
+                log.warning("Private streak completion failed: user_id=%s", user_id)
+        self.current_streak = []
+        self.active_messages = {}
+
+    async def _schedule_delete(self, chat_id, message_id, delay):
+        try:
+            await asyncio.sleep(delay)
+            await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+        except asyncio.CancelledError:
+            raise
+        except (httpx.HTTPError, RuntimeError):
+            log.warning("Private streak deletion failed: chat_id=%s message_id=%s", chat_id, message_id)

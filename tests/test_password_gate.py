@@ -150,3 +150,28 @@ def test_status_reports_last_round_and_uptime():
     text = [payload["text"] for method, payload in request.calls if method == "sendMessage"][-1]
     assert "1.23x" in text
     assert "Аптайм" in text
+
+
+def test_authorized_user_gets_live_history_panel_and_updates_same_message():
+    request = FakeRequest()
+    history = ["1.10x", "2.20x"]
+    gate = TelegramPasswordGate(request, history_provider=lambda: history)
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+
+    async def run():
+        await gate.ensure_private_history(42)
+        history.insert(0, "3.30x")
+        await gate.update_private_histories()
+
+    asyncio.run(run())
+
+    assert gate.history_messages[42] == 101
+    methods = [method for method, _ in request.calls]
+    assert methods == ["sendMessage", "editMessageReplyMarkup"]
+    sent = request.calls[0][1]
+    assert sent["text"] == "🎰 Lucky Jet — история"
+    rows = sent["reply_markup"]["inline_keyboard"]
+    assert rows[0][0]["text"] == "🟦1.10x"
+    updated = request.calls[1][1]["reply_markup"]["inline_keyboard"]
+    assert updated[0][0]["text"] == "🟪3.30x"

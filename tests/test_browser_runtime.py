@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
@@ -206,3 +208,22 @@ def test_streak_has_no_maximum_length():
 
     assert len(panel.values) == 21
     assert calls[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "🔵21<2x"
+
+
+def test_run_monitor_reuses_supplied_state_without_reloading(monkeypatch):
+    class StopHere(Exception):
+        pass
+
+    supplied_state = object()
+
+    async def forbidden_load_state(_config):
+        raise AssertionError("run_monitor reloaded state instead of reusing supplied state")
+
+    def stop_before_browser_start():
+        raise StopHere()
+
+    monkeypatch.setattr(app_main.monitor, "load_state", forbidden_load_state)
+    monkeypatch.setattr(app_main.monitor, "async_playwright", stop_before_browser_start)
+
+    with pytest.raises(StopHere):
+        asyncio.run(app_main.monitor.run_monitor(config(), state=supplied_state))

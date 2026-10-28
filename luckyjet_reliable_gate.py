@@ -19,6 +19,7 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pending_deletions = {}
+        self._history_locks = {}
 
     async def handle_update(self, update):
         """Keep normal handling, but make /start visibly open the bot for authorized users."""
@@ -46,6 +47,13 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
                 "🎰 Lucky Jet Monitor\nВыберите раздел.",
                 self.menu(user_id),
             )
+
+    async def ensure_private_history(self, user_id):
+        """Serialize recovery so two concurrent updates cannot create duplicate history panels."""
+        user_id = int(user_id)
+        lock = self._history_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            return await super().ensure_private_history(user_id)
 
     async def _load_persisted_state(self):
         await super()._load_persisted_state()

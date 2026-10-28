@@ -140,7 +140,7 @@ def test_settings_are_top_to_bottom_and_keep_navigation():
     assert callbacks[0] == ["settings_notifications"]
     assert callbacks[1] == ["threshold:3", "threshold:4", "threshold:5", "threshold:6"]
     assert callbacks[2] == ["threshold:7", "threshold:8", "threshold:9", "threshold:10"]
-    assert callbacks[3] == ["delete:15", "delete:30", "delete:60", "delete:off"]
+    assert callbacks[3] == ["delete:10", "delete:30", "delete:60", "delete:off"]
     assert callbacks[4] == ["settings_sound"]
     assert callbacks[5] == ["settings_test"]
     assert callbacks[6] == ["settings_reset"]
@@ -193,7 +193,7 @@ def test_private_streak_uses_user_threshold_updates_and_finishes():
     streak_sends = [p for p in sent_messages(request) if p["text"] == "🎰 Lucky Jet | Серия <2x"]
     assert len(streak_sends) == 1
     assert streak_sends[0]["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Серия 4")
-    assert scheduled == [(42, 102, 15)]
+    assert scheduled == [(42, 102, 10)]
 
 
 def test_disabling_notifications_does_not_kill_existing_streak_message():

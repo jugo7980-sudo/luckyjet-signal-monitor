@@ -419,6 +419,29 @@ async def main_async() -> None:
     async def handle_round(config_or_message, message=None):
         actual = str(config_or_message) if message is None else message
         coefficient = coefficient_from_message(actual)
+        if coefficient is not None and len(panel.history) < 2 and len(state.previous) >= 2:
+            latest = format_history_coefficient(coefficient)
+            saved = format_history_coefficient(state.previous[0])
+            if latest == saved:
+                panel.history = [
+                    formatted
+                    for value in state.previous[:panel.limit]
+                    if (formatted := format_history_coefficient(value)) is not None
+                ]
+                streak.values = []
+                for value in reversed(state.previous):
+                    formatted = format_history_coefficient(value)
+                    if formatted is None:
+                        continue
+                    if float(formatted[:-1]) < 2:
+                        streak.values.append(formatted)
+                    else:
+                        streak.values.clear()
+                streak._startup_pending = True
+                streak._startup_latest = latest
+                result = await panel.ensure_panel()
+                await streak.start()
+                return result
         result = await panel.handle_monitor_message(config_or_message, message)
         if coefficient is not None:
             await streak.on_round(coefficient)

@@ -24,6 +24,8 @@ class TelegramPasswordGate:
         self.pending = set()
         self.chats = {}
         self.history_messages = {}
+        self.history_hidden = set()
+        self._history_locks = {}
         self.prompt_messages = {}
         self.menu_messages = {}
         self.notifications_disabled = set()
@@ -127,6 +129,7 @@ class TelegramPasswordGate:
         self.notifications_disabled = {
             int(x) for x in await self.redis.smembers("luckyjet:notifications_disabled")
         }
+        self.history_hidden = {int(x) for x in await self.redis.smembers("luckyjet:history_hidden")}
         self.silent_users = {int(x) for x in await self.redis.smembers("luckyjet:silent_users")}
         self.chats = {
             int(k): int(v)
@@ -162,6 +165,10 @@ class TelegramPasswordGate:
             pipe.sadd("luckyjet:notifications_disabled", uid)
         else:
             pipe.srem("luckyjet:notifications_disabled", uid)
+        if user_id in self.history_hidden:
+            pipe.sadd("luckyjet:history_hidden", uid)
+        else:
+            pipe.srem("luckyjet:history_hidden", uid)
         if user_id in self.silent_users:
             pipe.sadd("luckyjet:silent_users", uid)
         else:
@@ -186,7 +193,7 @@ class TelegramPasswordGate:
 
     def user_threshold(self, user_id):
         value = int(self.thresholds.get(int(user_id), 4))
-        return min(10, max(3, value))
+        return min(10, max(4, value))
 
     def user_delete_seconds(self, user_id):
         value = int(self.delete_seconds.get(int(user_id), 30))
@@ -234,9 +241,9 @@ class TelegramPasswordGate:
         sound_enabled = user_id not in self.silent_users
 
         threshold_rows = []
-        for start in (3, 7):
+        for start in (4, 7):
             row = []
-            stop = 7 if start == 3 else 11
+            stop = 7 if start == 4 else 11
             for value in range(start, stop):
                 prefix = "✓ " if value == threshold else ""
                 row.append({"text": f"{prefix}{value}", "callback_data": f"threshold:{value}"})
@@ -381,7 +388,6 @@ class TelegramPasswordGate:
 
         if await self.is_authorized(user_id):
             self.chats[user_id] = chat_id
-            # Keep user commands visible; never erase the only chat content.
             if command == "/start":
                 await self.ensure_private_history(user_id)
             elif command == "/menu":
@@ -409,6 +415,7 @@ class TelegramPasswordGate:
                     "Сообщение серии появляется при достижении выбранного порога и обновляется до завершения серии.",
                     {"inline_keyboard": self._navigation_rows()},
                 )
+            await self._safe_delete(chat_id, message_id)
             return
 
         if command == "/start":
@@ -451,10 +458,16 @@ class TelegramPasswordGate:
         user_id = self._to_int((callback.get("from") or {}).get("id"))
         chat_id = self._to_int(((callback.get("message") or {}).get("chat") or {}).get("id"))
         data = callback.get("data", "")
-        try:
-            await self.request("answerCallbackQuery", {"callback_query_id": callback["id"]})
-        except (httpx.HTTPError, RuntimeError, KeyError):
-            pass
+        history_toggle = (
+            data == "menu_history" and user_id is not None and chat_id is not None
+            and user_id in self.authorized
+            and (user_id not in self.blocked or self.is_admin(user_id))
+        )
+        if not history_toggle:
+            try:
+                await self.request("answerCallbackQuery", {"callback_query_id": callback["id"]})
+            except (httpx.HTTPError, RuntimeError, KeyError):
+                pass
 
         if user_id is None or chat_id is None or not await self.is_authorized(user_id):
             return
@@ -476,13 +489,14 @@ class TelegramPasswordGate:
             return
 
         if data == "menu_history":
-            source_id = self._to_int((callback.get("message") or {}).get("message_id"))
-            if not await self.open_private_history(user_id, source_id):
-                await self.request(
-                    "sendMessage",
-                    {"chat_id": chat_id,
-                     "text": "⚠️ Историю пока не удалось открыть. Повторите попытку."},
-                )
+            success = await self.toggle_private_history(user_id)
+            answer = {"callback_query_id": callback["id"]}
+            if not success:
+                answer.update(text="Не удалось переключить историю. Повторите попытку.", show_alert=True)
+            try:
+                await self.request("answerCallbackQuery", answer)
+            except (httpx.HTTPError, RuntimeError, KeyError):
+                pass
             return
 
         await self._delete_transient_source(user_id, chat_id, callback)
@@ -529,7 +543,7 @@ class TelegramPasswordGate:
                 value = int(data.split(":", 1)[1])
             except ValueError:
                 return
-            if value not in range(3, 11):
+            if value not in range(4, 11):
                 return
             self.thresholds[user_id] = value
             await self._persist_user(user_id)
@@ -615,6 +629,7 @@ class TelegramPasswordGate:
         streak_message_id = self.active_messages.pop(user_id, None)
         prompt_message_id = self.prompt_messages.pop(user_id, None)
         self.authorized.discard(user_id)
+        self.history_hidden.discard(user_id)
         self.pending.discard(user_id)
         self.notifications_disabled.discard(user_id)
         self.silent_users.discard(user_id)
@@ -664,11 +679,49 @@ class TelegramPasswordGate:
         rows.append([{"text": "☰ Меню", "callback_data": "menu_open"}])
         return {"inline_keyboard": rows}
 
-    async def open_private_history(self, user_id, source_message_id):
-        return await self.ensure_private_history(user_id)
+    async def toggle_private_history(self, user_id):
+        user_id = int(user_id)
+        lock = self._history_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            chat_id = self.chats.get(user_id)
+            if chat_id is None:
+                return False
+            message_id = self.history_messages.get(user_id)
+            if message_id is not None and user_id not in self.history_hidden:
+                try:
+                    await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+                except httpx.HTTPStatusError as exc:
+                    description = str(exc.response.json().get("description", "")).lower()
+                    if exc.response.status_code != 400 or "message to delete not found" not in description:
+                        log.warning("History close rejected: status=%s", exc.response.status_code)
+                        return False
+                except (httpx.HTTPError, RuntimeError):
+                    log.warning("History close failed")
+                    return False
+                self.history_hidden.add(user_id)
+                self.history_messages.pop(user_id, None)
+                await self._persist_user(user_id)
+                log.info("Private history toggled off")
+                return True
+
+            self.history_hidden.discard(user_id)
+            if await self._ensure_private_history(user_id):
+                await self._persist_user(user_id)
+                log.info("Private history toggled on")
+                return True
+            self.history_hidden.add(user_id)
+            await self._persist_user(user_id)
+            return False
 
     async def ensure_private_history(self, user_id):
         user_id = int(user_id)
+        lock = self._history_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            if user_id in self.history_hidden:
+                return False
+            return await self._ensure_private_history(user_id)
+
+    async def _ensure_private_history(self, user_id):
         chat_id = self.chats.get(user_id)
         if chat_id is None:
             return False

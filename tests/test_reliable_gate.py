@@ -21,7 +21,7 @@ class FakeRequest:
         return {"ok": True, "result": True}
 
 
-def test_restore_removes_stale_menu_and_keeps_active_streak_message():
+def test_restore_preserves_visible_menu_and_active_streak_message():
     request = FakeRequest()
     gate = ReliableTelegramPasswordGate(request)
     gate.authorized.add(42)
@@ -34,8 +34,8 @@ def test_restore_removes_stale_menu_and_keeps_active_streak_message():
 
     deletes = [p for m, p in request.calls if m == "deleteMessage"]
     edits = [p for m, p in request.calls if m == "editMessageReplyMarkup"]
-    assert {"chat_id": 42, "message_id": 55} in deletes
-    assert 42 not in gate.menu_messages
+    assert {"chat_id": 42, "message_id": 55} not in deletes
+    assert gate.menu_messages[42] == 55
     assert any(p["message_id"] == 77 for p in edits)
     assert gate.active_messages[42] == 77
 

@@ -130,28 +130,6 @@ def test_each_menu_choice_replaces_old_transient_message_and_history_stays():
     assert "⚙️ Настройки" in sent[3]["text"]
 
 
-def test_history_menu_choice_refreshes_history_and_keeps_menu_visible():
-    request = FakeRequest()
-    history = ["1.10x", "2.20x"]
-    gate = TelegramPasswordGate(request, history_provider=lambda: history)
-    gate.authorized.add(42)
-    gate.chats[42] = 42
-
-    async def run():
-        await gate.ensure_private_history(42)  # 101
-        await gate.handle_callback(callback(42, "menu_open", 101))  # 102
-        history.insert(0, "3.30x")
-        await gate.handle_callback(callback(42, "menu_history", 102))
-
-    asyncio.run(run())
-
-    assert 101 not in deleted_ids(request)
-    assert 102 not in deleted_ids(request)
-    assert gate.menu_messages.get(42) == 102
-    edited = [p for m, p in request.calls if m == "editMessageReplyMarkup"][-1]
-    assert edited["message_id"] == 101
-    assert edited["reply_markup"]["inline_keyboard"][0][0]["text"] == "🟪3.30x"
-
 
 def test_settings_are_top_to_bottom_and_keep_navigation():
     gate = TelegramPasswordGate(FakeRequest())
@@ -160,7 +138,7 @@ def test_settings_are_top_to_bottom_and_keep_navigation():
     callbacks = [[button["callback_data"] for button in row] for row in markup]
 
     assert callbacks[0] == ["settings_notifications"]
-    assert callbacks[1] == ["threshold:3", "threshold:4", "threshold:5", "threshold:6"]
+    assert callbacks[1] == ["threshold:4", "threshold:5", "threshold:6"]
     assert callbacks[2] == ["threshold:7", "threshold:8", "threshold:9", "threshold:10"]
     assert callbacks[3] == ["delete:15", "delete:30", "delete:60", "delete:off"]
     assert callbacks[4] == ["settings_sound"]
@@ -197,7 +175,7 @@ def test_private_streak_uses_user_threshold_updates_and_finishes():
     gate = TelegramPasswordGate(request)
     gate.authorized.add(42)
     gate.chats[42] = 42
-    gate.thresholds[42] = 3
+    gate.thresholds[42] = 4
     gate.delete_seconds[42] = 15
     scheduled = []
 
@@ -214,7 +192,7 @@ def test_private_streak_uses_user_threshold_updates_and_finishes():
 
     streak_sends = [p for p in sent_messages(request) if p["text"] == "🎰 Lucky Jet | Серия <2x"]
     assert len(streak_sends) == 1
-    assert streak_sends[0]["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Серия 3")
+    assert streak_sends[0]["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Серия 4")
     assert scheduled == [(42, 102, 15)]
 
 
@@ -223,10 +201,10 @@ def test_disabling_notifications_does_not_kill_existing_streak_message():
     gate = TelegramPasswordGate(request)
     gate.authorized.add(42)
     gate.chats[42] = 42
-    gate.thresholds[42] = 3
+    gate.thresholds[42] = 4
 
     async def run():
-        for value in ["1.10x", "1.20x", "1.30x"]:
+        for value in ["1.10x", "1.20x", "1.30x", "1.40x"]:
             await gate.on_round(value)
         streak_id = gate.active_messages[42]
         gate.notifications_disabled.add(42)
@@ -261,11 +239,11 @@ def test_silent_setting_marks_new_streak_notification_silent():
     gate = TelegramPasswordGate(request)
     gate.authorized.add(42)
     gate.chats[42] = 42
-    gate.thresholds[42] = 3
+    gate.thresholds[42] = 4
     gate.silent_users.add(42)
 
     async def run():
-        for value in ["1.10x", "1.20x", "1.30x"]:
+        for value in ["1.10x", "1.20x", "1.30x", "1.40x"]:
             await gate.on_round(value)
 
     asyncio.run(run())

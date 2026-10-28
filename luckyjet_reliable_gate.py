@@ -19,7 +19,6 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pending_deletions = {}
-        self._history_locks = {}
 
     async def handle_update(self, update):
         """Keep normal handling, but make /start visibly open the bot for authorized users."""
@@ -55,86 +54,69 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         except Exception:
             return ""
 
-    async def open_private_history(self, user_id, source_message_id):
-        return await self.ensure_private_history(user_id, after_message_id=source_message_id)
+    async def _ensure_private_history(self, user_id):
+        chat_id = self.chats.get(user_id)
+        if chat_id is None:
+            return False
 
-    async def ensure_private_history(self, user_id, *, after_message_id=None):
-        """Keep one history panel and serialize its recovery."""
-        user_id = int(user_id)
-        lock = self._history_locks.setdefault(user_id, asyncio.Lock())
-        async with lock:
-            chat_id = self.chats.get(user_id)
-            if chat_id is None:
-                return False
-
-            markup = self._history_markup()
-            message_id = self.history_messages.get(user_id)
-            # Editing an older message does not bring it into the current chat view.
-            # Explicit navigation presents the panel after the menu, once per menu.
-            replace_id = (
-                message_id if message_id is not None and after_message_id is not None
-                and message_id < after_message_id else None
-            )
-            if message_id is not None and replace_id is None:
-                try:
-                    await self.request(
-                        "editMessageReplyMarkup",
-                        {
-                            "chat_id": chat_id,
-                            "message_id": message_id,
-                            "reply_markup": markup,
-                        },
-                    )
-                    return True
-                except httpx.HTTPStatusError as exc:
-                    description = self._telegram_description(exc).lower()
-                    if exc.response.status_code == 400 and "message is not modified" in description:
-                        return True
-                    log.warning(
-                        "Private history edit rejected: status=%s description=%s",
-                        exc.response.status_code,
-                        self._telegram_description(exc)[:180],
-                    )
-                    self.history_messages.pop(user_id, None)
-                    await self._persist_user(user_id)
-                except (httpx.RequestError, RuntimeError, httpx.HTTPError) as exc:
-                    log.warning(
-                        "Private history edit failed; recreating: error=%s",
-                        type(exc).__name__,
-                    )
-                    self.history_messages.pop(user_id, None)
-                    await self._persist_user(user_id)
-
+        markup = self._history_markup()
+        message_id = self.history_messages.get(user_id)
+        if message_id is not None:
             try:
-                result = await self.request(
-                    "sendMessage",
+                await self.request(
+                    "editMessageReplyMarkup",
                     {
                         "chat_id": chat_id,
-                        "text": "🎰 Lucky Jet — история",
+                        "message_id": message_id,
                         "reply_markup": markup,
                     },
                 )
-                message_id = result.get("result", {}).get("message_id")
-                if message_id is None:
-                    return False
-                self.history_messages[user_id] = int(message_id)
-                await self._persist_user(user_id)
-                # Keep the old panel and menu until the replacement is confirmed.
-                if replace_id is not None:
-                    await self._safe_delete(chat_id, replace_id)
-                    log.info("Private history opened after menu")
-                log.info("Private history panel ready")
                 return True
             except httpx.HTTPStatusError as exc:
+                description = self._telegram_description(exc).lower()
+                if exc.response.status_code == 400 and "message is not modified" in description:
+                    return True
                 log.warning(
-                    "Private history create rejected: status=%s description=%s",
+                    "Private history edit rejected: status=%s description=%s",
                     exc.response.status_code,
                     self._telegram_description(exc)[:180],
                 )
-                return False
+                self.history_messages.pop(user_id, None)
+                await self._persist_user(user_id)
             except (httpx.RequestError, RuntimeError, httpx.HTTPError) as exc:
-                log.warning("Private history create failed: error=%s", type(exc).__name__)
+                log.warning(
+                    "Private history edit failed; recreating: error=%s",
+                    type(exc).__name__,
+                )
+                self.history_messages.pop(user_id, None)
+                await self._persist_user(user_id)
+
+        try:
+            result = await self.request(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": "🎰 Lucky Jet — история",
+                    "reply_markup": markup,
+                },
+            )
+            message_id = result.get("result", {}).get("message_id")
+            if message_id is None:
                 return False
+            self.history_messages[user_id] = int(message_id)
+            await self._persist_user(user_id)
+            log.info("Private history panel ready")
+            return True
+        except httpx.HTTPStatusError as exc:
+            log.warning(
+                "Private history create rejected: status=%s description=%s",
+                exc.response.status_code,
+                self._telegram_description(exc)[:180],
+            )
+            return False
+        except (httpx.RequestError, RuntimeError, httpx.HTTPError) as exc:
+            log.warning("Private history create failed: error=%s", type(exc).__name__)
+            return False
 
     async def _load_persisted_state(self):
         await super()._load_persisted_state()
@@ -256,15 +238,10 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
                 await self._persist_runtime_user(user_id)
 
     async def restore_runtime_state(self, *, now=None):
-        """Clean stale menus and restore active/pending streak messages after restart."""
+        """Preserve visible UI and restore active/pending streak messages after restart."""
         now = time.time() if now is None else float(now)
 
-        for user_id, message_id in list(self.menu_messages.items()):
-            chat_id = self.chats.get(user_id)
-            if chat_id is not None:
-                await self._safe_delete(chat_id, message_id)
-            self.menu_messages.pop(user_id, None)
-            await self._persist_runtime_user(user_id)
+        # Keep explicitly opened menus/settings visible across restarts.
 
         for user_id, pending in list(self.pending_deletions.items()):
             message_id, deadline = pending

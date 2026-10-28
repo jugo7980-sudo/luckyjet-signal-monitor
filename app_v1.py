@@ -5,6 +5,7 @@ import logging
 
 import main as base
 from luckyjet_password_gate import TelegramPasswordGate
+from luckyjet_source_guard import install_source_guard
 from luckyjet_signal import monitor
 from luckyjet_signal.browser_runtime import low_memory_async_playwright
 from luckyjet_signal.demo_mode import wrap_click_demo_mode
@@ -29,6 +30,7 @@ def seed_private_streak(gate, values) -> None:
 
 async def main_async() -> None:
     config = Config.from_env()
+    install_source_guard(monitor)
     monitor.async_playwright = low_memory_async_playwright
     monitor.click_demo_mode = wrap_click_demo_mode(monitor.click_demo_mode)
 

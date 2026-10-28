@@ -8,6 +8,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from luckyjet_signal import monitor
+from luckyjet_signal import direct_only
 
 
 class StaleCapture:
@@ -16,12 +17,11 @@ class StaleCapture:
 
 
 def test_direct_history_allows_browser_page_to_be_released():
-    decision = getattr(monitor, "should_release_browser_page", lambda *_: False)
-    assert decision(
+    assert direct_only.should_release_browser_page(
         [{"id": "round-1", "coefficient": 1.23}],
         "direct:https://example/history",
     ) is True
-    assert decision(
+    assert direct_only.should_release_browser_page(
         [{"id": "round-1", "coefficient": 1.23}],
         "response:https://example/history",
     ) is False
@@ -39,7 +39,8 @@ def test_refresh_without_browser_requires_fresh_direct_response(monkeypatch):
 
     state = SimpleNamespace(last_round_id=None, previous=[])
     outcome = asyncio.run(
-        monitor.refresh_live_history(
+        direct_only.refresh_live_history(
+            monitor,
             SimpleNamespace(),
             state,
             StaleCapture(),

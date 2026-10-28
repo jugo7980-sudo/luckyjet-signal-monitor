@@ -11,6 +11,7 @@ from history_refresh import HistoryRefresh
 import main as base
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
 from luckyjet_source_guard import install_source_guard
+from luckyjet_signal import direct_only
 from luckyjet_signal import monitor
 from luckyjet_signal.browser_runtime import low_memory_async_playwright
 from luckyjet_signal.demo_mode import wrap_click_demo_mode
@@ -168,7 +169,7 @@ async def main_async() -> None:
         await asyncio.gather(
             base.health_server(),
             polling_lease.run(password_gate.start()),
-            monitor.run_monitor(config, state=state),
+            direct_only.run_monitor(monitor, config, state=state),
         )
     finally:
         await password_gate.close()

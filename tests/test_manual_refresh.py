@@ -65,7 +65,7 @@ def test_history_buttons_refresh_without_chat_messages_or_streak_button_side_eff
         await gate.handle_callback(callback("history_refresh"))
         await asyncio.gather(*gate._refresh_tasks)
         assert calls == [1]
-        assert any(m == "answerCallbackQuery" and p.get("text") == "История актуальна" for m, p in requests)
+        assert any(m == "answerCallbackQuery" and p.get("text") == "Проверяю историю…" for m, p in requests)
         assert not any(m in {"sendMessage", "deleteMessage"} for m, _ in requests)
         await gate.handle_callback(callback("noop", 200))
         assert calls == [1]

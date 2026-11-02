@@ -51,6 +51,7 @@ def install_source_guard(monitor, *, direct_hold_seconds=15.0):
         return sorted(urls, key=priority), headers
 
     async def guarded_process_network_history(config, state, rounds):
+        state.history_gap = False
         if rounds and state.last_round_id and rounds[0].get("id"):
             ids = [item.get("id") for item in rounds]
             if state.last_round_id not in ids:
@@ -75,6 +76,16 @@ def install_source_guard(monitor, *, direct_hold_seconds=15.0):
                     state.previous = coefficients
                     await monitor.save_state(config, state)
                     return True
+
+                # The old round vanished and the visible histories do not align.
+                # Advancing the source cursor is safe only if we also report the
+                # gap; processing the newest coefficient here would fabricate a
+                # continuous sequence and corrupt active demo accounting.
+                state.history_gap = True
+                state.last_round_id = newest_id
+                state.previous = coefficients
+                await monitor.save_state(config, state)
+                return True
 
         return await original_process_network_history(config, state, rounds)
 

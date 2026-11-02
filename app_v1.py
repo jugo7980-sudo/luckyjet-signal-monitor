@@ -218,20 +218,35 @@ async def _main_async() -> None:
             return False
 
         await password_gate.on_round(formatted)
-        if password_gate.coefficient_stats:
-            await password_gate.coefficient_stats.record(formatted)
         return True
 
     monitor.send = handle_round
+    original_process_history = monitor.process_network_history
+
+    async def process_history(config, state, rounds):
+        await password_gate.coefficient_stats.ingest(rounds)
+        return await original_process_history(config, state, rounds)
+
+    monitor.process_network_history = process_history
+
+    async def run_owned():
+        # Reload after acquiring ownership; the previous owner may have advanced.
+        restored = await monitor.load_state(config)
+        state.__dict__.update(restored.__dict__)
+        panel.history = [base.format_history_coefficient(value) for value in state.previous][:panel.limit]
+        seed_private_streak(password_gate, state.previous)
+        async with asyncio.TaskGroup() as owned:
+            owned.create_task(password_gate.start())
+            owned.create_task(direct_only.run_monitor(monitor, config, state=state))
     await retire_legacy_history_panel(panel)
 
     try:
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(base.health_server())
             tasks.create_task(render_self_keepalive())
-            tasks.create_task(polling_lease.run(password_gate.start()))
-            tasks.create_task(direct_only.run_monitor(monitor, config, state=state))
+            tasks.create_task(polling_lease.run(run_owned()))
     finally:
+        monitor.process_network_history = original_process_history
         await live_panels.close()
         await demo_probe.close()
         await password_gate.close()

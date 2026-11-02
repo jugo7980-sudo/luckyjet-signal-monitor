@@ -679,6 +679,7 @@ def extract_rounds_from_payload(
                             else None
                         ),
                         "coefficient": coefficient,
+                        **{key: node[key] for key in ('finished_at','finishedAt','ended_at','endedAt','timestamp') if key in node},
                     }
                 )
 

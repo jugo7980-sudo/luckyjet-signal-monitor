@@ -43,6 +43,7 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         stats = getattr(self, "coefficient_stats", None)
         if stats is not None:
             stats.redis = self.redis
+            await stats.bootstrap()
         if self.redis:
             await self._demo_storage.restore(self.redis, self.demo_ledgers)
             self.menu_messages = {

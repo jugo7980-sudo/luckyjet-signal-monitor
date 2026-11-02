@@ -345,8 +345,17 @@ class TelegramPasswordGate(HistoryPanels):
             "settings_threshold", "settings_history", "settings_delete", "settings_reset_confirm", "menu_help",
         }:
             return True
-        if data.startswith(("coef_days:", "coef_day:", "coef_filter:", "coef_page:")):
-            return all(part.isdigit() or (len(part)==10 and part[4]=='-' and part[7]=='-') for part in data.split(":")[1:])
+        if data.startswith("coef_days:"):
+            return len(data.split(":")) == 2 and data.split(":")[1].isdigit() and int(data.split(":")[1]) < 10000
+        if data.startswith("coef_day:"):
+            parts = data.split(":")
+            if len(parts) != 4 or parts[2:] != ["10", "0"]:
+                return False
+            try:
+                datetime.strptime(parts[1], "%Y-%m-%d")
+                return True
+            except ValueError:
+                return False
         if data.startswith(("demo_list:", "demo_cycle:")):
             parts = data.split(":")
             return (len(parts) == 3 and len(parts[1]) == 8
@@ -493,24 +502,31 @@ class TelegramPasswordGate(HistoryPanels):
             from datetime import datetime,timedelta
             from zoneinfo import ZoneInfo
             today=datetime.now(ZoneInfo("Asia/Bangkok")).date()
-            dates=[(today-timedelta(days=i)).isoformat() for i in range(10)]
-            pipe=stats.redis.pipeline()
+            page=int(parts[1])
+            dates,total=await stats.days(page)
+            pages=max(1,(total+9)//10)
+            if page>=pages:
+                page=pages-1
+                dates,total=await stats.days(page)
             for day in dates:
-                pipe.hget(f'luckyjet:coef:{day}', 'total')
-            totals=await pipe.execute()
-            for day,total in zip(dates,totals):
-                if total and int(total)>0:
-                    label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y')
-                    rows.append([{"text":f"{label} · {int(total)} раундов","callback_data":f"coef_day:{day}:10:0"}])
-            title="📈 История Кэф · 1/1\nТаиланд, UTC+7 · новые сначала"
+                label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y')
+                rows.append([{"text":label,"callback_data":f"coef_day:{day}:10:0"}])
+            title=f"📈 История Кэф · {page+1}/{pages}\nТаиланд, UTC+7 · новые сначала"
             if not rows:
                 title+="\nДанных пока нет."
-            return title, {"inline_keyboard":rows+self._navigation_rows("demo_menu", "🧪 Демо-режим")}
+            pager=[]
+            if page:
+                pager.append({"text":"⬅️ Назад","callback_data":f"coef_days:{page-1}"})
+            if page+1<pages:
+                pager.append({"text":"Вперёд ➡️","callback_data":f"coef_days:{page+1}"})
+            return title, {"inline_keyboard":rows+([pager] if pager else [])+self._navigation_rows("demo_menu", "🧪 Демо-режим")}
         _,day,threshold,page=parts
         summary=await stats.summary(day)
         from datetime import datetime
         label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y')
-        text=f"📈 История Кэф · {label}"
+        text=f"📈 История Кэф · {label}\n⚠️ Неполные данные"
+        if summary.get('time_uncertain'):
+            text+="\nЧасть раундов — по времени получения"
         text+=''.join(f"\n>{t}x: {summary.get(str(t),0)}" for t in (10,25,50,100,200,300,500,800))
         return text,{"inline_keyboard":self._navigation_rows("coef_days:0", "📈 История Кэф")}
 
@@ -1629,14 +1645,14 @@ class TelegramPasswordGate(HistoryPanels):
             self.current_streak.append(value)
             notices = getattr(self, "notification_queue", None)
             if notices is not None:
-                await notices.submit(self.authorized, self.current_streak)
+                await notices.submit(self.authorized - self.notifications_disabled, self.current_streak)
             else:
                 for user_id in list(self.authorized):
                     await self._update_streak_notice(user_id)
         else:
             notices = getattr(self, "notification_queue", None)
             if notices is not None:
-                await notices.submit(self.authorized, self.current_streak, ending=value)
+                await notices.submit(self.authorized - self.notifications_disabled, self.current_streak, ending=value)
             else:
                 for user_id in list(self.active_messages):
                     if user_id in self.authorized:

@@ -59,7 +59,7 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         if chat_id is None:
             return False
 
-        markup = self._history_markup()
+        markup = self._history_markup(user_id)
         message_id = self.history_messages.get(user_id)
         if message_id is not None:
             try:

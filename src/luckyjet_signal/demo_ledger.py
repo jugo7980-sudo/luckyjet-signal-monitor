@@ -6,9 +6,10 @@ from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 
 
 DEFAULT_BALANCE_CENTS = 1_000_000  # $10,000.00
-DEFAULT_STAKE_CENTS = 15_000  # $150.00
 MINIMUM_STAKE_CENTS = 1_000  # $10.00
+DEFAULT_STAKE_CENTS = MINIMUM_STAKE_CENTS
 TRIGGER_OPTIONS = (2, 3, 4, 5, 6)
+MAX_HISTORY = 100
 
 
 def parse_dollars(value) -> int | None:
@@ -48,7 +49,7 @@ class DemoLedger:
         self.cycle_start_balance_cents = max(0, self._int(state.get("cycle_start_balance_cents", self.balance_cents), self.balance_cents))
         self.cycle_started_at = state.get("cycle_started_at")
         self.cycle_rounds = list(state.get("cycle_rounds", []))[-100:]
-        self.history = list(state.get("history", []))[-50:]
+        self.history = list(state.get("history", []))[:MAX_HISTORY]
 
     @staticmethod
     def _int(value, default):
@@ -74,27 +75,24 @@ class DemoLedger:
         }
 
     def set_trigger(self, count: int) -> bool:
-        if count not in TRIGGER_OPTIONS:
+        if self.active or count not in TRIGGER_OPTIONS:
             return False
         self.trigger_streak = count
-        if not self.active:
-            self.low_streak = min(self.low_streak, count - 1)
+        self.low_streak = min(self.low_streak, count - 1)
         return True
 
     def set_balance(self, cents: int) -> bool:
         if cents < MINIMUM_STAKE_CENTS or self.active:
             return False
         self.balance_cents = cents
-        if not self.active:
-            self.cycle_start_balance_cents = cents
+        self.cycle_start_balance_cents = cents
         return True
 
     def set_base_stake(self, cents: int) -> bool:
-        if cents < MINIMUM_STAKE_CENTS or cents > self.balance_cents:
+        if self.active or cents < MINIMUM_STAKE_CENTS or cents > self.balance_cents:
             return False
         self.base_stake_cents = cents
-        if not self.active:
-            self.next_stake_cents = cents
+        self.next_stake_cents = cents
         return True
 
     def sync_history(self, coefficients):
@@ -125,17 +123,31 @@ class DemoLedger:
         return {"type": "trigger", "next_stake_cents": self.next_stake_cents}
 
     def reset(self):
+        if self.active:
+            self.finish_active("stopped_by_user")
         enabled = self.enabled
         trigger = self.trigger_streak
-        stake = self.base_stake_cents
+        history = self.history[:]
         self.__init__(
             enabled=enabled,
             trigger_streak=trigger,
-            base_stake_cents=stake,
+            base_stake_cents=MINIMUM_STAKE_CENTS,
+            history=history,
         )
 
-    def _finish_cycle(self, *, outcome: str, payout_cents: int = 0, coefficient=None):
-        net_cents = payout_cents - self.cycle_stake_cents
+    def _finish_cycle(
+        self,
+        *,
+        outcome: str,
+        payout_cents: int | None = 0,
+        coefficient=None,
+        financial_complete: bool = True,
+    ):
+        net_cents = (
+            self.balance_cents - self.cycle_start_balance_cents
+            if financial_complete
+            else None
+        )
         entry = {
             "started_at": self.cycle_started_at,
             "ended_at": datetime.now(timezone.utc).isoformat(),
@@ -150,7 +162,7 @@ class DemoLedger:
             "coefficient": coefficient,
         }
         self.history.insert(0, entry)
-        self.history = self.history[:50]
+        self.history = self.history[:MAX_HISTORY]
         self.active = False
         self.cycle_started_at = None
         self.low_streak = 0
@@ -159,6 +171,32 @@ class DemoLedger:
         self.cycle_rounds = []
         self.cycle_start_balance_cents = self.balance_cents
         return entry
+
+    def finish_active(self, outcome: str):
+        if outcome not in {"incomplete_data", "stopped_by_user"}:
+            raise ValueError("Unsupported demo interruption outcome")
+        if not self.active:
+            return None
+        if outcome == "incomplete_data":
+            return self._finish_cycle(
+                outcome=outcome,
+                payout_cents=None,
+                financial_complete=False,
+            )
+        return self._finish_cycle(outcome=outcome)
+
+    def _finish_insufficient(self, needed_cents: int, *, lost_stake_cents=None):
+        entry = self._finish_cycle(outcome="insufficient_balance")
+        self.base_stake_cents = MINIMUM_STAKE_CENTS
+        self.next_stake_cents = MINIMUM_STAKE_CENTS
+        event = {
+            "type": "insufficient_balance",
+            "needed_cents": needed_cents,
+            "entry": entry,
+        }
+        if lost_stake_cents is not None:
+            event["lost_stake_cents"] = lost_stake_cents
+        return event
 
     def process_round(self, coefficient):
         if not self.enabled:
@@ -190,8 +228,7 @@ class DemoLedger:
 
         stake = self.next_stake_cents
         if self.balance_cents < stake:
-            entry = self._finish_cycle(outcome="insufficient_balance")
-            return {"type": "insufficient_balance", "needed_cents": stake, "entry": entry}
+            return self._finish_insufficient(stake)
 
         self.balance_cents -= stake
         self.cycle_stake_cents += stake
@@ -206,13 +243,10 @@ class DemoLedger:
         if multiplier < 2:
             next_stake = stake * 2
             if self.balance_cents < next_stake:
-                entry = self._finish_cycle(outcome="insufficient_balance")
-                return {
-                    "type": "insufficient_balance",
-                    "lost_stake_cents": stake,
-                    "needed_cents": next_stake,
-                    "entry": entry,
-                }
+                return self._finish_insufficient(
+                    next_stake,
+                    lost_stake_cents=stake,
+                )
             self.next_stake_cents = next_stake
             return {
                 "type": "loss",

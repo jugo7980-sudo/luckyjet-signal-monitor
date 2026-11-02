@@ -268,7 +268,7 @@ class TelegramPasswordGate:
 
     def user_history_size(self, user_id):
         value = int(self.history_sizes.get(int(user_id), 20))
-        return value if value in {20, 50, 100} else 20
+        return value if value in {20, 30, 50, 100} else 20
 
     def _navigation_rows(self, back=None, back_label="⬅️ Назад"):
         main = {"text": "🏠 Главное меню", "callback_data": "menu_main"}
@@ -306,7 +306,7 @@ class TelegramPasswordGate:
         if data.startswith("threshold:"):
             return self._to_int(data.split(":", 1)[1]) in range(2, 11)
         if data.startswith("history_size:"):
-            return self._to_int(data.split(":", 1)[1]) in {20, 50, 100}
+            return self._to_int(data.split(":", 1)[1]) in {20, 30, 50, 100}
         if data.startswith("delete:"):
             raw = data.split(":", 1)[1]
             return raw == "off" or self._to_int(raw) in {5, 10, 15, 30, 60}
@@ -378,7 +378,7 @@ class TelegramPasswordGate:
             back = "menu_settings"
         elif kind == "settings_history":
             text = "📋 Сколько результатов показывать в истории?"
-            choices = [(f"{n} результатов", f"history_size:{n}", n == self.user_history_size(user_id)) for n in (20, 50, 100)]
+            choices = [(f"{n} результатов", f"history_size:{n}", n == self.user_history_size(user_id)) for n in (20, 30, 50, 100)]
             back = "menu_settings"
         else:
             text = "⏱ Удалять уведомление после конца серии через:"
@@ -386,7 +386,7 @@ class TelegramPasswordGate:
                        for n, label in ((5, "Через 5 секунд"), (30, "Через 30 секунд"), (60, "Через 60 секунд"), (0, "Не удалять"))]
             back = "menu_settings"
         buttons = [{"text": ("✓ " if selected else "") + label, "callback_data": action} for label, action, selected in choices]
-        columns = 3 if kind in {"settings_threshold", "settings_history", "demo_trigger_menu"} else 2
+        columns = 3 if kind in {"settings_threshold", "demo_trigger_menu"} else 2
         rows = [buttons[i:i + columns] for i in range(0, len(buttons), columns)]
         return text, {"inline_keyboard": [*rows, *self._navigation_rows(back)]}
 
@@ -1073,7 +1073,7 @@ class TelegramPasswordGate:
             markup = self.settings_menu(user_id)
         elif data.startswith("history_size:"):
             value = self._to_int(data.split(":", 1)[1])
-            if value not in {20, 50, 100}:
+            if value not in {20, 30, 50, 100}:
                 return
             self.history_sizes[user_id] = value
             await self._persist_user(user_id)

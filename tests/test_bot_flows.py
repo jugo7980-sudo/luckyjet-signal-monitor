@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from luckyjet_password_gate import TelegramPasswordGate
 
 
@@ -151,23 +153,33 @@ def test_admin_block_and_unblock_flow_changes_access_state():
     assert 42 not in gate.blocked
 
 
-def test_history_size_setting_updates_panel_and_is_shown_in_settings():
+@pytest.mark.parametrize("size", [20, 30, 50, 100])
+def test_history_size_setting_updates_panel_and_is_shown_in_settings(size):
+    from test_history_open import MemoryRedis
     values = [f"{1 + index / 10:.2f}x" for index in range(100)]
     request = FakeRequest()
     gate = TelegramPasswordGate(request, history_provider=lambda: values)
+    gate.redis = MemoryRedis()
     gate.authorized.add(42)
     gate.chats[42] = 42
 
-    asyncio.run(gate.handle_callback(callback(42, "history_size:50", 500)))
+    asyncio.run(gate.handle_callback(callback(42, f"history_size:{size}", 500)))
 
-    assert gate.user_history_size(42) == 50
-    assert len([button for row in gate._history_markup(42)["inline_keyboard"] for button in row if button["callback_data"] == "history_refresh"]) == 50
+    assert gate.user_history_size(42) == size
+    assert len([button for row in gate._history_markup(42)["inline_keyboard"] for button in row if button["callback_data"] == "history_refresh"]) == size
     settings_text = [
         payload["text"] for method, payload in request.calls
         if method in {"sendMessage", "editMessageText"} and payload.get("text", "").startswith("⚙️ Настройки")
     ]
     assert settings_text
-    assert gate.settings_menu(42)["inline_keyboard"][2][1]["text"] == "50 результатов"
+    assert gate.settings_menu(42)["inline_keyboard"][2][1]["text"] == f"{size} результатов"
+
+    restored = TelegramPasswordGate(request)
+    restored.redis = gate.redis
+    asyncio.run(restored._load_persisted_state())
+    assert restored.user_history_size(42) == size
+    _, choices = restored._choice_screen(42, "settings_history")
+    assert any(b["text"] == f"✓ {size} результатов" for row in choices["inline_keyboard"] for b in row)
 
 
 def test_summary_and_status_show_recent_data_quality():

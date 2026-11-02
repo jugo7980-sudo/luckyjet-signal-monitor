@@ -402,7 +402,7 @@ class TelegramPasswordGate:
                 }.get(probe.result, "не проверен")
 
         return (
-            f"📡 Мониторинг: {monitor_state}\n"
+            f"📡 Статус мониторинга: {monitor_state}\n"
             f"Последний коэффициент: {latest}\n"
             f"Данные: {freshness}\n"
             f"Деморежим: {demo_state}\n"

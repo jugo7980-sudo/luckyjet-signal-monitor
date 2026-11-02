@@ -146,3 +146,39 @@ def test_admin_block_and_unblock_flow_changes_access_state():
 
     assert blocked is True
     assert 42 not in gate.blocked
+
+
+def test_history_size_setting_updates_panel_and_is_shown_in_settings():
+    values = [f"{1 + index / 10:.2f}x" for index in range(100)]
+    request = FakeRequest()
+    gate = TelegramPasswordGate(request, history_provider=lambda: values)
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+
+    asyncio.run(gate.handle_callback(callback(42, "history_size:50", 500)))
+
+    assert gate.user_history_size(42) == 50
+    assert len([button for row in gate._history_markup(42)["inline_keyboard"][:-1] for button in row]) == 50
+    settings_text = [
+        payload["text"] for method, payload in request.calls
+        if method == "sendMessage" and payload.get("text", "").startswith("⚙️ Настройки")
+    ]
+    assert settings_text and "История: 50 раундов" in settings_text[-1]
+
+
+def test_summary_and_status_show_recent_data_quality():
+    import time
+    request = FakeRequest()
+    gate = TelegramPasswordGate(request, history_provider=lambda: ["1.50x", "2.00x", "4.00x"])
+    gate.last_round = "1.50x"
+    gate.last_round_at = time.time()
+    gate.current_streak = ["1.50x"]
+
+    summary = gate._summary_text(42)
+    status = gate._status_text(42)
+
+    assert "Средний коэффициент: 2.50x" in summary
+    assert "Максимальный: 4.00x" in summary
+    assert "Ниже 2x: 1" in summary
+    assert "Статус: активно" in status
+    assert "История: 3 раундов" in status

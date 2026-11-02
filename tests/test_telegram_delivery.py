@@ -52,3 +52,22 @@ def test_429_retries_but_other_errors_propagate():
         await d('editMessageText',{'chat_id':1,'message_id':2,'text':'A'})
         assert len(calls)==2
     asyncio.run(run())
+
+
+def test_delete_invalidates_only_target_message():
+    async def run():
+        calls = []
+        async def request(method, payload):
+            calls.append((method, payload.copy()))
+            return {'ok': True}
+        send = TelegramDelivery(request, interval=0)
+        first = {'chat_id': 1, 'message_id': 2, 'text': 'a'}
+        second = {'chat_id': 1, 'message_id': 3, 'text': 'b'}
+        await send('editMessageText', first)
+        await send('editMessageText', second)
+        await send('deleteMessage', {'chat_id': 1, 'message_id': 2})
+        await send('editMessageText', second)
+        await send('editMessageText', first)
+        assert [method for method, _ in calls] == [
+            'editMessageText', 'editMessageText', 'deleteMessage', 'editMessageText']
+    asyncio.run(run())

@@ -103,9 +103,11 @@ class CoefficientStats:
         if self.redis is None:
             return [], 0
         cutoff=(datetime.now(TZ)-timedelta(days=90)).timestamp()
-        await self.redis.zremrangebyscore('luckyjet:coef:days','-inf',cutoff)
-        total = await self.redis.zcard('luckyjet:coef:days')
-        values = await self.redis.zrevrange('luckyjet:coef:days', page * 10, page * 10 + 9)
+        pipe = self.redis.pipeline()
+        pipe.zremrangebyscore('luckyjet:coef:days', '-inf', cutoff)
+        pipe.zcard('luckyjet:coef:days')
+        pipe.zrevrange('luckyjet:coef:days', page * 10, page * 10 + 9)
+        _, total, values = await pipe.execute()
         return [v.decode() if isinstance(v, bytes) else v for v in values], total
 
     async def summary(self, day):

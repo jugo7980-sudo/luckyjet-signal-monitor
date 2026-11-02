@@ -35,3 +35,25 @@ def test_invalid_buttons_rejected():
   assert not gate._supported_callback(data,1)
  assert gate._supported_callback('coef_days:2',1)
  assert gate._supported_callback('coef_day:2026-11-03:10:0',1)
+
+
+def test_day_page_uses_one_transaction_and_preserves_page_bounds():
+ class Pipeline:
+  def __init__(self): self.commands=[]; self.executions=0
+  def zremrangebyscore(self,*args): self.commands.append(('trim',args))
+  def zcard(self,*args): self.commands.append(('count',args))
+  def zrevrange(self,*args): self.commands.append(('page',args))
+  async def execute(self):
+   self.executions+=1
+   return [0, 21, [b'2026-11-02', b'2026-11-01']]
+ class Store:
+  def __init__(self): self.pipe=Pipeline()
+  def pipeline(self): return self.pipe
+ async def run():
+  store=Store()
+  days,total=await CoefficientStats(store).days(1)
+  assert days==['2026-11-02','2026-11-01'] and total==21
+  assert store.pipe.executions==1
+  assert [name for name,_ in store.pipe.commands]==['trim','count','page']
+  assert store.pipe.commands[-1][1]==('luckyjet:coef:days',10,19)
+ asyncio.run(run())

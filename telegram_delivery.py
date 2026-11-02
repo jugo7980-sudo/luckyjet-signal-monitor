@@ -23,11 +23,11 @@ class TelegramDelivery:
     async def __call__(self, method, payload):
         if not (method.startswith('editMessage') or method in {'sendMessage', 'deleteMessage'}):
             return await self.request(method, payload)
-        key = (method, payload.get('chat_id'), payload.get('message_id'))
-        lock = self._locks[hash(key[1:]) % len(self._locks)]
+        key = (payload.get('chat_id'), payload.get('message_id'))
+        lock = self._locks[hash(key) % len(self._locks)]
         async with lock:
             cached = self._cache.get(key)
-            if method.startswith('editMessage') and cached and cached[0] == payload and time.monotonic() - cached[1] < self.cache_seconds:
+            if method.startswith('editMessage') and cached and cached[0] == method and cached[1] == payload and time.monotonic() - cached[2] < self.cache_seconds:
                 return {'ok': True, 'result': True}
             for attempt in range(3):
                 urgent = interactive.get()
@@ -58,10 +58,10 @@ class TelegramDelivery:
                         self._next = max(self._next, time.monotonic() + delay)
 
             if method.startswith('editMessage') and result.get('ok', True):
-                self._cache = OrderedDict((k, v) for k, v in self._cache.items() if k[1:] != key[1:])
-                self._cache[key] = (copy.deepcopy(payload), time.monotonic())
+                self._cache.pop(key, None)
+                self._cache[key] = (method, copy.deepcopy(payload), time.monotonic())
             if method == 'deleteMessage':
-                self._cache = OrderedDict((k, v) for k, v in self._cache.items() if k[1:] != key[1:])
+                self._cache.pop(key, None)
             while len(self._cache) > 2000:
                 self._cache.popitem(last=False)
             return result

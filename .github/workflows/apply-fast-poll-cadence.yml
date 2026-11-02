@@ -1,0 +1,105 @@
+name: Apply fast poll cadence
+
+on:
+  push:
+    branches:
+      - feature/demo-hardening-2026-11-03
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/demo-hardening-2026-11-03
+      - name: Apply surgical polling changes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              text = path.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, got {count}')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          settings = Path('src/luckyjet_signal/settings.py')
+          replace_once(settings, '    poll_seconds: float = 1.0\n', '    poll_seconds: float = 0.1\n', 'config default')
+          replace_once(settings, '            poll_seconds=float(os.getenv("POLL_SECONDS", "1.0")),\n',
+                       '            poll_seconds=float(os.getenv("POLL_SECONDS", "0.1")),\n', 'env default')
+
+          fast = Path('luckyjet_fast_poll.py')
+          replace_once(fast, 'log = logging.getLogger("luckyjet.fast_poll")\n\n',
+                       'log = logging.getLogger("luckyjet.fast_poll")\nPREFERRED_HEDGE_SECONDS = 0.05\n\n', 'hedge constant')
+          replace_once(fast, '                done, _ = await asyncio.wait([primary], timeout=0.25)\n',
+                       '                done, _ = await asyncio.wait([primary], timeout=PREFERRED_HEDGE_SECONDS)\n', 'hedge use')
+
+          direct = Path('src/luckyjet_signal/direct_only.py')
+          replace_once(
+              direct,
+              'log = logging.getLogger("luckyjet.direct_only")\n\n\n',
+              '''log = logging.getLogger("luckyjet.direct_only")\n\nPOLL_BACKOFF_SECONDS = (0.1, 0.25, 0.5, 1.0, 2.0)\n\n\ndef next_poll_delay(success, current, base=0.1):\n    base = max(0.01, float(base))\n    if success:\n        return base\n    current = max(base, float(current))\n    steps = [base, *(value for value in POLL_BACKOFF_SECONDS if value > base)]\n    for value in steps:\n        if value > current + 1e-9:\n            return value\n    return max(base, POLL_BACKOFF_SECONDS[-1])\n\n\ndef poll_sleep_seconds(started_at, interval, now):\n    return round(max(0.0, float(started_at) + float(interval) - float(now)), 6)\n\n\n''',
+              'poll cadence helpers',
+          )
+
+          replace_once(
+              direct,
+              '        last_diagnostic = 0.0\n\n        async def close_browser_stack():\n',
+              '        last_diagnostic = 0.0\n        poll_delay = max(0.01, float(config.poll_seconds))\n\n        async def close_browser_stack():\n',
+              'poll delay state',
+          )
+
+          replace_once(
+              direct,
+              '            while True:\n                try:\n                    probe = getattr(monitor, "demo_probe", None)\n',
+              '            while True:\n                iteration_started = time.monotonic()\n                try:\n                    probe = getattr(monitor, "demo_probe", None)\n',
+              'iteration deadline',
+          )
+
+          replace_once(
+              direct,
+              '''                    if issue:\n                        if now - last_error_notice >= config.error_notify_cooldown:\n                            await monitor.send(config, issue)\n                            last_error_notice = now\n                        await asyncio.sleep(config.poll_seconds)\n                        continue\n''',
+              '''                    if issue:\n                        if now - last_error_notice >= config.error_notify_cooldown:\n                            await monitor.send(config, issue)\n                            last_error_notice = now\n                        poll_delay = next_poll_delay(False, poll_delay, config.poll_seconds)\n                        await asyncio.sleep(poll_sleep_seconds(iteration_started, poll_delay, time.monotonic()))\n                        continue\n''',
+              'page issue backoff',
+          )
+
+          replace_once(
+              direct,
+              '                    worked = outcome["worked"]\n                    rounds, source = await capture.snapshot()\n',
+              '                    worked = outcome["worked"]\n                    poll_delay = next_poll_delay(bool(outcome.get("ok")), poll_delay, config.poll_seconds)\n                    rounds, source = await capture.snapshot()\n',
+              'source outcome backoff',
+          )
+
+          text = direct.read_text(encoding='utf-8')
+          text = text.replace('                        await asyncio.sleep(3)\n                        continue\n',
+                              '                        await asyncio.sleep(2)\n                        continue\n')
+          direct.write_text(text, encoding='utf-8')
+
+          replace_once(
+              direct,
+              '                    await asyncio.sleep(config.poll_seconds)\n\n                except asyncio.CancelledError:\n',
+              '                    await asyncio.sleep(poll_sleep_seconds(iteration_started, poll_delay, time.monotonic()))\n\n                except asyncio.CancelledError:\n',
+              'healthy start-to-start sleep',
+          )
+
+          replace_once(
+              direct,
+              '''                    await close_browser_stack()\n                    direct_only = False\n                    capture = None\n                    stale_since = None\n\n                    await asyncio.sleep(max(3.0, config.poll_seconds))\n''',
+              '''                    await close_browser_stack()\n                    direct_only = False\n                    capture = None\n                    stale_since = None\n                    poll_delay = next_poll_delay(False, poll_delay, config.poll_seconds)\n\n                    await asyncio.sleep(poll_sleep_seconds(iteration_started, poll_delay, time.monotonic()))\n''',
+              'exception backoff',
+          )
+          PY
+      - name: Commit source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/luckyjet_signal/settings.py src/luckyjet_signal/direct_only.py luckyjet_fast_poll.py
+          if ! git diff --cached --quiet; then
+            git commit -m "perf: poll source at low latency with bounded backoff"
+            git push origin HEAD:feature/demo-hardening-2026-11-03
+          fi

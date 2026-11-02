@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from release_reset import apply_release_reset
@@ -18,6 +18,7 @@ from luckyjet_signal.demo_ledger import (
 )
 
 log = logging.getLogger("luckyjet.auth")
+THAILAND_TIME = timezone(timedelta(hours=7), name="Asia/Bangkok")
 
 
 class TelegramPasswordGate:
@@ -368,7 +369,10 @@ class TelegramPasswordGate:
         if not value:
             return "время не сохранено"
         try:
-            return datetime.fromisoformat(value).strftime("%d.%m.%Y %H:%M:%S UTC")
+            instant = datetime.fromisoformat(value)
+            if instant.tzinfo is None:
+                instant = instant.replace(tzinfo=timezone.utc)
+            return instant.astimezone(THAILAND_TIME).strftime("%d.%m.%Y %H:%M:%S")
         except (ValueError, TypeError):
             return "время не сохранено"
 
@@ -376,7 +380,7 @@ class TelegramPasswordGate:
         ledger = self._demo_ledger(user_id)
         if not ledger.history:
             return "📜 История демо-циклов\nПока циклов нет."
-        lines = ["📜 Последние демо-циклы:"]
+        lines = ["📜 Последние демо-циклы (время Таиланда, UTC+7):"]
         for index, entry in enumerate(ledger.history[:10], 1):
             rounds = entry.get("rounds", [])
             path = " → ".join(

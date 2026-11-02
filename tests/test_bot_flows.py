@@ -332,7 +332,7 @@ def test_demo_ledger_tracks_cycles_without_sending_demo_notifications():
     texts = [p["text"] for method, p in request.calls if method == "sendMessage"]
     assert not any("🧪 Демо:" in text or "Демо-цикл закрыт" in text for text in texts)
     assert "итог +$150.00" in gate._demo_history_text(42)
-    assert "UTC" in gate._demo_history_text(42)
+    assert "время Таиланда, UTC+7" in gate._demo_history_text(42)
     assert ledger.balance_cents == 1_015_000
     assert ledger.history[0]["balance_before_cents"] == 1_000_000
 

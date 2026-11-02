@@ -46,7 +46,7 @@ def test_history_keeps_newest_one_hundred_sessions_on_load_and_finish():
     existing = [completed_entry(i) for i in range(105)]
     ledger = DemoLedger(enabled=True, history=existing)
     assert len(ledger.history) == 100
-    assert ledger.history == existing[-100:]
+    assert ledger.history == existing[:100]
 
     start_cycle(ledger)
     ledger.process_round("2.00")

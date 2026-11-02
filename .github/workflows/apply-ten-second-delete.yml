@@ -1,0 +1,54 @@
+name: Apply ten second deletion
+
+on:
+  push:
+    branches:
+      - feature/demo-hardening-2026-11-03
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/demo-hardening-2026-11-03
+      - name: Apply narrow notification timing fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('luckyjet_password_gate.py')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              ('legacy_durations = [uid for uid, value in self.delete_seconds.items() if value in {10, 15}]',
+               'legacy_durations = [uid for uid, value in self.delete_seconds.items() if value in {5, 15}]'),
+              ('self.delete_seconds[uid] = 5\n                pipe.hset("luckyjet:delete_seconds", str(uid), "5")',
+               'self.delete_seconds[uid] = 10\n                pipe.hset("luckyjet:delete_seconds", str(uid), "10")'),
+              ('value = int(self.delete_seconds.get(int(user_id), 5))\n        if value in {10, 15}:\n            return 5\n        return value if value in {0, 5, 30, 60} else 5',
+               'value = int(self.delete_seconds.get(int(user_id), 10))\n        if value in {5, 15}:\n            return 10\n        return value if value in {0, 10, 30, 60} else 10'),
+              ('for n, label in ((5, "Через 5 секунд"), (30, "Через 30 секунд"), (60, "Через 60 секунд"), (0, "Не удалять"))]',
+               'for n, label in ((10, "Через 10 секунд"), (30, "Через 30 секунд"), (60, "Через 60 секунд"), (0, "Не удалять"))]'),
+              ('if value in {10, 15}:\n                value = 5\n            if value not in {0, 5, 30, 60}:',
+               'if value in {5, 15}:\n                value = 10\n            if value not in {0, 10, 30, 60}:'),
+              ('"Уведомления и звук: ВКЛ · серия: 4 · история: 20 · удаление: 5 сек.\\nДемо сохранится.")',
+               '"Уведомления и звук: ВКЛ · серия: 4 · история: 20 · удаление: 10 сек.\\nДемо сохранится.")'),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected one match, got {count}: {old[:80]}')
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Commit source change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add luckyjet_password_gate.py
+          git commit -m "fix: restore ten second streak deletion"
+          git push origin HEAD:feature/demo-hardening-2026-11-03

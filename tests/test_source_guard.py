@@ -110,3 +110,32 @@ def test_id_change_with_overlapping_history_emits_only_real_new_round(monkeypatc
     last_messages = [m for m in sent if m.startswith("Последний коэффициент:")]
     assert last_messages == ["Последний коэффициент: 1.70x"]
     assert state.last_round_id == "new-4"
+
+
+def test_unrecoverable_id_gap_is_flagged_without_processing_newest_round(monkeypatch):
+    install_source_guard(monitor, direct_hold_seconds=15)
+    state = monitor.State(previous=[1.20, 2.30, 1.50], last_round_id="old-3")
+    rounds = [
+        {"id": "new-9", "coefficient": 9.90},
+        {"id": "new-8", "coefficient": 8.80},
+        {"id": "new-7", "coefficient": 7.70},
+    ]
+    sent = []
+
+    async def fake_send(config, message):
+        sent.append(message)
+        return True
+
+    async def fake_save(config, state):
+        return None
+
+    monkeypatch.setattr(monitor, "send", fake_send)
+    monkeypatch.setattr(monitor, "save_state", fake_save)
+
+    config = SimpleNamespace(threshold=2.0, trigger_streak=4)
+    asyncio.run(monitor.process_network_history(config, state, rounds))
+
+    assert sent == []
+    assert state.history_gap is True
+    assert state.last_round_id == "new-9"
+    assert state.previous == [9.90, 8.80, 7.70]

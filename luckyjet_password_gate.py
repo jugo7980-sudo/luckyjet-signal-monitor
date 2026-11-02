@@ -328,7 +328,7 @@ class TelegramPasswordGate:
         ]
         if user_id is not None:
             balance = format_dollars(self._demo_ledger(user_id).balance_cents)
-            rows.append([{"text": f"💵 Демо-баланс: {balance} · обновить", "callback_data": "demo_refresh_balance"}])
+            rows.append([{"text": f"💵 Баланс: {balance} 🔄", "callback_data": "demo_refresh_balance"}])
         rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
 

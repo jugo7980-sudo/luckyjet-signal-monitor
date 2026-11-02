@@ -12,7 +12,7 @@ class RacingRequest:
 
     async def __call__(self, method, payload):
         self.calls.append((method, payload))
-        if method == "editMessageReplyMarkup" and payload.get("message_id") == 799:
+        if method == "editMessageText" and payload.get("text") == "📊" and payload.get("message_id") == 799:
             await asyncio.sleep(0)
             raise httpx.HTTPError("message to edit not found")
         if method == "sendMessage":
@@ -44,7 +44,7 @@ def test_concurrent_history_recovery_creates_only_one_replacement():
     history_sends = [
         payload
         for method, payload in request.calls
-        if method == "sendMessage" and payload.get("text") == "🎰 Lucky Jet — история коэффициентов"
+        if method == "sendMessage" and payload.get("text") == "📊"
     ]
     assert len(history_sends) == 1
     assert gate.history_messages[42] == 801

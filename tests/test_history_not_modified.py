@@ -11,8 +11,8 @@ class NotModifiedRequest:
 
     async def __call__(self, method, payload):
         self.calls.append((method, payload))
-        if method == "editMessageReplyMarkup":
-            request = httpx.Request("POST", "https://api.telegram.org/bot-test/editMessageReplyMarkup")
+        if method == "editMessageText":
+            request = httpx.Request("POST", "https://api.telegram.org/bot-test/editMessageText")
             response = httpx.Response(
                 400,
                 request=request,
@@ -41,6 +41,8 @@ def test_unchanged_history_is_success_not_recreated():
 
     result = asyncio.run(gate.ensure_private_history(42))
 
+    assert request.calls[0][0] == "editMessageText"
+    assert request.calls[0][1]["text"] == "📊"
     assert result is True
     assert gate.history_messages[42] == 555
     assert not any(method == "sendMessage" for method, _ in request.calls)

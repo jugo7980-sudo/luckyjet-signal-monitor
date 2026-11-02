@@ -42,10 +42,10 @@ def test_authorized_start_always_shows_visible_main_menu():
 
     sends = [payload for method, payload in request.calls if method == "sendMessage"]
     assert sends, "Authorized /start must visibly respond instead of looking dead"
-    assert sends[-1]["text"].startswith("🎰 Lucky Jet Monitor")
+    assert sends[-1]["text"].startswith("☰")
     callbacks = {
         button["callback_data"]
         for row in sends[-1]["reply_markup"]["inline_keyboard"]
         for button in row
     }
-    assert {"menu_history", "demo_menu", "menu_help", "menu_settings"} <= callbacks
+    assert {"menu_history", "demo_menu", "menu_settings"} <= callbacks

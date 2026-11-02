@@ -169,7 +169,7 @@ def test_explicit_start_reopens_hidden_panels_for_recovery():
 
     asyncio.run(run())
     assert any(m == "deleteMessage" and p["message_id"] == 200 for m, p in request.calls)
-    assert any(m == "sendMessage" and p.get("text") == "🎰 Lucky Jet — история коэффициентов" for m, p in request.calls)
+    assert any(m == "sendMessage" and p.get("text") == "📊" for m, p in request.calls)
 
 
 def test_hidden_history_and_disabled_notifications_never_create_new_messages():

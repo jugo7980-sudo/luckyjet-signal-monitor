@@ -64,10 +64,10 @@ def test_authorized_commands_remove_user_message_and_render_expected_screen():
         assert transient_id not in deleted
 
     texts = [p["text"] for m, p in request.calls if m in {"sendMessage", "editMessageText"}]
-    assert any(text.startswith("🎰 Lucky Jet Monitor") for text in texts)
+    assert any(text.startswith("☰") for text in texts)
     assert any("📡 Статус" in text for text in texts)
     assert any("⚙️ Настройки" in text for text in texts)
-    assert any("ℹ️ Lucky Jet Monitor" in text for text in texts)
+    assert not any("как пользоваться" in text for text in texts)
     assert menu_id == status_id == settings_id == help_id
 
 

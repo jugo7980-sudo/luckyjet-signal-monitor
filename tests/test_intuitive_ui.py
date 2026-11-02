@@ -158,7 +158,7 @@ def test_stake_input_is_guarded_during_cycle_and_cancelled_by_main_menu():
 
 def test_buttons_are_named_and_fit_callback_limits():
     gate, request = setup()
-    menus = [gate.menu(42), gate.settings_menu(42), gate.demo_menu(42), gate._demo_history_menu(42)]
+    menus = [gate.menu(99), gate.menu(42), gate.settings_menu(42), gate.demo_menu(42), gate._demo_history_menu(42)]
     for kind in ("settings_threshold", "settings_history", "settings_delete", "demo_trigger_menu"):
         text, markup = gate._choice_screen(42, kind)
         assert 10 < len(text) < 120
@@ -166,6 +166,7 @@ def test_buttons_are_named_and_fit_callback_limits():
     for markup in menus:
         for row in markup["inline_keyboard"]:
             for button in row:
+                assert button["callback_data"] not in {"menu_help", "admin_users"}
                 assert not re.fullmatch(r"[✓\s]*\d+", button["text"])
                 assert 1 <= len(button["callback_data"].encode()) <= 64
                 assert gate._supported_callback(button["callback_data"], 42) or button["callback_data"] == "menu_history"

@@ -104,7 +104,6 @@ class TelegramPasswordGate:
                         {"command": "menu", "description": "Открыть меню"},
                         {"command": "status", "description": "Статус мониторинга"},
                         {"command": "settings", "description": "Настройки"},
-                        {"command": "help", "description": "Справка"},
                     ]
                 },
             )
@@ -278,20 +277,7 @@ class TelegramPasswordGate:
 
     @staticmethod
     def _main_text():
-        return "🎰 Lucky Jet Monitor"
-
-    @staticmethod
-    def _help_text():
-        return (
-            "ℹ️ Lucky Jet Monitor — как пользоваться\n\n"
-            "1. История коэффициентов обновляется автоматически. Нажмите любой коэффициент для обновления вручную.\n"
-            "🟦 Ниже 2x · 🟪 От 2x до 9.99x · 🟧 От 10x.\n\n"
-            "2. В настройках выберите, после скольких результатов подряд ниже 2x получать уведомление. "
-            "Одно сообщение обновляется до конца серии, затем удаляется по вашему таймеру.\n\n"
-            "3. В демо-режиме отдельно задайте условие старта и ставку, затем нажмите «Включить демо». "
-            "После проигрыша ставка удваивается, выход рассчитывается на 2x. Реальные ставки не выполняются.\n\n"
-            "Баланс — виртуальный расчёт бота. Результаты доступны в истории демо-циклов; время — Таиланд, UTC+7."
-        )
+        return "☰"
 
     def _supported_callback(self, data, user_id):
         if data in {
@@ -336,9 +322,6 @@ class TelegramPasswordGate:
         if user_id is not None:
             balance = format_dollars(self._demo_ledger(user_id).balance_cents)
             rows.append([{"text": f"💵 Демо-баланс: {balance} · обновить", "callback_data": "demo_refresh_balance"}])
-        rows.append([{"text": "❓ Справка", "callback_data": "menu_help"}])
-        if user_id is not None and self.is_admin(user_id):
-            rows.append([{"text": "🛡 Управление доступом", "callback_data": "admin_users"}])
         rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
 
@@ -371,7 +354,6 @@ class TelegramPasswordGate:
             self._setting_row("💰 Первая ставка", format_dollars(ledger.base_stake_cents), "demo_set_stake"),
             [{"text": "📜 История циклов", "callback_data": "demo_history"}],
             [{"text": "♻️ Сбросить демо", "callback_data": "demo_reset"}],
-            [{"text": "❓ Справка", "callback_data": "menu_help"}],
             *self._navigation_rows(),
         ]}
 
@@ -498,7 +480,6 @@ class TelegramPasswordGate:
             self._setting_row("🔊 Звук", "ВКЛ" if sound else "ВЫКЛ", "settings_sound"),
             [{"text": "🧪 Тест", "callback_data": "settings_test"},
              {"text": "♻️ Сброс настроек", "callback_data": "settings_reset"}],
-            [{"text": "❓ Справка", "callback_data": "menu_help"}],
             *self._navigation_rows(),
         ]}
 
@@ -756,8 +737,8 @@ class TelegramPasswordGate:
                 await self._send_transient(
                     user_id,
                     chat_id,
-                    self._help_text(),
-                    {"inline_keyboard": self._navigation_rows()},
+                    self._main_text(),
+                    self.menu(user_id),
                 )
             elif user_id in self.demo_pending_inputs and value == "/cancel":
                 self.demo_pending_inputs.pop(user_id, None)
@@ -927,7 +908,7 @@ class TelegramPasswordGate:
             await self._persist_user(user_id)
             markup = self.menu(user_id)
         elif data == "menu_help":
-            answer, markup = self._help_text(), {"inline_keyboard": self._navigation_rows()}
+            answer, markup = self._main_text(), self.menu(user_id)
         elif data in {"settings_threshold", "settings_history", "settings_delete", "demo_trigger_menu"}:
             answer, markup = self._choice_screen(user_id, data)
         elif data == "menu_settings":
@@ -1307,8 +1288,8 @@ class TelegramPasswordGate:
         if message_id is not None:
             try:
                 await self.request(
-                    "editMessageReplyMarkup",
-                    {"chat_id": chat_id, "message_id": message_id, "reply_markup": markup},
+                    "editMessageText",
+                    {"chat_id": chat_id, "message_id": message_id, "text": "📊", "reply_markup": markup},
                 )
                 return True
             except httpx.HTTPStatusError as exc:
@@ -1341,7 +1322,7 @@ class TelegramPasswordGate:
         try:
             result = await self.request(
                 "sendMessage",
-                {"chat_id": chat_id, "text": "🎰 Lucky Jet — история коэффициентов", "reply_markup": markup},
+                {"chat_id": chat_id, "text": "📊", "reply_markup": markup},
             )
             message_id = result.get("result", {}).get("message_id")
             if message_id is None:

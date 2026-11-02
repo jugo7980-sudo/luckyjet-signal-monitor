@@ -13,7 +13,7 @@ class FakeRequest:
 
     async def __call__(self, method, payload):
         self.calls.append((method, payload))
-        if method == "editMessageReplyMarkup" and self.fail_edit_history_once:
+        if method == "editMessageText" and payload.get("text") == "📊" and self.fail_edit_history_once:
             self.fail_edit_history_once = False
             raise httpx.HTTPError("message missing")
         if method == "sendMessage":
@@ -71,8 +71,8 @@ def test_password_unlocks_into_clean_history_panel():
     assert gate.chats[42] == 42
     assert gate.history_messages[42] == 102
     sent = sent_messages(request)
-    assert sent[-2]["text"] == "🎰 Lucky Jet — история коэффициентов"
-    assert sent[-1]["text"].startswith("🎰 Lucky Jet Monitor")
+    assert sent[-2]["text"] == "📊"
+    assert sent[-1]["text"].startswith("☰")
     buttons = sent[-2]["reply_markup"]["inline_keyboard"]
     assert buttons[-1][0]["callback_data"] == "menu_open"
     deleted = deleted_ids(request)
@@ -100,7 +100,7 @@ def test_main_menu_keeps_existing_buttons_and_can_close():
     assert "📡 Статус" not in labels
     assert "📈 Сводка" not in labels
     assert "🧪 Демо: проверка" not in labels
-    assert "❓ Справка" in labels
+    assert "❓ Справка" not in labels
     assert "⚙️ Настройки" in labels
     assert "✖ Закрыть меню" in labels
     assert 101 not in deleted_ids(request)
@@ -141,7 +141,6 @@ def test_settings_are_top_to_bottom_and_keep_navigation():
     assert callbacks[3] == ["settings_delete", "settings_delete"]
     assert callbacks[4] == ["settings_sound", "settings_sound"]
     assert callbacks[5] == ["settings_test", "settings_reset"]
-    assert callbacks[6] == ["menu_help"]
     assert callbacks[-1] == ["menu_main", "menu_close"]
 
 
@@ -225,7 +224,7 @@ def test_notifications_disabled_suppresses_new_streak_but_not_history():
 
     asyncio.run(run())
 
-    assert any(p["text"] == "🎰 Lucky Jet — история коэффициентов" for p in sent_messages(request))
+    assert any(p["text"] == "📊" for p in sent_messages(request))
     assert not any(p["text"] == "🎰 Lucky Jet | Серия <2x" for p in sent_messages(request))
 
 
@@ -264,7 +263,7 @@ def test_history_panel_recreates_if_saved_message_was_deleted():
     asyncio.run(run())
 
     assert gate.history_messages[42] == 102
-    history_sends = [p for p in sent_messages(request) if p["text"] == "🎰 Lucky Jet — история коэффициентов"]
+    history_sends = [p for p in sent_messages(request) if p["text"] == "📊"]
     assert len(history_sends) == 2
 
 
@@ -322,9 +321,9 @@ def test_authorized_user_gets_live_history_panel_and_updates_same_message():
 
     assert gate.history_messages[42] == 101
     methods = [method for method, _ in request.calls]
-    assert methods == ["sendMessage", "editMessageReplyMarkup"]
+    assert methods == ["sendMessage", "editMessageText"]
     sent = request.calls[0][1]
-    assert sent["text"] == "🎰 Lucky Jet — история коэффициентов"
+    assert sent["text"] == "📊"
     rows = sent["reply_markup"]["inline_keyboard"]
     assert rows[0][0]["text"] == "🟦1.10x"
     assert rows[-1][0]["callback_data"] == "menu_open"

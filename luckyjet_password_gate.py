@@ -14,6 +14,7 @@ class TelegramPasswordGate:
     def __init__(self, request, history_provider=None, admin_chat_id=None, password=None, history_refresher=None):
         self.request = request
         self.history_provider = history_provider
+        self.demo_probe = None
         self.history_refresher = history_refresher
         self._refresh_tasks = set()
         self.password = password if password is not None else os.getenv("TELEGRAM_ACCESS_PASSWORD", "").strip()
@@ -226,6 +227,7 @@ class TelegramPasswordGate:
             ],
         ]
         if user_id is not None and self.is_admin(user_id):
+            rows.append([{"text": "🧪 Демо: проверка", "callback_data": "demo_probe"}])
             rows.append([{"text": "🛡 Админ", "callback_data": "admin_users"}])
         rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
@@ -500,6 +502,20 @@ class TelegramPasswordGate:
             return
 
         if data in {"noop", "history_refresh"}:
+            return
+
+        if data in {"demo_probe", "demo_probe_status"}:
+            if not self.is_admin(user_id) or self.demo_probe is None:
+                return
+            if data == "demo_probe":
+                self.demo_probe.start()
+            await self._send_transient(user_id, chat_id, self.demo_probe.text(), {
+                "inline_keyboard": [
+                    [{"text": "Обновить статус", "callback_data": "demo_probe_status"}],
+                    [{"text": "Повторить проверку", "callback_data": "demo_probe"}],
+                    *self._navigation_rows(),
+                ]
+            })
             return
 
         if data == "menu_open":

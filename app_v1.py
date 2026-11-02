@@ -7,6 +7,7 @@ import os
 import httpx
 
 from history_refresh import HistoryRefresh
+from demo_probe import DemoProbe
 
 import main as base
 from luckyjet_fast_poll import install_fast_poll
@@ -173,6 +174,26 @@ async def main_async() -> None:
         history_refresher=refresh.request,
         admin_chat_id=config.telegram_chat_id,
     )
+    demo_probe = DemoProbe()
+    password_gate.demo_probe = demo_probe
+
+    async def initial_demo_check():
+        # Let normal source startup finish before opening the diagnostic browser.
+        await asyncio.sleep(60)
+        task = demo_probe.start()
+        if task is not None:
+            await task
+        admin = password_gate.admin_chat_id
+        if admin in password_gate.authorized and admin in password_gate.chats:
+            try:
+                await password_gate._send_transient(
+                    admin, password_gate.chats[admin], demo_probe.text(),
+                    password_gate.menu(admin),
+                )
+                log.info("Demo probe report delivered to Telegram admin")
+            except (httpx.HTTPError, RuntimeError):
+                log.warning("Demo probe report delivery failed; result available in menu")
+
     polling_lease = TelegramPollingLease(os.getenv("REDIS_URL", ""))
     seed_private_streak(password_gate, state.previous)
 
@@ -196,10 +217,12 @@ async def main_async() -> None:
         await asyncio.gather(
             base.health_server(),
             render_self_keepalive(),
+            initial_demo_check(),
             polling_lease.run(password_gate.start()),
             direct_only.run_monitor(monitor, config, state=state),
         )
     finally:
+        await demo_probe.close()
         await password_gate.close()
         await refresh.close()
         monitor.history_refresh = None

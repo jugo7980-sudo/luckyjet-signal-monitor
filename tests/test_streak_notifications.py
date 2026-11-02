@@ -29,7 +29,7 @@ def setup():
 
 
 @pytest.mark.parametrize("threshold", [2, 3, 4, 5, 6, 10])
-def test_one_notice_at_threshold_updates_same_id_and_schedules_five_seconds(threshold):
+def test_one_notice_at_threshold_updates_same_id_and_schedules_ten_seconds(threshold):
     gate, request = setup()
     gate.thresholds[42] = threshold
     async def run():
@@ -45,7 +45,7 @@ def test_one_notice_at_threshold_updates_same_id_and_schedules_five_seconds(thre
         await gate.on_round("2.00x")
         assert 42 not in gate.active_messages
         mid, deadline = gate.pending_deletions[42]
-        assert mid == notice_id and before + 5 <= deadline <= time.time() + 5
+        assert mid == notice_id and before + 10 <= deadline <= time.time() + 10
         await gate.close()
         # Cancelled timers keep their persisted deadline for a restart.
         assert gate.pending_deletions[42] == (mid, deadline)
@@ -101,22 +101,25 @@ def test_sound_and_notification_toggle_are_applied_without_demo_spam():
     asyncio.run(run())
 
 
-def test_legacy_durations_and_buttons_use_five_seconds():
+def test_legacy_fifteen_seconds_migrates_to_ten_and_ten_is_selectable():
     gate, request = setup()
     async def run():
-        for value in (10, 15):
-            gate.delete_seconds[42] = value
-            assert gate.user_delete_seconds(42) == 5
-            await gate.handle_callback({"id": str(value), "data": f"delete:{value}", "from": {"id": 42},
-                                       "message": {"message_id": 999, "chat": {"id": 42}}})
-            assert gate.delete_seconds[42] == 5
+        gate.delete_seconds[42] = 10
+        assert gate.user_delete_seconds(42) == 10
+        await gate.handle_callback({"id": "10", "data": "delete:10", "from": {"id": 42},
+                                   "message": {"message_id": 999, "chat": {"id": 42}}})
+        assert gate.delete_seconds[42] == 10
+        gate.delete_seconds[42] = 15
+        assert gate.user_delete_seconds(42) == 10
+        await gate.handle_callback({"id": "15", "data": "delete:15", "from": {"id": 42},
+                                   "message": {"message_id": 999, "chat": {"id": 42}}})
+        assert gate.delete_seconds[42] == 10
     asyncio.run(run())
     text = str(gate.settings_menu(42))
-    assert "5 сек." in text and "10 сек." not in text
+    assert "10 сек." in text
     _, choices = gate._choice_screen(42, "settings_delete")
     buttons = [b for row in choices["inline_keyboard"] for b in row]
-    assert any(b["callback_data"] == "delete:5" for b in buttons)
-    assert not any(b["callback_data"] == "delete:10" for b in buttons)
+    assert any(b["callback_data"] == "delete:10" for b in buttons)
 
 
 def test_redis_migration_and_restart_resume_notice_without_duplicate():
@@ -125,11 +128,11 @@ def test_redis_migration_and_restart_resume_notice_without_duplicate():
         gate, request = setup()
         redis = fakeredis.FakeRedis(decode_responses=True)
         gate.redis = redis
-        await redis.hset("luckyjet:delete_seconds", "42", "10")
+        await redis.hset("luckyjet:delete_seconds", "42", "15")
         gate.current_streak = ["1.20x"] * 4
         await gate._persist_user(42)
         # Seed legacy value after persist to test loading/migration itself.
-        await redis.hset("luckyjet:delete_seconds", "42", "10")
+        await redis.hset("luckyjet:delete_seconds", "42", "15")
         await gate._update_streak_notice(42)
         old_id = gate.active_messages[42]
         restored = ReliableTelegramPasswordGate(request)
@@ -137,7 +140,7 @@ def test_redis_migration_and_restart_resume_notice_without_duplicate():
         restored.current_streak = ["1.20x"] * 4
         await restored._load_persisted_state()
         assert restored.active_messages[42] == old_id
-        assert await redis.hget("luckyjet:delete_seconds", "42") == "5"
+        assert await redis.hget("luckyjet:delete_seconds", "42") == "10"
         assert len([1 for m, _ in request.calls if m == "sendMessage"]) == 1
         await restored.on_round("2.00x")
         saved = await redis.hget("luckyjet:pending_delete_message", "42")
@@ -147,7 +150,7 @@ def test_redis_migration_and_restart_resume_notice_without_duplicate():
             task.cancel()
         await asyncio.gather(*restored._deletion_tasks, return_exceptions=True)
         assert await redis.hget("luckyjet:pending_delete_message", "42") == str(old_id)
-        await restored.restore_runtime_state(now=time.time() + 6)
+        await restored.restore_runtime_state(now=time.time() + 11)
         assert 42 not in restored.pending_deletions
         assert await redis.hget("luckyjet:pending_delete_message", "42") is None
         await redis.aclose()

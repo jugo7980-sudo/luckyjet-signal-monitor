@@ -62,6 +62,7 @@ async def poll_direct_gateways_fast(monitor, capture, *, request_timeout=4.0):
                     "direct:" + monitor.safe_url(url),
                 )
                 if count:
+                    capture._preferred_direct_url = url
                     log.debug(
                         "Fast direct endpoint returned %d completed rounds: %s",
                         count,
@@ -73,12 +74,20 @@ async def poll_direct_gateways_fast(monitor, capture, *, request_timeout=4.0):
             except Exception:
                 return 0
 
-        tasks = [
-            asyncio.create_task(fetch(url))
-            for url in list(urls)[:8]
-        ]
-
+        candidates = list(urls)[:8]
+        preferred = getattr(capture, "_preferred_direct_url", None)
+        tasks = []
         try:
+            if preferred in candidates:
+                primary = asyncio.create_task(fetch(preferred))
+                tasks.append(primary)
+                # Hedge slow responses instead of waiting for the full timeout.
+                done, _ = await asyncio.wait([primary], timeout=0.25)
+                if done and primary.result():
+                    return primary.result()
+                candidates.remove(preferred)
+            tasks.extend(asyncio.create_task(fetch(url)) for url in candidates)
+
             for completed in asyncio.as_completed(tasks):
                 count = await completed
                 if count:

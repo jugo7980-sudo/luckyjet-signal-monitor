@@ -1478,9 +1478,20 @@ class TelegramPasswordGate:
             return False
 
     async def update_private_histories(self):
-        for user_id in list(self.authorized):
-            if user_id in self.chats:
-                await self.ensure_private_history(user_id)
+        # A slow Telegram response must not hold up every other user's panel.
+        # Keep a small shared limit across overlapping refresh calls.
+        if not hasattr(self, "_history_refresh_slots"):
+            self._history_refresh_slots = asyncio.Semaphore(4)
+
+        async def update(user_id):
+            async with self._history_refresh_slots:
+                if user_id in self.authorized and user_id in self.chats:
+                    await self.ensure_private_history(user_id)
+
+        async with asyncio.TaskGroup() as group:
+            for user_id in list(self.authorized):
+                if user_id in self.chats and user_id not in self.history_hidden:
+                    group.create_task(update(user_id))
 
     async def _handle_demo_round(self, user_id, coefficient):
         ledger = self.demo_ledgers.get(user_id)

@@ -19,6 +19,8 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pending_deletions = {}
+        self._runtime_saved = {}
+        self._runtime_save_locks = {}
 
     @staticmethod
     def _telegram_description(exc):
@@ -61,34 +63,48 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
             return
 
         user_id = int(user_id)
-        uid = str(user_id)
-        pipe = self.redis.pipeline()
+        lock = self._runtime_save_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            # Only acknowledge a snapshot after Redis confirms the write. The
+            # per-user lock also prevents an older save overwriting a newer one.
+            snapshot = (
+                self.redis,
+                self.menu_messages.get(user_id),
+                self.menu_deadlines.get(user_id) if user_id in self.menu_messages else None,
+                self.active_messages.get(user_id),
+                self.pending_deletions.get(user_id),
+            )
+            if self._runtime_saved.get(user_id) == snapshot:
+                return
+            uid = str(user_id)
+            pipe = self.redis.pipeline()
 
-        if user_id in self.menu_messages:
-            pipe.hset("luckyjet:menu_messages", uid, str(self.menu_messages[user_id]))
-        else:
-            pipe.hdel("luckyjet:menu_messages", uid)
+            if user_id in self.menu_messages:
+                pipe.hset("luckyjet:menu_messages", uid, str(self.menu_messages[user_id]))
+            else:
+                pipe.hdel("luckyjet:menu_messages", uid)
 
-        if user_id in self.menu_messages and user_id in self.menu_deadlines:
-            pipe.hset("luckyjet:menu_deadlines", uid, repr(self.menu_deadlines[user_id]))
-        else:
-            pipe.hdel("luckyjet:menu_deadlines", uid)
+            if user_id in self.menu_messages and user_id in self.menu_deadlines:
+                pipe.hset("luckyjet:menu_deadlines", uid, repr(self.menu_deadlines[user_id]))
+            else:
+                pipe.hdel("luckyjet:menu_deadlines", uid)
 
-        if user_id in self.active_messages:
-            pipe.hset("luckyjet:active_messages", uid, str(self.active_messages[user_id]))
-        else:
-            pipe.hdel("luckyjet:active_messages", uid)
+            if user_id in self.active_messages:
+                pipe.hset("luckyjet:active_messages", uid, str(self.active_messages[user_id]))
+            else:
+                pipe.hdel("luckyjet:active_messages", uid)
 
-        pending = self.pending_deletions.get(user_id)
-        if pending:
-            message_id, deadline = pending
-            pipe.hset("luckyjet:pending_delete_message", uid, str(message_id))
-            pipe.hset("luckyjet:pending_delete_deadline", uid, repr(float(deadline)))
-        else:
-            pipe.hdel("luckyjet:pending_delete_message", uid)
-            pipe.hdel("luckyjet:pending_delete_deadline", uid)
+            pending = self.pending_deletions.get(user_id)
+            if pending:
+                message_id, deadline = pending
+                pipe.hset("luckyjet:pending_delete_message", uid, str(message_id))
+                pipe.hset("luckyjet:pending_delete_deadline", uid, repr(float(deadline)))
+            else:
+                pipe.hdel("luckyjet:pending_delete_message", uid)
+                pipe.hdel("luckyjet:pending_delete_deadline", uid)
 
-        await pipe.execute()
+            await pipe.execute()
+            self._runtime_saved[user_id] = snapshot
 
     async def _persist_user(self, user_id):
         await super()._persist_user(user_id)

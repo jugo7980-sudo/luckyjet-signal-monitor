@@ -48,3 +48,41 @@ def test_concurrent_history_recovery_creates_only_one_replacement():
     ]
     assert len(history_sends) == 1
     assert gate.history_messages[42] == 801
+
+
+def test_slow_history_request_does_not_block_other_users_and_concurrency_is_bounded():
+    async def run():
+        release = asyncio.Event()
+        four_started = asyncio.Event()
+        active = 0
+        maximum = 0
+        started = []
+
+        async def request(method, payload):
+            nonlocal active, maximum
+            if method == 'editMessageText':
+                active += 1
+                maximum = max(maximum, active)
+                started.append(payload['chat_id'])
+                if len(started) >= 4:
+                    four_started.set()
+                await release.wait()
+                active -= 1
+            return {'ok': True, 'result': True}
+
+        gate = ReliableTelegramPasswordGate(request, history_provider=lambda: ['1.10x'])
+        for uid in range(10):
+            gate.authorized.add(uid)
+            gate.chats[uid] = uid
+            gate.history_messages[uid] = 100 + uid
+        task = asyncio.create_task(gate.update_private_histories())
+        try:
+            await asyncio.wait_for(four_started.wait(), timeout=0.2)
+            assert len(started) == 4
+        finally:
+            release.set()
+            await task
+        assert set(started) == set(range(10))
+        assert maximum == 4
+
+    asyncio.run(run())

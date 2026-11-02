@@ -63,7 +63,7 @@ def test_incomplete_session_never_fabricates_money_and_detail_shows_reason_and_d
 
     assert "⚠️ данные" in button["text"]
     assert "$0.00" not in button["text"]
-    assert "Причина завершения: неполные данные" in detail.lower()
+    assert "причина завершения: неполные данные" in detail.lower()
     assert "Длительность: 1 мин 30 сек" in detail
     assert "Чистый результат:" not in detail
     assert "2.75x" in detail

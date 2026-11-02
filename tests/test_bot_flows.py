@@ -137,9 +137,12 @@ def test_admin_block_and_unblock_flow_changes_access_state():
 
     async def run():
         await gate.handle_callback(callback(99, "admin_block:42", 500))
+        assert 42 not in gate.blocked
+        await gate.handle_callback(callback(99, "admin_confirm", gate.menu_messages[99]))
         blocked = 42 in gate.blocked and 42 not in gate.authorized
         menu_id = gate.menu_messages[99]
         await gate.handle_callback(callback(99, "admin_unblock:42", menu_id))
+        await gate.handle_callback(callback(99, "admin_confirm", gate.menu_messages[99]))
         return blocked
 
     blocked = asyncio.run(run())
@@ -221,7 +224,7 @@ def test_demo_balance_button_refreshes_current_ledger_without_edit_prompt():
         for row in latest_screen["reply_markup"]["inline_keyboard"]
         for button in row
     ]
-    assert "💵 Баланс: $9,500.50" in labels
+    assert "🔄 Обновить баланс: $9,500.50" in labels
 
 
 def test_demo_stake_input_minimum_and_reset_confirmation_buttons():
@@ -277,8 +280,8 @@ def test_demo_history_button_renders_recovered_initial_stake_and_cycle_result():
         p for method, p in request.calls
         if method in {"sendMessage", "editMessageText"} and p.get("text", "").startswith("📜")
     ][-1]
-    assert "Возвращено изначальных $150.00" in screen["text"]
-    assert "итог +$150.00" in screen["text"]
+    assert "Потраченные средства возвращены." in screen["text"]
+    assert "Чистый результат: +$150.00" in screen["text"]
     assert "Баланс: $10,000.00 → $10,150.00" in screen["text"]
 
 
@@ -331,8 +334,8 @@ def test_demo_ledger_tracks_cycles_without_sending_demo_notifications():
 
     texts = [p["text"] for method, p in request.calls if method == "sendMessage"]
     assert not any("🧪 Демо:" in text or "Демо-цикл закрыт" in text for text in texts)
-    assert "итог +$150.00" in gate._demo_history_text(42)
-    assert "время Таиланда, UTC+7" in gate._demo_history_text(42)
+    assert "Чистый результат: +$150.00" in gate._demo_history_text(42)
+    assert "Время Таиланда, UTC+7" in gate._demo_history_text(42)
     assert ledger.balance_cents == 1_015_000
     assert ledger.history[0]["balance_before_cents"] == 1_000_000
 

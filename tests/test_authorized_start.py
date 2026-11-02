@@ -48,4 +48,4 @@ def test_authorized_start_always_shows_visible_main_menu():
         for row in sends[-1]["reply_markup"]["inline_keyboard"]
         for button in row
     }
-    assert {"menu_history", "demo_menu", "menu_notifications", "menu_settings"} <= callbacks
+    assert {"menu_history", "demo_menu", "menu_help", "menu_settings"} <= callbacks

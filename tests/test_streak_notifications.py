@@ -113,7 +113,8 @@ def test_legacy_durations_and_buttons_use_five_seconds():
     asyncio.run(run())
     text = gate._settings_text(42)
     assert "5 сек." in text and "10 сек." not in text
-    buttons = [b for row in gate.settings_menu(42)["inline_keyboard"] for b in row]
+    _, choices = gate._choice_screen(42, "settings_delete")
+    buttons = [b for row in choices["inline_keyboard"] for b in row]
     assert any(b["callback_data"] == "delete:5" for b in buttons)
     assert not any(b["callback_data"] == "delete:10" for b in buttons)
 

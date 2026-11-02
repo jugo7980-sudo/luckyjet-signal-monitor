@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 
 
 DEFAULT_BALANCE_CENTS = 1_000_000  # $10,000.00
@@ -18,7 +18,10 @@ def parse_dollars(value) -> int | None:
         return None
     if not amount.is_finite() or amount <= 0 or amount.as_tuple().exponent < -2:
         return None
-    return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    try:
+        return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (DecimalException, ValueError, OverflowError):
+        return None
 
 
 def format_dollars(cents: int) -> str:

@@ -49,7 +49,7 @@ def test_navigation_and_thirty_rounds_keep_exactly_two_messages():
             await gate.handle_callback(callback(action, menu_id))
             assert gate.menu_messages[42] == menu_id
         assert len(gate.demo_ledgers[42].history) == 5
-        assert "время Таиланда, UTC+7" in gate._demo_history_text(42)
+        assert "Время Таиланда, UTC+7" in gate._demo_history_text(42)
         await gate.close()
 
     asyncio.run(run())

@@ -50,6 +50,8 @@ class TelegramPasswordGate:
         self.history_sizes = {}
         self.demo_ledgers = {}
         self.demo_pending_inputs = {}
+        self.admin_pending_actions = {}
+        self.pending_confirmations = {}
         self.demo_panel_messages = {}
         self._demo_panel_content = {}
         self.failures = {}
@@ -266,11 +268,35 @@ class TelegramPasswordGate:
         value = int(self.history_sizes.get(int(user_id), 20))
         return value if value in {20, 50, 100} else 20
 
-    def _navigation_rows(self):
-        return [[
-            {"text": "⬅️ Меню", "callback_data": "menu_main"},
-            {"text": "✖ Закрыть меню", "callback_data": "menu_close"},
-        ]]
+    def _navigation_rows(self, back=None):
+        rows = [[{"text": "⬅️ Назад", "callback_data": back}]] if back else []
+        rows.append([
+            {"text": "🏠 Главное меню", "callback_data": "menu_main"},
+            {"text": "✖ Закрыть", "callback_data": "menu_close"},
+        ])
+        return rows
+
+    @staticmethod
+    def _main_text():
+        return (
+            "🎰 Lucky Jet Monitor\n"
+            "История коэффициентов — завершённые раунды, новые слева направо.\n"
+            "Демо — проверка схемы на виртуальном балансе.\n"
+            "Настройки — уведомления, звук и размер истории."
+        )
+
+    @staticmethod
+    def _help_text():
+        return (
+            "ℹ️ Lucky Jet Monitor — как пользоваться\n\n"
+            "1. История коэффициентов обновляется автоматически. Нажмите любой коэффициент для обновления вручную.\n"
+            "🟦 Ниже 2x · 🟪 От 2x до 9.99x · 🟧 От 10x.\n\n"
+            "2. В настройках выберите, после скольких результатов подряд ниже 2x получать уведомление. "
+            "Одно сообщение обновляется до конца серии, затем удаляется по вашему таймеру.\n\n"
+            "3. В демо-режиме отдельно задайте условие старта и ставку, затем нажмите «Включить демо». "
+            "После проигрыша ставка удваивается, выход рассчитывается на 2x. Реальные ставки не выполняются.\n\n"
+            "Баланс — виртуальный расчёт бота. Результаты доступны в истории демо-циклов; время — Таиланд, UTC+7."
+        )
 
     def _supported_callback(self, data, user_id):
         if data in {
@@ -278,8 +304,16 @@ class TelegramPasswordGate:
             "menu_notifications", "menu_settings", "settings_notifications",
             "settings_sound", "settings_test", "settings_reset", "demo_menu",
             "demo_toggle", "demo_refresh_balance", "demo_set_balance", "demo_set_stake", "demo_input_cancel",
-            "demo_history", "demo_reset", "demo_reset_confirm",
+            "demo_history", "demo_reset", "demo_reset_confirm", "demo_trigger_menu",
+            "settings_threshold", "settings_history", "settings_delete", "settings_reset_confirm", "menu_help",
         }:
+            return True
+        if data.startswith("demo_history:"):
+            page = self._to_int(data.split(":", 1)[1])
+            return page is not None and page >= 0
+        if self.is_admin(user_id) and data.startswith("admin_user:"):
+            return self._to_int(data.split(":", 1)[1]) is not None
+        if self.is_admin(user_id) and data == "admin_confirm":
             return True
         if data.startswith("threshold:"):
             return self._to_int(data.split(":", 1)[1]) in range(3, 11)
@@ -298,71 +332,87 @@ class TelegramPasswordGate:
         return False
 
     def menu(self, user_id=None):
+        hidden = user_id in self.history_hidden
         rows = [
-            [
-                {"text": "📊 История", "callback_data": "menu_history"},
-            ],
-            [
-                {"text": "🔔 Уведомления", "callback_data": "menu_notifications"},
-                {"text": "⚙️ Настройки", "callback_data": "menu_settings"},
-            ],
+            [{"text": "📊 Показать историю коэффициентов" if hidden else "📊 Скрыть историю коэффициентов", "callback_data": "menu_history"}],
             [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"}],
+            [{"text": "⚙️ Настройки уведомлений и истории", "callback_data": "menu_settings"}],
         ]
         if user_id is not None:
             balance = format_dollars(self._demo_ledger(user_id).balance_cents)
-            rows.append([{"text": f"💵 Баланс демо-счёта: {balance}", "callback_data": "demo_refresh_balance"}])
+            rows.append([{"text": f"💵 Демо-баланс: {balance} · обновить", "callback_data": "demo_refresh_balance"}])
+        rows.append([{"text": "❓ Как пользоваться ботом", "callback_data": "menu_help"}])
         if user_id is not None and self.is_admin(user_id):
-            rows.append([{"text": "🛡 Админ", "callback_data": "admin_users"}])
+            rows.append([{"text": "🛡 Управление доступом", "callback_data": "admin_users"}])
         rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
 
     def _demo_text(self, user_id):
         ledger = self._demo_ledger(user_id)
-        state = "ВКЛ" if ledger.enabled else "ВЫКЛ"
+        if not ledger.enabled:
+            state = "приостановлен, текущий цикл сохранён" if ledger.active else "выключен"
+        else:
+            state = "цикл в работе" if ledger.active else "ожидание условия запуска"
         if ledger.active:
             progress = (
-                f"Цикл идёт. Следующая ставка: {format_dollars(ledger.next_stake_cents)}\n"
+                f"Следующая виртуальная ставка: {format_dollars(ledger.next_stake_cents)}\n"
                 f"Уже поставлено в цикле: {format_dollars(ledger.cycle_stake_cents)}"
             )
         else:
-            progress = (
-                f"Ожидание: {ledger.low_streak}/{ledger.trigger_streak} раундов ниже 2x\n"
-                f"Следующая ставка после сигнала: {format_dollars(ledger.base_stake_cents)}"
-            )
+            progress = f"Сейчас ниже 2x подряд: {ledger.low_streak} из {ledger.trigger_streak}"
         return (
-            "🧪 Демо-режим Lucky Jet\n"
+            "🧪 Демо-режим — виртуальные ставки\n"
             f"Состояние: {state}\n"
             f"Виртуальный баланс: {format_dollars(ledger.balance_cents)}\n"
-            f"Порог запуска: {ledger.trigger_streak} раундов подряд ниже 2x\n"
-            f"Стартовая ставка: {format_dollars(ledger.base_stake_cents)} "
-            f"(минимум {format_dollars(MINIMUM_STAKE_CENTS)})\n"
-            f"{progress}\n"
-            "Только виртуальный учёт. Реальные ставки не выполняются."
+            f"Начинать цикл после {ledger.trigger_streak} раундов подряд ниже 2x.\n"
+            f"Стартовая ставка: {format_dollars(ledger.base_stake_cents)} (минимум $10).\n"
+            f"{progress}\n\n"
+            "После условия ставка учитывается со следующего раунда. После проигрыша — удвоение. "
+            "Выход на 2x; после выигрыша — ожидание новой серии.\n"
+            "Это расчёт бота: баланс сайта не считывается, реальные ставки не выполняются."
         )
 
     def demo_menu(self, user_id):
         ledger = self._demo_ledger(user_id)
-        trigger_row = [
-            {
-                "text": f"{'✓ ' if ledger.trigger_streak == value else ''}{value} раундов",
-                "callback_data": f"demo_trigger:{value}",
-            }
-            for value in TRIGGER_OPTIONS
-        ]
-        return {
-            "inline_keyboard": [
-                [{
-                    "text": "🟢 Демо включён · выключить" if ledger.enabled else "🔴 Демо выключен · включить",
-                    "callback_data": "demo_toggle",
-                }],
-                trigger_row,
-                [{"text": f"💵 Баланс: {format_dollars(ledger.balance_cents)}", "callback_data": "demo_refresh_balance"}],
-                [{"text": f"🎯 Стартовая ставка: {format_dollars(ledger.base_stake_cents)}", "callback_data": "demo_set_stake"}],
-                [{"text": "📜 История демо-циклов", "callback_data": "demo_history"}],
-                [{"text": "♻️ Сбросить баланс и историю", "callback_data": "demo_reset"}],
-                *self._navigation_rows(),
-            ]
-        }
+        return {"inline_keyboard": [
+            [{"text": "⏸ Приостановить демо" if ledger.enabled else "▶️ Продолжить демо" if ledger.active else "▶️ Включить демо", "callback_data": "demo_toggle"}],
+            [{"text": f"🎯 Начать цикл после: {ledger.trigger_streak} раундов", "callback_data": "demo_trigger_menu"}],
+            [{"text": f"🔄 Обновить баланс: {format_dollars(ledger.balance_cents)}", "callback_data": "demo_refresh_balance"}],
+            [{"text": f"💰 Изменить стартовую ставку: {format_dollars(ledger.base_stake_cents)}", "callback_data": "demo_set_stake"}],
+            [{"text": "📜 Посмотреть историю демо-циклов", "callback_data": "demo_history"}],
+            [{"text": "♻️ Сбросить демо-баланс и циклы", "callback_data": "demo_reset"}],
+            *self._navigation_rows(),
+        ]}
+
+    def _choice_screen(self, user_id, kind):
+        ledger = self._demo_ledger(user_id)
+        if kind == "demo_trigger_menu":
+            text = ("🎯 Условие запуска демо-цикла\n"
+                    "Сколько результатов подряд должны быть ниже 2x, чтобы начать виртуальный цикл? "
+                    "Первая ставка — в следующем раунде. Это не настройка уведомлений.")
+            if ledger.active:
+                text += " Текущий цикл продолжится; выбранное условие применяется к следующему циклу."
+            choices = [(f"После {n} раундов", f"demo_trigger:{n}", n == ledger.trigger_streak) for n in TRIGGER_OPTIONS]
+            back = "demo_menu"
+        elif kind == "settings_threshold":
+            text = ("🔔 Когда присылать уведомление о серии?\n"
+                    "Выберите число результатов подряд ниже 2x. Бот пришлёт одно сообщение и будет обновлять его до конца серии. "
+                    "Это не меняет условие запуска демо.")
+            choices = [(f"После {n} раундов", f"threshold:{n}", n == self.user_threshold(user_id)) for n in range(3, 11)]
+            back = "menu_settings"
+        elif kind == "settings_history":
+            text = "📋 Размер истории коэффициентов\nСколько последних завершённых раундов показывать в панели?"
+            choices = [(f"{n} результатов", f"history_size:{n}", n == self.user_history_size(user_id)) for n in (20, 50, 100)]
+            back = "menu_settings"
+        else:
+            text = ("⏱ Когда удалять уведомление о серии?\n"
+                    "Таймер начинается после результата 2x или выше, когда серия завершилась. "
+                    "Пока серия идёт, сообщение обновляется на месте.")
+            choices = [(label, f"delete:{n}" if n else "delete:off", n == self.user_delete_seconds(user_id))
+                       for n, label in ((5, "Через 5 секунд"), (30, "Через 30 секунд"), (60, "Через 60 секунд"), (0, "Без таймера удаления"))]
+            back = "menu_settings"
+        rows = [[{"text": ("✓ " if selected else "") + label, "callback_data": action}] for label, action, selected in choices]
+        return text, {"inline_keyboard": [*rows, *self._navigation_rows(back)]}
 
     @staticmethod
     def _cycle_time(value):
@@ -376,32 +426,38 @@ class TelegramPasswordGate:
         except (ValueError, TypeError):
             return "время не сохранено"
 
-    def _demo_history_text(self, user_id):
-        ledger = self._demo_ledger(user_id)
-        if not ledger.history:
-            return "📜 История демо-циклов\nПока циклов нет."
-        lines = ["📜 Последние демо-циклы (время Таиланда, UTC+7):"]
-        for index, entry in enumerate(ledger.history[:10], 1):
-            rounds = entry.get("rounds", [])
-            path = " → ".join(
-                f"{format_dollars(item.get('stake_cents', 0))} при {item.get('coefficient', '?')}x"
-                for item in rounds
-            ) or "ставка не выполнена"
-            payout = int(entry.get("payout_cents", 0))
-            net = int(entry.get("net_cents", 0))
-            sign = "+" if net > 0 else ""
-            recovery = (
-                f"Возвращено изначальных {format_dollars(int(entry.get('base_stake_cents', ledger.base_stake_cents)))}; "
-                if entry.get("outcome") == "recovered" else ""
-            )
-            lines.append(
-                f"\n{index}) {self._cycle_time(entry.get('started_at'))} → {self._cycle_time(entry.get('ended_at'))}\n{path}\n"
-                f"{recovery}выплата {format_dollars(payout)}, "
-                f"итог {sign}{format_dollars(net)}\n"
-                f"Баланс: {format_dollars(int(entry.get('balance_before_cents', 0)))} → "
-                f"{format_dollars(int(entry.get('balance_after_cents', 0)))}"
-            )
+    def _demo_history_text(self, user_id, page=0):
+        history = self._demo_ledger(user_id).history
+        if not history:
+            return "📜 История демо-циклов\nЦиклов пока нет. Включите демо и дождитесь выбранного условия запуска."
+        page = min(max(0, page), len(history) - 1)
+        entry = history[page]
+        lines = [f"📜 Демо-цикл {page + 1} из {len(history)} · новые сначала",
+                 "Время Таиланда, UTC+7",
+                 f"Начало: {self._cycle_time(entry.get('started_at'))}",
+                 f"Завершение: {self._cycle_time(entry.get('ended_at'))}", ""]
+        for step, item in enumerate(entry.get("rounds", []), 1):
+            result = "выход на 2x" if item.get("payout_cents", 0) else "проигрыш"
+            lines.append(f"Шаг {step}: {format_dollars(item.get('stake_cents', 0))} · раунд {item.get('coefficient', '?')}x · {result}")
+        net = int(entry.get("net_cents", 0))
+        result = ("Потраченные средства возвращены." if entry.get("outcome") == "recovered"
+                  else "Цикл остановлен: не хватило виртуального баланса на следующий шаг.")
+        lines += ["", result,
+                  f"Всего поставлено: {format_dollars(entry.get('total_stake_cents', 0))}",
+                  f"Выплата: {format_dollars(entry.get('payout_cents', 0))}",
+                  f"Чистый результат: {'+' if net > 0 else ''}{format_dollars(net)}",
+                  f"Баланс: {format_dollars(entry.get('balance_before_cents', 0))} → {format_dollars(entry.get('balance_after_cents', 0))}"]
         return "\n".join(lines)
+
+    def _demo_history_menu(self, user_id, page=0):
+        count = len(self._demo_ledger(user_id).history)
+        page = min(max(0, page), max(0, count - 1))
+        pager = []
+        if page:
+            pager.append({"text": "⬅️ Более новый цикл", "callback_data": f"demo_history:{page - 1}"})
+        if page + 1 < count:
+            pager.append({"text": "Более старый цикл ➡️", "callback_data": f"demo_history:{page + 1}"})
+        return {"inline_keyboard": [*([pager] if pager else []), *self._navigation_rows("demo_menu")]}
 
     async def _demo_input(self, user_id, chat_id, raw, message_id=None):
         field = self.demo_pending_inputs.pop(user_id, None)
@@ -409,6 +465,12 @@ class TelegramPasswordGate:
         if field is None:
             return False
         ledger = self._demo_ledger(user_id)
+        if field == "stake" and ledger.active:
+            await self._safe_delete(chat_id, message_id)
+            await self._send_transient(user_id, chat_id,
+                "Цикл уже начался. Изменить стартовую ставку можно после его завершения или сброса.",
+                self.demo_menu(user_id))
+            return True
         updated = False
         if cents is None:
             answer = "❌ Введите сумму в USD, не более двух знаков после точки."
@@ -423,8 +485,8 @@ class TelegramPasswordGate:
             updated = True
         else:
             answer = (
-                "❌ Сумма не подходит. Минимальная ставка $10; ставка не должна превышать баланс. "
-                "Во время активного цикла баланс не может быть меньше следующего шага."
+                f"❌ Введите сумму от $10 до {format_dollars(ledger.balance_cents)}. "
+                "Используйте не более двух знаков после точки, например 25.50."
             )
             self.demo_pending_inputs[user_id] = field
         await self._safe_delete(chat_id, message_id)
@@ -437,79 +499,53 @@ class TelegramPasswordGate:
     def _settings_text(self, user_id):
         notifications = "включены" if user_id not in self.notifications_disabled else "выключены"
         sound = "без звука" if user_id in self.silent_users else "со звуком"
-        delete = self.user_delete_seconds(user_id)
-        delete_label = "не удалять" if delete == 0 else f"{delete} сек."
+        delay = self.user_delete_seconds(user_id)
+        timer = f"через {delay} сек. после конца серии" if delay else "без таймера"
         return (
-            "⚙️ Настройки\n"
-            f"🔔 Уведомления: {notifications}\n"
-            f"🎯 Серия: {self.user_threshold(user_id)} подряд ниже 2x\n"
-            f"📋 История: {self.user_history_size(user_id)} раундов\n"
-            f"⏱ Автоудаление: {delete_label}\n"
-            f"🔊 Звук: {sound}"
+            "⚙️ Настройки уведомлений и истории\n"
+            f"Уведомления о серии: {notifications}, {sound}.\n"
+            f"Сообщать после {self.user_threshold(user_id)} раундов подряд ниже 2x.\n"
+            f"Удалять уведомление: {timer}.\n"
+            f"История: {self.user_history_size(user_id)} раундов.\n\n"
+            "Нажмите нужную настройку, чтобы изменить её. Условие запуска демо задаётся отдельно в демо-режиме."
         )
 
     def settings_menu(self, user_id):
-        threshold = self.user_threshold(user_id)
-        delete = self.user_delete_seconds(user_id)
-        history_size = self.user_history_size(user_id)
-        notifications_enabled = user_id not in self.notifications_disabled
-        sound_enabled = user_id not in self.silent_users
-
-        threshold_rows = []
-        for start in (3, 7):
-            row = []
-            stop = 7 if start == 3 else 11
-            for value in range(start, stop):
-                prefix = "✓ " if value == threshold else ""
-                row.append({"text": f"{prefix}{value}", "callback_data": f"threshold:{value}"})
-            threshold_rows.append(row)
-
-        history_row = [
-            {"text": f"{'✓ ' if value == history_size else ''}{value}", "callback_data": f"history_size:{value}"}
-            for value in (20, 50, 100)
-        ]
-        delete_row = []
-        for value, label in ((5, "5с"), (30, "30с"), (60, "60с"), (0, "Без удаления")):
-            prefix = "✓ " if value == delete else ""
-            callback_value = "off" if value == 0 else str(value)
-            delete_row.append({"text": f"{prefix}{label}", "callback_data": f"delete:{callback_value}"})
-
-        return {
-            "inline_keyboard": [
-                [{
-                    "text": f"🔔 Уведомления: {'ВКЛ' if notifications_enabled else 'ВЫКЛ'}",
-                    "callback_data": "settings_notifications",
-                }],
-                *threshold_rows,
-                history_row,
-                delete_row,
-                [{
-                    "text": f"🔊 Звук: {'ВКЛ' if sound_enabled else 'ВЫКЛ'}",
-                    "callback_data": "settings_sound",
-                }],
-                [{"text": "🧪 Тест уведомления", "callback_data": "settings_test"}],
-                [{"text": "♻️ Сбросить настройки", "callback_data": "settings_reset"}],
-                *self._navigation_rows(),
-            ]
-        }
+        enabled = user_id not in self.notifications_disabled
+        sound = user_id not in self.silent_users
+        delay = self.user_delete_seconds(user_id)
+        return {"inline_keyboard": [
+            [{"text": f"🔔 Уведомления о сериях: {'включены' if enabled else 'выключены'}", "callback_data": "settings_notifications"}],
+            [{"text": f"🎯 Уведомлять после: {self.user_threshold(user_id)} раундов", "callback_data": "settings_threshold"}],
+            [{"text": f"📋 В истории: {self.user_history_size(user_id)} результатов", "callback_data": "settings_history"}],
+            [{"text": f"⏱ После конца серии: {str(delay) + ' сек.' if delay else 'без таймера'}", "callback_data": "settings_delete"}],
+            [{"text": f"🔊 Звук уведомлений: {'включён' if sound else 'выключен'}", "callback_data": "settings_sound"}],
+            [{"text": "🧪 Отправить тестовое уведомление", "callback_data": "settings_test"}],
+            [{"text": "♻️ Вернуть настройки по умолчанию", "callback_data": "settings_reset"}],
+            *self._navigation_rows(),
+        ]}
 
     def _admin_menu(self):
         rows = []
-        for user_id in sorted(self.authorized):
-            if self.is_admin(user_id):
+        for target in sorted(self.authorized | self.blocked):
+            if self.is_admin(target):
                 continue
-            rows.append(
-                [
-                    {"text": f"Отозвать {user_id}", "callback_data": f"admin_revoke:{user_id}"},
-                    {"text": f"Блок {user_id}", "callback_data": f"admin_block:{user_id}"},
-                ]
-            )
-        for user_id in sorted(self.blocked):
-            rows.append(
-                [{"text": f"Разблокировать {user_id}", "callback_data": f"admin_unblock:{user_id}"}]
-            )
-        rows.extend(self._navigation_rows())
-        return {"inline_keyboard": rows}
+            label = "⛔ Заблокирован" if target in self.blocked else "👤 Пользователь"
+            rows.append([{"text": f"{label} · ID {target}", "callback_data": f"admin_user:{target}"}])
+        return {"inline_keyboard": [*rows, *self._navigation_rows()]}
+
+    def _admin_user_screen(self, target):
+        blocked = target in self.blocked
+        state = "заблокирован" if blocked else "есть доступ" if target in self.authorized else "нужно войти с паролем"
+        rows = []
+        if not self.is_admin(target):
+            if blocked:
+                rows.append([{"text": "🔓 Разблокировать пользователя", "callback_data": f"admin_unblock:{target}"}])
+            else:
+                rows += [[{"text": "🔑 Отозвать доступ", "callback_data": f"admin_revoke:{target}"}],
+                         [{"text": "⛔ Заблокировать пользователя", "callback_data": f"admin_block:{target}"}]]
+        return (f"🛡 Пользователь ID {target}\nСтатус: {state}.\nВыберите действие. Перед изменением доступа потребуется подтверждение.",
+                {"inline_keyboard": [*rows, *self._navigation_rows("admin_users")]})
 
     async def _safe_delete(self, chat_id, message_id):
         if chat_id is None or message_id is None:
@@ -677,6 +713,8 @@ class TelegramPasswordGate:
                    self.prompt_messages.pop(user_id, None)}
             self.history_hidden.discard(user_id)
             self.demo_pending_inputs.pop(user_id, None)
+            self.pending_confirmations.pop(user_id, None)
+            self.admin_pending_actions.pop(user_id, None)
             self.demo_panel_messages.pop(user_id, None)
             self._demo_panel_content.pop(user_id, None)
             for message_id in ids:
@@ -710,18 +748,22 @@ class TelegramPasswordGate:
             return
 
         if await self.is_authorized(user_id):
+            if command in {"/start", "/menu", "/settings", "/status", "/help"}:
+                self.demo_pending_inputs.pop(user_id, None)
+                self.pending_confirmations.pop(user_id, None)
+                self.admin_pending_actions.pop(user_id, None)
             self.chats[user_id] = chat_id
             if command == "/start":
                 log.info("Telegram start: user_id=%s authorized=True", user_id)
                 await self._prepare_start(user_id, chat_id)
                 await self.ensure_private_history(user_id)
                 await self._send_transient(user_id, chat_id,
-                    "🎰 Lucky Jet Monitor\nВыберите раздел.", self.menu(user_id))
+                    self._main_text(), self.menu(user_id))
             elif command == "/menu":
                 await self._send_transient(
                     user_id,
                     chat_id,
-                    "🎰 Lucky Jet Monitor\nВыберите раздел.",
+                    self._main_text(),
                     self.menu(user_id),
                 )
             elif command == "/status":
@@ -737,9 +779,7 @@ class TelegramPasswordGate:
                 await self._send_transient(
                     user_id,
                     chat_id,
-                    "ℹ️ Lucky Jet Monitor\n"
-                    "История обновляется автоматически. Меню открывается кнопкой под историей. "
-                    "Сообщение серии появляется при достижении выбранного порога и обновляется до завершения серии.",
+                    self._help_text(),
                     {"inline_keyboard": self._navigation_rows()},
                 )
             elif user_id in self.demo_pending_inputs and value == "/cancel":
@@ -757,7 +797,7 @@ class TelegramPasswordGate:
             log.info("Telegram start: user_id=%s authorized=False", user_id)
             await self._prepare_start(user_id, chat_id)
             self.pending.add(user_id)
-            await self._replace_prompt(user_id, chat_id, "🔐 Введите пароль для доступа к боту.")
+            await self._replace_prompt(user_id, chat_id, "🔐 Вход в Lucky Jet\nВведите пароль сообщением в этот чат. Сообщение с паролем будет удалено.")
             await self._safe_delete(chat_id, message_id)
             return
 
@@ -780,7 +820,7 @@ class TelegramPasswordGate:
             self.history_hidden.discard(user_id)
             await self.ensure_private_history(user_id)
             await self._send_transient(user_id, chat_id,
-                "🎰 Lucky Jet Monitor\nВыберите раздел.", self.menu(user_id))
+                self._main_text(), self.menu(user_id))
             await self._delete_prompt(user_id, chat_id)
             log.info("Telegram login completed: user_id=%s", user_id)
             return
@@ -827,6 +867,11 @@ class TelegramPasswordGate:
             return
 
         self.chats[user_id] = chat_id
+        self.demo_pending_inputs.pop(user_id, None)
+        if data not in {"settings_reset_confirm", "demo_reset_confirm"}:
+            self.pending_confirmations.pop(user_id, None)
+        if data != "admin_confirm" and not data.startswith(("admin_revoke:", "admin_block:", "admin_unblock:")):
+            self.admin_pending_actions.pop(user_id, None)
 
         if history_refresh:
             task = asyncio.create_task(self._refresh_history_callback(user_id, callback))
@@ -855,7 +900,7 @@ class TelegramPasswordGate:
             await self._send_transient(
                 user_id,
                 chat_id,
-                "🎰 Lucky Jet Monitor\nВыберите раздел.",
+                self._main_text(),
                 self.menu(user_id),
             )
             return
@@ -865,6 +910,8 @@ class TelegramPasswordGate:
             answer = {"callback_query_id": callback["id"]}
             if not success:
                 answer.update(text="Не удалось переключить историю. Повторите попытку.", show_alert=True)
+            elif user_id in self.menu_messages:
+                await self._send_transient(user_id, chat_id, self._main_text(), self.menu(user_id))
             try:
                 await self.request("answerCallbackQuery", answer)
             except (httpx.HTTPError, RuntimeError, KeyError):
@@ -883,7 +930,7 @@ class TelegramPasswordGate:
             await self._safe_delete(chat_id, message_id)
             return
         if data == "menu_main":
-            answer = "🎰 Lucky Jet Monitor\nВыберите раздел."
+            answer = self._main_text()
             markup = self.menu(user_id)
         elif data == "menu_status":
             answer = self._status_text(user_id)
@@ -902,6 +949,10 @@ class TelegramPasswordGate:
                 await self._clear_streak_notice(user_id)
             await self._persist_user(user_id)
             markup = self.menu(user_id)
+        elif data == "menu_help":
+            answer, markup = self._help_text(), {"inline_keyboard": self._navigation_rows()}
+        elif data in {"settings_threshold", "settings_history", "settings_delete", "demo_trigger_menu"}:
+            answer, markup = self._choice_screen(user_id, data)
         elif data == "menu_settings":
             answer = self._settings_text(user_id)
             markup = self.settings_menu(user_id)
@@ -943,26 +994,36 @@ class TelegramPasswordGate:
             answer = self._demo_text(user_id)
             markup = self.demo_menu(user_id)
         elif data == "demo_set_stake":
-            self.demo_pending_inputs[user_id] = "stake"
-            answer = "Введите стартовую виртуальную ставку в USD (минимум $10), например 150. Для отмены отправьте /cancel."
-            markup = {"inline_keyboard": [[{"text": "⬅️ Отмена", "callback_data": "demo_input_cancel"}]]}
+            if self._demo_ledger(user_id).active:
+                answer = "💰 Стартовая ставка\nСейчас цикл ещё не завершён. Изменить ставку можно после его завершения или сброса демо-цикла."
+                markup = {"inline_keyboard": self._navigation_rows("demo_menu")}
+            else:
+                self.demo_pending_inputs[user_id] = "stake"
+                answer = "💰 Изменить стартовую ставку\nВведите сумму в долларах, например 10 или 25.50. Минимум $10; сумма не должна превышать виртуальный баланс."
+                markup = {"inline_keyboard": [[{"text": "⬅️ Отменить ввод", "callback_data": "demo_input_cancel"}]]}
         elif data == "demo_input_cancel":
             self.demo_pending_inputs.pop(user_id, None)
             answer = self._demo_text(user_id)
             markup = self.demo_menu(user_id)
-        elif data == "demo_history":
-            answer = self._demo_history_text(user_id)
-            markup = {"inline_keyboard": [
-                [{"text": "⬅️ Демо-режим", "callback_data": "demo_menu"}],
-                *self._navigation_rows(),
-            ]}
+        elif data == "demo_history" or data.startswith("demo_history:"):
+            page = 0 if data == "demo_history" else self._to_int(data.split(":", 1)[1])
+            answer, markup = self._demo_history_text(user_id, page), self._demo_history_menu(user_id, page)
         elif data == "demo_reset":
-            answer = "Сбросить виртуальный баланс, текущую серию и историю демо-циклов?"
+            self.pending_confirmations[user_id] = "demo"
+            state = "включённым" if self._demo_ledger(user_id).enabled else "выключенным"
+            answer = ("♻️ Сбросить демо-баланс и циклы?\n"
+                      "Баланс станет $10,000.00, текущий цикл будет прерван, история циклов удалится. "
+                      f"Ставка и условие запуска сохранятся. Демо останется {state}.")
             markup = {"inline_keyboard": [
                 [{"text": "✅ Да, сбросить", "callback_data": "demo_reset_confirm"}],
                 [{"text": "Отмена", "callback_data": "demo_menu"}],
             ]}
         elif data == "demo_reset_confirm":
+            if self.pending_confirmations.pop(user_id, None) != "demo":
+                await self._send_transient(user_id, chat_id,
+                    "Подтверждение устарело. Для сброса выберите «Сбросить демо-баланс и циклы» заново.",
+                    self.demo_menu(user_id))
+                return
             ledger = self._demo_ledger(user_id)
             ledger.reset()
             await self._persist_demo(user_id)
@@ -1033,6 +1094,20 @@ class TelegramPasswordGate:
             answer = self._settings_text(user_id)
             markup = self.settings_menu(user_id)
         elif data == "settings_reset":
+            self.pending_confirmations[user_id] = "settings"
+            answer = ("♻️ Вернуть настройки по умолчанию?\n"
+                      "Уведомления и звук включатся, порог станет 4 раунда, история — 20 результатов, "
+                      "удаление — через 5 секунд после конца серии. Демо-баланс и циклы сохранятся.")
+            markup = {"inline_keyboard": [
+                [{"text": "✅ Да, вернуть настройки", "callback_data": "settings_reset_confirm"}],
+                [{"text": "⬅️ Отмена", "callback_data": "menu_settings"}],
+            ]}
+        elif data == "settings_reset_confirm":
+            if self.pending_confirmations.pop(user_id, None) != "settings":
+                await self._send_transient(user_id, chat_id,
+                    "Подтверждение устарело. Для сброса выберите «Вернуть настройки по умолчанию» заново.",
+                    self.settings_menu(user_id))
+                return
             self.thresholds.pop(user_id, None)
             self.delete_seconds.pop(user_id, None)
             self.history_sizes.pop(user_id, None)
@@ -1042,31 +1117,43 @@ class TelegramPasswordGate:
             answer = self._settings_text(user_id)
             markup = self.settings_menu(user_id)
         elif data == "admin_users" and self.is_admin(user_id):
-            users = ", ".join(str(x) for x in sorted(self.authorized)) or "нет"
-            blocked = ", ".join(str(x) for x in sorted(self.blocked)) or "нет"
-            answer = f"🛡 Пользователи с доступом: {users}\nЗаблокированы: {blocked}"
+            self.admin_pending_actions.pop(user_id, None)
+            answer = (f"🛡 Управление доступом\nС доступом: {len(self.authorized)}. Заблокировано: {len(self.blocked)}.\n"
+                      "Выберите пользователя, затем нужное действие.")
             markup = self._admin_menu()
-        elif data.startswith("admin_revoke:") and self.is_admin(user_id):
-            target = self._to_int(data.split(":", 1)[1])
-            if target is None or self.is_admin(target):
+        elif data.startswith("admin_user:") and self.is_admin(user_id):
+            answer, markup = self._admin_user_screen(self._to_int(data.split(":", 1)[1]))
+        elif data.startswith(("admin_revoke:", "admin_block:", "admin_unblock:")) and self.is_admin(user_id):
+            action, raw = data.split(":", 1)
+            target = self._to_int(raw)
+            if target is None or (self.is_admin(target) and action != "admin_unblock"):
                 return
-            await self._revoke_user(target, block=False)
-            answer = f"✅ Доступ пользователя {target} отозван."
-            markup = self._admin_menu()
-        elif data.startswith("admin_block:") and self.is_admin(user_id):
-            target = self._to_int(data.split(":", 1)[1])
-            if target is None or self.is_admin(target):
-                return
-            await self._revoke_user(target, block=True)
-            answer = f"⛔ Пользователь {target} заблокирован."
-            markup = self._admin_menu()
-        elif data.startswith("admin_unblock:") and self.is_admin(user_id):
-            target = self._to_int(data.split(":", 1)[1])
-            if target is None:
-                return
-            self.blocked.discard(target)
-            await self._persist_user(target)
-            answer = f"✅ Пользователь {target} разблокирован."
+            self.admin_pending_actions[user_id] = (action, target)
+            verb, effect = {
+                "admin_revoke": ("Отозвать доступ", "Пользователю потребуется заново ввести пароль."),
+                "admin_block": ("Заблокировать", "Пользователь потеряет доступ даже с правильным паролем."),
+                "admin_unblock": ("Разблокировать", "Пользователь сможет заново войти с паролем."),
+            }[action]
+            answer = f"🛡 {verb} · ID {target}?\n{effect}"
+            markup = {"inline_keyboard": [
+                [{"text": "✅ Подтвердить действие", "callback_data": "admin_confirm"}],
+                [{"text": "⬅️ Отмена", "callback_data": f"admin_user:{target}"}],
+            ]}
+        elif data == "admin_confirm" and self.is_admin(user_id):
+            pending = self.admin_pending_actions.pop(user_id, None)
+            if not pending:
+                answer = "Это подтверждение уже недействительно. Выберите действие заново."
+            else:
+                action, target = pending
+                if self.is_admin(target) and action != "admin_unblock":
+                    return
+                if action == "admin_unblock":
+                    self.blocked.discard(target)
+                    await self._persist_user(target)
+                    answer = f"✅ Пользователь ID {target} разблокирован."
+                else:
+                    await self._revoke_user(target, block=action == "admin_block")
+                    answer = f"✅ Доступ пользователя ID {target} " + ("заблокирован." if action == "admin_block" else "отозван.")
             markup = self._admin_menu()
         else:
             return
@@ -1279,7 +1366,7 @@ class TelegramPasswordGate:
         try:
             result = await self.request(
                 "sendMessage",
-                {"chat_id": chat_id, "text": "🎰 Lucky Jet — история", "reply_markup": markup},
+                {"chat_id": chat_id, "text": "🎰 Lucky Jet — история коэффициентов", "reply_markup": markup},
             )
             message_id = result.get("result", {}).get("message_id")
             if message_id is None:

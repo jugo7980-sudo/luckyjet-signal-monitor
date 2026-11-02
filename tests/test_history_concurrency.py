@@ -44,7 +44,7 @@ def test_concurrent_history_recovery_creates_only_one_replacement():
     history_sends = [
         payload
         for method, payload in request.calls
-        if method == "sendMessage" and payload.get("text") == "🎰 Lucky Jet — история"
+        if method == "sendMessage" and payload.get("text") == "🎰 Lucky Jet — история коэффициентов"
     ]
     assert len(history_sends) == 1
     assert gate.history_messages[42] == 801

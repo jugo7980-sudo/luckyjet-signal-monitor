@@ -71,7 +71,7 @@ def test_password_unlocks_into_clean_history_panel():
     assert gate.chats[42] == 42
     assert gate.history_messages[42] == 102
     sent = sent_messages(request)
-    assert sent[-2]["text"] == "🎰 Lucky Jet — история"
+    assert sent[-2]["text"] == "🎰 Lucky Jet — история коэффициентов"
     assert sent[-1]["text"].startswith("🎰 Lucky Jet Monitor")
     buttons = sent[-2]["reply_markup"]["inline_keyboard"]
     assert buttons[-1][0]["callback_data"] == "menu_open"
@@ -96,12 +96,12 @@ def test_main_menu_keeps_existing_buttons_and_can_close():
 
     menu = sent_messages(request)[1]["reply_markup"]["inline_keyboard"]
     labels = [button["text"] for row in menu for button in row]
-    assert "📊 История" in labels
+    assert "📊 Скрыть историю коэффициентов" in labels
     assert "📡 Статус" not in labels
     assert "📈 Сводка" not in labels
     assert "🧪 Демо: проверка" not in labels
-    assert "🔔 Уведомления" in labels
-    assert "⚙️ Настройки" in labels
+    assert "❓ Как пользоваться ботом" in labels
+    assert "⚙️ Настройки уведомлений и истории" in labels
     assert "✖ Закрыть меню" in labels
     assert 101 not in deleted_ids(request)
     assert 102 in deleted_ids(request)
@@ -136,13 +136,12 @@ def test_settings_are_top_to_bottom_and_keep_navigation():
     callbacks = [[button["callback_data"] for button in row] for row in markup]
 
     assert callbacks[0] == ["settings_notifications"]
-    assert callbacks[1] == ["threshold:3", "threshold:4", "threshold:5", "threshold:6"]
-    assert callbacks[2] == ["threshold:7", "threshold:8", "threshold:9", "threshold:10"]
-    assert callbacks[3] == ["history_size:20", "history_size:50", "history_size:100"]
-    assert callbacks[4] == ["delete:5", "delete:30", "delete:60", "delete:off"]
-    assert callbacks[5] == ["settings_sound"]
-    assert callbacks[6] == ["settings_test"]
-    assert callbacks[7] == ["settings_reset"]
+    assert callbacks[1] == ["settings_threshold"]
+    assert callbacks[2] == ["settings_history"]
+    assert callbacks[3] == ["settings_delete"]
+    assert callbacks[4] == ["settings_sound"]
+    assert callbacks[5] == ["settings_test"]
+    assert callbacks[6] == ["settings_reset"]
     assert callbacks[-1] == ["menu_main", "menu_close"]
 
 
@@ -158,6 +157,7 @@ def test_user_can_change_and_reset_settings():
         await gate.handle_callback(callback(42, "settings_notifications", 102))  # sends 103
         await gate.handle_callback(callback(42, "settings_sound", 103))  # sends 104
         await gate.handle_callback(callback(42, "settings_reset", 104))
+        await gate.handle_callback(callback(42, "settings_reset_confirm", gate.menu_messages[42]))
 
     asyncio.run(run())
 
@@ -225,7 +225,7 @@ def test_notifications_disabled_suppresses_new_streak_but_not_history():
 
     asyncio.run(run())
 
-    assert any(p["text"] == "🎰 Lucky Jet — история" for p in sent_messages(request))
+    assert any(p["text"] == "🎰 Lucky Jet — история коэффициентов" for p in sent_messages(request))
     assert not any(p["text"] == "🎰 Lucky Jet | Серия <2x" for p in sent_messages(request))
 
 
@@ -264,7 +264,7 @@ def test_history_panel_recreates_if_saved_message_was_deleted():
     asyncio.run(run())
 
     assert gate.history_messages[42] == 102
-    history_sends = [p for p in sent_messages(request) if p["text"] == "🎰 Lucky Jet — история"]
+    history_sends = [p for p in sent_messages(request) if p["text"] == "🎰 Lucky Jet — история коэффициентов"]
     assert len(history_sends) == 2
 
 
@@ -277,6 +277,8 @@ def test_admin_can_list_and_revoke_authorized_user():
     async def run():
         await gate.handle_callback(callback(99, "admin_users", 80))  # 101
         await gate.handle_callback(callback(99, "admin_revoke:42", 101))
+        assert 42 in gate.authorized
+        await gate.handle_callback(callback(99, "admin_confirm", gate.menu_messages[99]))
 
     asyncio.run(run())
 
@@ -322,7 +324,7 @@ def test_authorized_user_gets_live_history_panel_and_updates_same_message():
     methods = [method for method, _ in request.calls]
     assert methods == ["sendMessage", "editMessageReplyMarkup"]
     sent = request.calls[0][1]
-    assert sent["text"] == "🎰 Lucky Jet — история"
+    assert sent["text"] == "🎰 Lucky Jet — история коэффициентов"
     rows = sent["reply_markup"]["inline_keyboard"]
     assert rows[0][0]["text"] == "🟦1.10x"
     assert rows[-1][0]["callback_data"] == "menu_open"

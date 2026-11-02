@@ -662,29 +662,34 @@ class TelegramPasswordGate:
         await self._send_transient(user_id, chat_id, answer, markup)
 
     async def _refresh_history_callback(self, user_id, callback):
-        text = "Не удалось обновить. Повторите попытку."
+        callback_id = callback.get("id")
         try:
-            if self.history_refresher is not None:
-                # A slow source must not leave Telegram's button spinner hanging.
-                # The shared refresh keeps running for automatic processing.
-                result = await asyncio.wait_for(self.history_refresher(), timeout=8)
-                if result.get("ok"):
-                    if user_id in self.authorized and user_id not in self.history_hidden:
-                        visible = await self.ensure_private_history(user_id)
-                        if visible:
-                            text = "История обновлена" if result.get("changed") else "История актуальна"
             await self.request("answerCallbackQuery", {
-                "callback_query_id": callback["id"], "text": text,
+                "callback_query_id": callback_id,
+                "text": "Проверяю историю…",
             })
+        except (httpx.HTTPError, RuntimeError, KeyError):
+            log.info("History refresh callback acknowledgement failed")
+
+        try:
+            if self.history_refresher is None:
+                return
+
+            # The callback is acknowledged before network/browser refresh work.
+            # Telegram callback queries expire quickly, so never answer twice.
+            result = await asyncio.wait_for(self.history_refresher(), timeout=8)
+            if (
+                result.get("ok")
+                and user_id in self.authorized
+                and user_id not in self.history_hidden
+            ):
+                await self.ensure_private_history(user_id)
+            elif not result.get("ok"):
+                log.info("Manual history refresh did not confirm a source response")
         except asyncio.CancelledError:
             raise
         except (TimeoutError, httpx.HTTPError, RuntimeError, KeyError):
-            try:
-                await self.request("answerCallbackQuery", {
-                    "callback_query_id": callback["id"], "text": text,
-                })
-            except (httpx.HTTPError, RuntimeError, KeyError):
-                pass
+            log.warning("Manual history refresh failed for user_id=%s", user_id)
 
     async def _revoke_user(self, user_id, *, block):
         chat_id = self.chats.get(user_id)

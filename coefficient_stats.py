@@ -5,20 +5,20 @@ from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo('Asia/Bangkok')
-THRESHOLDS = (10, 25, 50, 100, 200, 300, 500, 800)
+THRESHOLDS = (10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000)
 SCRIPT = """
 if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
 redis.call('SET', KEYS[1], '1', 'EX', 7948800)
 redis.call('HINCRBY', KEYS[2], 'total', 1)
 redis.call('HSET', KEYS[2], 'partial', '1')
-if ARGV[12] == '1' then redis.call('HSET', KEYS[2], 'time_uncertain', '1') end
-for i=2,9 do
+if ARGV[17] == '1' then redis.call('HSET', KEYS[2], 'time_uncertain', '1') end
+for i=2,14 do
  if tonumber(ARGV[1]) > tonumber(ARGV[i]) then
   redis.call('HINCRBY', KEYS[2], ARGV[i], 1)
  end
 end
 redis.call('EXPIRE', KEYS[2], 7948800)
-redis.call('ZADD', KEYS[3], ARGV[10], ARGV[11])
+redis.call('ZADD', KEYS[3], ARGV[15], ARGV[16])
 return 1
 """
 

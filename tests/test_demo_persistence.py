@@ -1,7 +1,7 @@
 import asyncio
 import json
 from demo_persistence import DemoPersistence
-from luckyjet_signal.demo_ledger import DemoLedger
+from luckyjet_signal.demo_ledger import DemoLedger, MAX_HISTORY
 
 
 class Redis:
@@ -37,4 +37,18 @@ def test_split_storage_migrates_legacy_history_and_restores_without_rewriting_cy
         await DemoPersistence().restore(redis, restored)
         assert restored[42].history == ledger.history
         assert restored[42].balance_cents == ledger.balance_cents
+    asyncio.run(run())
+
+
+def test_restore_bounds_legacy_completed_history_to_newest_one_hundred():
+    async def run():
+        redis = Redis()
+        history = [{"marker": i} for i in range(MAX_HISTORY + 20)]
+        redis.data['luckyjet:demo_completed_cycles', '42'] = json.dumps(history)
+        ledgers = {42: DemoLedger()}
+
+        await DemoPersistence().restore(redis, ledgers)
+
+        assert len(ledgers[42].history) == MAX_HISTORY
+        assert ledgers[42].history == history[:MAX_HISTORY]
     asyncio.run(run())

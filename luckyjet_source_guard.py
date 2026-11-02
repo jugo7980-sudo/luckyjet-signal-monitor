@@ -77,14 +77,13 @@ def install_source_guard(monitor, *, direct_hold_seconds=15.0):
                     await monitor.save_state(config, state)
                     return True
 
-                # The old round vanished and the visible histories do not align.
-                # Advancing the source cursor is safe only if we also report the
-                # gap; processing the newest coefficient here would fabricate a
-                # continuous sequence and corrupt active demo accounting.
+                # Do not persist the advanced source cursor yet. The caller must
+                # first close/persist any active demo as incomplete. If the
+                # process dies before that completes, the old persisted cursor
+                # makes the same gap detectable again after restart.
                 state.history_gap = True
                 state.last_round_id = newest_id
                 state.previous = coefficients
-                await monitor.save_state(config, state)
                 return True
 
         return await original_process_network_history(config, state, rounds)

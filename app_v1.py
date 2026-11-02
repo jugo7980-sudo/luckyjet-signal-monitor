@@ -18,6 +18,7 @@ from luckyjet_signal import monitor
 from luckyjet_signal.browser_runtime import low_memory_async_playwright
 from luckyjet_signal.demo_mode import wrap_click_demo_mode
 from luckyjet_signal.settings import Config
+from luckyjet_signal.runtime_connections import RuntimeConnections
 from telegram_polling_lease import TelegramPollingLease
 
 
@@ -154,6 +155,11 @@ async def render_self_keepalive(interval_seconds=240) -> None:
 
 
 async def main_async() -> None:
+    async with RuntimeConnections():
+        await _main_async()
+
+
+async def _main_async() -> None:
     config = Config.from_env()
     configure_monitor_runtime()
 
@@ -199,12 +205,11 @@ async def main_async() -> None:
     await retire_legacy_history_panel(panel)
 
     try:
-        await asyncio.gather(
-            base.health_server(),
-            render_self_keepalive(),
-            polling_lease.run(password_gate.start()),
-            direct_only.run_monitor(monitor, config, state=state),
-        )
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(base.health_server())
+            tasks.create_task(render_self_keepalive())
+            tasks.create_task(polling_lease.run(password_gate.start()))
+            tasks.create_task(direct_only.run_monitor(monitor, config, state=state))
     finally:
         await demo_probe.close()
         await password_gate.close()

@@ -13,6 +13,7 @@ import httpx
 from playwright.async_api import async_playwright
 
 from .settings import Config
+from .runtime_connections import current_connections
 
 log = logging.getLogger("luckyjet.monitor")
 STATE = Path("data/state.json")
@@ -261,6 +262,10 @@ async def _redis(config):
     if not url:
         return None
 
+    resources = current_connections()
+    if resources is not None:
+        return resources.redis(url)
+
     import redis.asyncio as redis
 
     return redis.from_url(
@@ -285,7 +290,8 @@ async def load_state(config):
                         config,
                     )
             finally:
-                await r.aclose()
+                if current_connections() is None:
+                    await r.aclose()
 
         if STATE.exists():
             return _state_from_dict(
@@ -352,7 +358,8 @@ async def save_state(
                 )
                 return
             finally:
-                await r.aclose()
+                if current_connections() is None:
+                    await r.aclose()
 
     except Exception:
         log.exception(

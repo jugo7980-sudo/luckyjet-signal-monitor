@@ -1,11 +1,19 @@
 """Private Telegram bot access, settings, alerts, and admin controls."""
 import asyncio
 import hmac
+import json
 import logging
 import os
 import time
 
 import httpx
+from luckyjet_signal.demo_ledger import (
+    MINIMUM_STAKE_CENTS,
+    TRIGGER_OPTIONS,
+    DemoLedger,
+    format_dollars,
+    parse_dollars,
+)
 
 log = logging.getLogger("luckyjet.auth")
 
@@ -36,6 +44,10 @@ class TelegramPasswordGate:
         self.thresholds = {}
         self.delete_seconds = {}
         self.history_sizes = {}
+        self.demo_ledgers = {}
+        self.demo_pending_inputs = {}
+        self.demo_panel_messages = {}
+        self._demo_panel_content = {}
         self.failures = {}
         self.blocked_until = {}
         self.offset = None
@@ -160,6 +172,26 @@ class TelegramPasswordGate:
             int(k): int(v)
             for k, v in (await self.redis.hgetall("luckyjet:history_sizes")).items()
         }
+        self.demo_ledgers = {}
+        for key, raw in (await self.redis.hgetall("luckyjet:demo_sessions")).items():
+            try:
+                self.demo_ledgers[int(key)] = DemoLedger(**json.loads(raw))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                log.warning("Ignoring invalid persisted demo state for user_id=%s", key)
+
+    def _demo_ledger(self, user_id):
+        user_id = int(user_id)
+        if user_id not in self.demo_ledgers:
+            self.demo_ledgers[user_id] = DemoLedger()
+        return self.demo_ledgers[user_id]
+
+    async def _persist_demo(self, user_id):
+        if self.redis:
+            await self.redis.hset(
+                "luckyjet:demo_sessions",
+                str(int(user_id)),
+                json.dumps(self._demo_ledger(user_id).dump(), separators=(",", ":")),
+            )
 
     async def _persist_user(self, user_id):
         if not self.redis:
@@ -225,6 +257,31 @@ class TelegramPasswordGate:
             {"text": "✖ Закрыть меню", "callback_data": "menu_close"},
         ]]
 
+    def _supported_callback(self, data, user_id):
+        if data in {
+            "menu_open", "menu_close", "menu_main", "menu_status", "menu_stats",
+            "menu_notifications", "menu_settings", "settings_notifications",
+            "settings_sound", "settings_test", "settings_reset", "demo_menu",
+            "demo_toggle", "demo_set_balance", "demo_set_stake", "demo_input_cancel",
+            "demo_history", "demo_reset", "demo_reset_confirm",
+        }:
+            return True
+        if data.startswith("threshold:"):
+            return self._to_int(data.split(":", 1)[1]) in range(3, 11)
+        if data.startswith("history_size:"):
+            return self._to_int(data.split(":", 1)[1]) in {20, 50, 100}
+        if data.startswith("delete:"):
+            raw = data.split(":", 1)[1]
+            return raw == "off" or self._to_int(raw) in {10, 30, 60}
+        if data.startswith("demo_trigger:"):
+            return self._to_int(data.split(":", 1)[1]) in TRIGGER_OPTIONS
+        if self.is_admin(user_id) and data == "admin_users":
+            return True
+        if self.is_admin(user_id) and data.startswith(("admin_revoke:", "admin_block:", "admin_unblock:")):
+            target = self._to_int(data.split(":", 1)[1])
+            return target is not None and (data.startswith("admin_unblock:") or not self.is_admin(target))
+        return False
+
     def menu(self, user_id=None):
         rows = [
             [
@@ -236,12 +293,122 @@ class TelegramPasswordGate:
                 {"text": "⚙️ Настройки", "callback_data": "menu_settings"},
             ],
             [{"text": "📈 Сводка", "callback_data": "menu_stats"}],
+            [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"}],
         ]
+        if user_id is not None:
+            balance = format_dollars(self._demo_ledger(user_id).balance_cents)
+            rows.append([{"text": f"💵 Баланс демо-счёта: {balance}", "callback_data": "demo_menu"}])
         if user_id is not None and self.is_admin(user_id):
             rows.append([{"text": "🧪 Демо: проверка", "callback_data": "demo_probe"}])
             rows.append([{"text": "🛡 Админ", "callback_data": "admin_users"}])
         rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
+
+    def _demo_text(self, user_id):
+        ledger = self._demo_ledger(user_id)
+        state = "ВКЛ" if ledger.enabled else "ВЫКЛ"
+        if ledger.active:
+            progress = (
+                f"Цикл идёт. Следующая ставка: {format_dollars(ledger.next_stake_cents)}\n"
+                f"Уже поставлено в цикле: {format_dollars(ledger.cycle_stake_cents)}"
+            )
+        else:
+            progress = (
+                f"Ожидание: {ledger.low_streak}/{ledger.trigger_streak} раундов ниже 2x\n"
+                f"Следующая ставка после сигнала: {format_dollars(ledger.base_stake_cents)}"
+            )
+        return (
+            "🧪 Демо-режим Lucky Jet\n"
+            f"Состояние: {state}\n"
+            f"Виртуальный баланс: {format_dollars(ledger.balance_cents)}\n"
+            f"Порог запуска: {ledger.trigger_streak} раундов подряд ниже 2x\n"
+            f"Стартовая ставка: {format_dollars(ledger.base_stake_cents)} "
+            f"(минимум {format_dollars(MINIMUM_STAKE_CENTS)})\n"
+            f"{progress}\n"
+            "Только виртуальный учёт. Реальные ставки не выполняются."
+        )
+
+    def demo_menu(self, user_id):
+        ledger = self._demo_ledger(user_id)
+        trigger_row = [
+            {
+                "text": f"{'✓ ' if ledger.trigger_streak == value else ''}{value} раундов",
+                "callback_data": f"demo_trigger:{value}",
+            }
+            for value in TRIGGER_OPTIONS
+        ]
+        return {
+            "inline_keyboard": [
+                [{
+                    "text": "🟢 Демо включён · выключить" if ledger.enabled else "🔴 Демо выключен · включить",
+                    "callback_data": "demo_toggle",
+                }],
+                trigger_row,
+                [{"text": f"💵 Баланс: {format_dollars(ledger.balance_cents)}", "callback_data": "demo_set_balance"}],
+                [{"text": f"🎯 Стартовая ставка: {format_dollars(ledger.base_stake_cents)}", "callback_data": "demo_set_stake"}],
+                [{"text": "📜 История демо-циклов", "callback_data": "demo_history"}],
+                [{"text": "♻️ Сбросить баланс и историю", "callback_data": "demo_reset"}],
+                *self._navigation_rows(),
+            ]
+        }
+
+    def _demo_history_text(self, user_id):
+        ledger = self._demo_ledger(user_id)
+        if not ledger.history:
+            return "📜 История демо-циклов\nПока циклов нет."
+        lines = ["📜 Последние демо-циклы:"]
+        for index, entry in enumerate(ledger.history[:10], 1):
+            rounds = entry.get("rounds", [])
+            path = " → ".join(
+                f"{format_dollars(item.get('stake_cents', 0))} при {item.get('coefficient', '?')}x"
+                for item in rounds
+            ) or "ставка не выполнена"
+            payout = int(entry.get("payout_cents", 0))
+            net = int(entry.get("net_cents", 0))
+            sign = "+" if net > 0 else ""
+            recovery = (
+                f"Возвращено изначальных {format_dollars(int(entry.get('base_stake_cents', ledger.base_stake_cents)))}; "
+                if entry.get("outcome") == "recovered" else ""
+            )
+            lines.append(
+                f"\n{index}) {path}\n"
+                f"{recovery}выплата {format_dollars(payout)}, "
+                f"итог {sign}{format_dollars(net)}\n"
+                f"Баланс: {format_dollars(int(entry.get('balance_before_cents', 0)))} → "
+                f"{format_dollars(int(entry.get('balance_after_cents', 0)))}"
+            )
+        return "\n".join(lines)
+
+    async def _demo_input(self, user_id, chat_id, raw, message_id=None):
+        field = self.demo_pending_inputs.pop(user_id, None)
+        cents = parse_dollars(raw)
+        if field is None:
+            return False
+        ledger = self._demo_ledger(user_id)
+        updated = False
+        if cents is None:
+            answer = "❌ Введите сумму в USD, не более двух знаков после точки."
+            self.demo_pending_inputs[user_id] = field
+        elif field == "balance" and ledger.set_balance(cents):
+            await self._persist_demo(user_id)
+            answer = f"✅ Виртуальный баланс установлен: {format_dollars(cents)}"
+            updated = True
+        elif field == "stake" and ledger.set_base_stake(cents):
+            await self._persist_demo(user_id)
+            answer = f"✅ Стартовая ставка установлена: {format_dollars(cents)}"
+            updated = True
+        else:
+            answer = (
+                "❌ Сумма не подходит. Минимальная ставка $10; ставка не должна превышать баланс. "
+                "Во время активного цикла баланс не может быть меньше следующего шага."
+            )
+            self.demo_pending_inputs[user_id] = field
+        await self._safe_delete(chat_id, message_id)
+        markup = self.demo_menu(user_id) if updated else {
+            "inline_keyboard": [[{"text": "⬅️ Отмена", "callback_data": "demo_input_cancel"}]]
+        }
+        await self._send_transient(user_id, chat_id, answer, markup)
+        return True
 
     def _settings_text(self, user_id):
         notifications = "включены" if user_id not in self.notifications_disabled else "выключены"
@@ -358,9 +525,14 @@ class TelegramPasswordGate:
             return
         if self.menu_messages.get(user_id) == message_id:
             self.menu_messages.pop(user_id, None)
+        if self.demo_panel_messages.get(user_id) == message_id:
+            self.demo_panel_messages.pop(user_id, None)
+            self._demo_panel_content.pop(user_id, None)
         await self._safe_delete(chat_id, message_id)
 
     async def _send_transient(self, user_id, chat_id, text, reply_markup):
+        self.demo_panel_messages.pop(user_id, None)
+        self._demo_panel_content.pop(user_id, None)
         old_message_id = self.menu_messages.pop(user_id, None)
         await self._safe_delete(chat_id, old_message_id)
         result = await self.request(
@@ -370,6 +542,30 @@ class TelegramPasswordGate:
         message_id = result.get("result", {}).get("message_id")
         if message_id is not None:
             self.menu_messages[user_id] = int(message_id)
+            if any(
+                button.get("callback_data") == "demo_toggle"
+                for row in reply_markup.get("inline_keyboard", []) for button in row
+            ):
+                self.demo_panel_messages[user_id] = int(message_id)
+                self._demo_panel_content[user_id] = (text, reply_markup)
+
+    async def _refresh_demo_panel(self, user_id):
+        message_id = self.demo_panel_messages.get(user_id)
+        chat_id = self.chats.get(user_id)
+        if message_id is None or chat_id is None:
+            return
+        text, markup = self._demo_text(user_id), self.demo_menu(user_id)
+        if self._demo_panel_content.get(user_id) == (text, markup):
+            return
+        try:
+            await self.request("editMessageText", {
+                "chat_id": chat_id, "message_id": message_id,
+                "text": text, "reply_markup": markup,
+            })
+            if self.demo_panel_messages.get(user_id) == message_id:
+                self._demo_panel_content[user_id] = (text, markup)
+        except (httpx.HTTPError, RuntimeError):
+            log.warning("Demo panel update failed: user_id=%s", user_id)
 
     def _status_text(self, user_id):
         uptime = max(0, int(time.monotonic() - self.started_at))
@@ -406,6 +602,7 @@ class TelegramPasswordGate:
             f"Последний коэффициент: {latest}\n"
             f"Данные: {freshness}\n"
             f"Деморежим: {demo_state}\n"
+            f"Баланс демо-счёта (виртуальный): {format_dollars(self._demo_ledger(user_id).balance_cents)}\n"
             f"История: {min(len(values), self.user_history_size(user_id))} раундов\n"
             f"Серия ниже 2x: {len(self.current_streak)} из {self.user_threshold(user_id)}\n"
             f"Аптайм: {hours:02d}:{minutes:02d}:{seconds:02d}"
@@ -474,6 +671,14 @@ class TelegramPasswordGate:
                     "Сообщение серии появляется при достижении выбранного порога и обновляется до завершения серии.",
                     {"inline_keyboard": self._navigation_rows()},
                 )
+            elif user_id in self.demo_pending_inputs and value == "/cancel":
+                self.demo_pending_inputs.pop(user_id, None)
+                await self._send_transient(
+                    user_id, chat_id, self._demo_text(user_id), self.demo_menu(user_id)
+                )
+            elif user_id in self.demo_pending_inputs and not command.startswith("/"):
+                await self._demo_input(user_id, chat_id, value, message_id)
+                return
             await self._safe_delete(chat_id, message_id)
             return
 
@@ -586,6 +791,9 @@ class TelegramPasswordGate:
                 pass
             return
 
+        if not self._supported_callback(data, user_id):
+            return
+
         await self._delete_transient_source(user_id, chat_id, callback)
 
         if data == "menu_close":
@@ -611,6 +819,69 @@ class TelegramPasswordGate:
         elif data == "menu_settings":
             answer = self._settings_text(user_id)
             markup = self.settings_menu(user_id)
+        elif data == "demo_menu":
+            answer = self._demo_text(user_id)
+            markup = self.demo_menu(user_id)
+        elif data == "demo_toggle":
+            ledger = self._demo_ledger(user_id)
+            was_enabled = ledger.enabled
+            ledger.enabled = not ledger.enabled
+            if ledger.enabled and not was_enabled:
+                trigger_event = ledger.sync_history(
+                    self.history_provider() if self.history_provider else []
+                )
+            else:
+                trigger_event = None
+            await self._persist_demo(user_id)
+            answer = self._demo_text(user_id)
+            if trigger_event and trigger_event["type"] == "insufficient_balance":
+                answer += (
+                    f"\nНедостаточно баланса для стартовой ставки "
+                    f"{format_dollars(trigger_event['needed_cents'])}."
+                )
+            markup = self.demo_menu(user_id)
+        elif data.startswith("demo_trigger:"):
+            value = self._to_int(data.split(":", 1)[1])
+            ledger = self._demo_ledger(user_id)
+            if value not in TRIGGER_OPTIONS or not ledger.set_trigger(value):
+                return
+            if ledger.enabled:
+                ledger.sync_history(
+                    self.history_provider() if self.history_provider else []
+                )
+            await self._persist_demo(user_id)
+            answer = self._demo_text(user_id)
+            markup = self.demo_menu(user_id)
+        elif data == "demo_set_balance":
+            self.demo_pending_inputs[user_id] = "balance"
+            answer = "Введите новый виртуальный баланс в USD, например 10000 или 9500.50. Для отмены отправьте /cancel."
+            markup = {"inline_keyboard": [[{"text": "⬅️ Отмена", "callback_data": "demo_input_cancel"}]]}
+        elif data == "demo_set_stake":
+            self.demo_pending_inputs[user_id] = "stake"
+            answer = "Введите стартовую виртуальную ставку в USD (минимум $10), например 150. Для отмены отправьте /cancel."
+            markup = {"inline_keyboard": [[{"text": "⬅️ Отмена", "callback_data": "demo_input_cancel"}]]}
+        elif data == "demo_input_cancel":
+            self.demo_pending_inputs.pop(user_id, None)
+            answer = self._demo_text(user_id)
+            markup = self.demo_menu(user_id)
+        elif data == "demo_history":
+            answer = self._demo_history_text(user_id)
+            markup = {"inline_keyboard": [
+                [{"text": "⬅️ Демо-режим", "callback_data": "demo_menu"}],
+                *self._navigation_rows(),
+            ]}
+        elif data == "demo_reset":
+            answer = "Сбросить виртуальный баланс, текущую серию и историю демо-циклов?"
+            markup = {"inline_keyboard": [
+                [{"text": "✅ Да, сбросить", "callback_data": "demo_reset_confirm"}],
+                [{"text": "Отмена", "callback_data": "demo_menu"}],
+            ]}
+        elif data == "demo_reset_confirm":
+            ledger = self._demo_ledger(user_id)
+            ledger.reset()
+            await self._persist_demo(user_id)
+            answer = self._demo_text(user_id)
+            markup = self.demo_menu(user_id)
         elif data == "settings_notifications":
             if user_id in self.notifications_disabled:
                 self.notifications_disabled.remove(user_id)
@@ -783,12 +1054,18 @@ class TelegramPasswordGate:
         self.thresholds.pop(user_id, None)
         self.delete_seconds.pop(user_id, None)
         self.history_sizes.pop(user_id, None)
+        self.demo_ledgers.pop(user_id, None)
+        self.demo_pending_inputs.pop(user_id, None)
         self.chats.pop(user_id, None)
+        self.demo_panel_messages.pop(user_id, None)
+        self._demo_panel_content.pop(user_id, None)
         if block:
             self.blocked.add(user_id)
         else:
             self.blocked.discard(user_id)
         await self._persist_user(user_id)
+        if self.redis:
+            await self.redis.hdel("luckyjet:demo_sessions", str(user_id))
         if chat_id is not None:
             await self._safe_delete(chat_id, menu_message_id)
             await self._safe_delete(chat_id, prompt_message_id)
@@ -930,6 +1207,61 @@ class TelegramPasswordGate:
             if user_id in self.chats:
                 await self.ensure_private_history(user_id)
 
+    async def _handle_demo_round(self, user_id, coefficient):
+        ledger = self.demo_ledgers.get(user_id)
+        if ledger is None or not ledger.enabled:
+            return
+        event = ledger.process_round(coefficient)
+        await self._persist_demo(user_id)
+        if event is None or user_id in self.notifications_disabled:
+            return
+        chat_id = self.chats.get(user_id)
+        if chat_id is None:
+            return
+        if event["type"] == "trigger":
+            text = (
+                f"🧪 Демо: условие выполнено — {ledger.trigger_streak} раундов подряд ниже 2x. "
+                f"Следующий раунд: виртуальная ставка {format_dollars(event['next_stake_cents'])}."
+            )
+        elif event["type"] == "loss":
+            text = (
+                f"🧪 Демо: {event['coefficient']:.2f}x — виртуальная ставка "
+                f"{format_dollars(event['stake_cents'])} потеряна. "
+                f"Следующий шаг: {format_dollars(event['next_stake_cents'])}. "
+                f"Баланс: {format_dollars(event['balance_cents'])}."
+            )
+        elif event["type"] == "recovered":
+            net = int(event["net_cents"])
+            sign = "+" if net > 0 else ""
+            base = int(event.get("base_stake_cents", ledger.base_stake_cents))
+            text = (
+                f"✅ Демо-цикл закрыт при {event['coefficient']}x. "
+                f"Сумма ставок: {format_dollars(event['total_stake_cents'])}; "
+                f"выплата: {format_dollars(event['payout_cents'])}. "
+                f"Исходная ставка {format_dollars(base)} возвращена; "
+                f"итог цикла: {sign}{format_dollars(net)}. "
+                f"Баланс: {format_dollars(event['balance_after_cents'])}. "
+                "Ожидаю новую серию."
+            )
+        else:
+            needed = event.get("needed_cents", 0)
+            text = (
+                f"⏸ Демо-цикл остановлен: виртуального баланса недостаточно "
+                f"для следующего шага {format_dollars(needed)}. "
+                f"Баланс: {format_dollars(ledger.balance_cents)}."
+            )
+        try:
+            await self.request(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": text,
+                    "disable_notification": user_id in self.silent_users,
+                },
+            )
+        except (httpx.HTTPError, RuntimeError):
+            log.warning("Demo notification failed: user_id=%s event=%s", user_id, event["type"])
+
     def _streak_markup(self, ending=None):
         count = len(self.current_streak)
         latest = ending if ending is not None else self.current_streak[-1]
@@ -951,6 +1283,9 @@ class TelegramPasswordGate:
         self.last_round = value
         self.last_round_at = time.time()
         await self.update_private_histories()
+        for user_id in list(self.authorized):
+            await self._handle_demo_round(user_id, value)
+            await self._refresh_demo_panel(user_id)
         number = float(value[:-1])
 
         if number < 2:

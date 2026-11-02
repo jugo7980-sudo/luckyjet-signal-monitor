@@ -182,3 +182,184 @@ def test_summary_and_status_show_recent_data_quality():
     assert "Ниже 2x: 1" in summary
     assert "Статус мониторинга: раунд получен недавно" in status
     assert "История: 3 раундов" in status
+
+
+def test_demo_buttons_toggle_select_trigger_and_update_usd_balance():
+    request = FakeRequest()
+    gate = TelegramPasswordGate(request)
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+
+    async def run():
+        await gate.handle_callback(callback(42, "demo_menu", 500))
+        menu_id = gate.menu_messages[42]
+        await gate.handle_callback(callback(42, "demo_toggle", menu_id))
+        menu_id = gate.menu_messages[42]
+        await gate.handle_callback(callback(42, "demo_trigger:3", menu_id))
+        menu_id = gate.menu_messages[42]
+        await gate.handle_callback(callback(42, "demo_set_balance", menu_id))
+        await gate.handle_update(message(42, "9500.50", 77))
+
+    asyncio.run(run())
+
+    ledger = gate.demo_ledgers[42]
+    assert ledger.enabled is True
+    assert ledger.trigger_streak == 3
+    assert ledger.balance_cents == 950_050
+    assert 77 in [p["message_id"] for m, p in request.calls if m == "deleteMessage"]
+    answers = [p for method, p in request.calls if method == "answerCallbackQuery"]
+    assert [p["callback_query_id"] for p in answers] == [
+        "cb-demo_menu", "cb-demo_toggle", "cb-demo_trigger:3", "cb-demo_set_balance"
+    ]
+    latest_screen = [
+        p for method, p in request.calls
+        if method == "sendMessage" and p.get("reply_markup", {}).get("inline_keyboard")
+    ][-1]
+    assert "Виртуальный баланс установлен: $9,500.50" in latest_screen["text"]
+    labels = [
+        button["text"]
+        for row in latest_screen["reply_markup"]["inline_keyboard"]
+        for button in row
+    ]
+    assert "💵 Баланс: $9,500.50" in labels
+
+
+def test_demo_stake_input_minimum_and_reset_confirmation_buttons():
+    request = FakeRequest()
+    gate = TelegramPasswordGate(request)
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+
+    async def run():
+        await gate.handle_callback(callback(42, "demo_menu", 600))
+        await gate.handle_callback(callback(42, "demo_set_stake", gate.menu_messages[42]))
+        await gate.handle_update(message(42, "9", 78))
+        assert gate.demo_ledgers[42].base_stake_cents == 15_000
+        invalid_prompt = [
+            p for method, p in request.calls if method == "sendMessage"
+        ][-1]
+        assert invalid_prompt["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "demo_input_cancel"
+        await gate.handle_update(message(42, "10", 79))
+        assert gate.demo_ledgers[42].base_stake_cents == 1_000
+        await gate.handle_callback(callback(42, "demo_toggle", gate.menu_messages[42]))
+        await gate.handle_callback(callback(42, "demo_reset", gate.menu_messages[42]))
+        confirm_id = gate.menu_messages[42]
+        await gate.handle_callback(callback(42, "demo_reset_confirm", confirm_id))
+
+    asyncio.run(run())
+
+    ledger = gate.demo_ledgers[42]
+    assert ledger.balance_cents == 1_000_000
+    assert ledger.base_stake_cents == 1_000
+    assert ledger.enabled is True
+    assert ledger.history == []
+    assert all(
+        message_id in [p["message_id"] for m, p in request.calls if m == "deleteMessage"]
+        for message_id in (78, 79)
+    )
+
+
+def test_demo_history_button_renders_recovered_initial_stake_and_cycle_result():
+    request = FakeRequest()
+    gate = TelegramPasswordGate(request)
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+    ledger = gate._demo_ledger(42)
+    ledger.enabled = True
+    for _ in range(4):
+        ledger.process_round("1.50")
+    ledger.process_round("1.50")
+    ledger.process_round("2.00")
+
+    asyncio.run(gate.handle_callback(callback(42, "demo_history", 700)))
+
+    screen = [
+        p for method, p in request.calls
+        if method == "sendMessage" and p.get("text", "").startswith("📜")
+    ][-1]
+    assert "Возвращено изначальных $150.00" in screen["text"]
+    assert "итог +$150.00" in screen["text"]
+    assert "Баланс: $10,000.00 → $10,150.00" in screen["text"]
+
+
+def test_demo_toggle_arms_when_existing_history_already_meets_selected_trigger():
+    request = FakeRequest()
+    gate = TelegramPasswordGate(
+        request,
+        history_provider=lambda: ["1.50x", "1.30x", "1.10x", "2.00x"],
+    )
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+    ledger = gate._demo_ledger(42)
+    ledger.set_trigger(3)
+
+    asyncio.run(gate.handle_callback(callback(42, "demo_toggle", 800)))
+
+    assert ledger.enabled is True
+    assert ledger.active is True
+    assert ledger.next_stake_cents == 15_000
+
+
+def test_invalid_stale_demo_button_is_acknowledged_without_deleting_menu():
+    request = FakeRequest()
+    gate = TelegramPasswordGate(request)
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+    gate.menu_messages[42] = 801
+
+    asyncio.run(gate.handle_callback(callback(42, "demo_trigger:7", 801)))
+
+    assert gate.menu_messages[42] == 801
+    assert 801 not in [p["message_id"] for m, p in request.calls if m == "deleteMessage"]
+    assert any(m == "answerCallbackQuery" for m, p in request.calls)
+
+
+def test_demo_ledger_is_connected_to_live_round_handler_and_reports_recovery():
+    request = FakeRequest()
+    gate = TelegramPasswordGate(request, history_provider=lambda: [])
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+    ledger = gate._demo_ledger(42)
+    ledger.enabled = True
+
+    async def run():
+        for value in ("1.10x", "1.20x", "1.30x", "1.40x", "1.50x", "1.20x", "2.00x"):
+            await gate.on_round(value)
+        await gate.close()
+
+    asyncio.run(run())
+
+    texts = [p["text"] for method, p in request.calls if method == "sendMessage"]
+    assert any("условие выполнено" in text for text in texts)
+    assert any("виртуальная ставка $150.00 потеряна" in text for text in texts)
+    assert any("Исходная ставка $150.00 возвращена" in text for text in texts)
+    assert any("итог цикла: +$150.00" in text for text in texts)
+    assert ledger.balance_cents == 1_015_000
+    assert ledger.history[0]["balance_before_cents"] == 1_000_000
+
+
+def test_six_round_trigger_and_live_balance_update_stop_after_leaving_demo():
+    request = FakeRequest()
+    gate = TelegramPasswordGate(request, history_provider=lambda: [])
+    gate.authorized.add(42)
+    gate.chats[42] = 42
+
+    async def run():
+        await gate.handle_callback(callback(42, "demo_trigger:6", 900))
+        await gate.handle_callback(callback(42, "demo_toggle", gate.menu_messages[42]))
+        panel_id = gate.menu_messages[42]
+        for _ in range(6):
+            await gate.on_round("1.20x")
+        assert gate.demo_ledgers[42].active
+        await gate.on_round("1.50x")
+        edits = [p for m, p in request.calls if m == "editMessageText" and p["message_id"] == panel_id]
+        assert "$9,850.00" in edits[-1]["text"]
+        assert "$300.00" in edits[-1]["text"]
+        await gate.handle_callback(callback(42, "menu_main", panel_id))
+        count = len([1 for m, p in request.calls if m == "editMessageText" and p["message_id"] == panel_id])
+        await gate.on_round("2.00x")
+        assert count == len([1 for m, p in request.calls if m == "editMessageText" and p["message_id"] == panel_id])
+        await gate.close()
+
+    asyncio.run(run())
+    assert gate.demo_ledgers[42].trigger_streak == 6

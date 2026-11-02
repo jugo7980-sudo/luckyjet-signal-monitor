@@ -17,7 +17,7 @@ from luckyjet_signal.demo_mode import wrap_click_demo_mode
 log = logging.getLogger("luckyjet.telegram_ui")
 _COEFFICIENT_PREFIX = "Последний коэффициент: "
 _PANEL_TITLE = "🎰 Lucky Jet — история"
-_HISTORY_LIMIT = 20
+_HISTORY_LIMIT = 100
 _HISTORY_COLUMNS = 5
 _DEFAULT_HISTORY_MESSAGE_ID = 149
 

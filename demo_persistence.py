@@ -4,6 +4,8 @@ import asyncio
 import logging
 from contextlib import AsyncExitStack
 
+from luckyjet_signal.demo_ledger import MAX_HISTORY
+
 
 class DemoPersistence:
     def __init__(self):
@@ -44,5 +46,7 @@ class DemoPersistence:
                 except (ValueError, TypeError):
                     logging.getLogger(__name__).error('Corrupt cycle history skipped: user_id=%s', uid)
                     continue
-                ledger.history = history
+                ledger.history = history[:MAX_HISTORY]
+                # Keep the persisted raw snapshot as the comparison baseline so
+                # the next normal save compacts any oversized legacy history.
                 self.saved_history[str(uid)] = raw

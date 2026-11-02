@@ -180,5 +180,5 @@ def test_summary_and_status_show_recent_data_quality():
     assert "Средний коэффициент: 2.50x" in summary
     assert "Максимальный: 4.00x" in summary
     assert "Ниже 2x: 1" in summary
-    assert "Мониторинг: раунд получен недавно" in status
+    assert "Статус мониторинга: раунд получен недавно" in status
     assert "История: 3 раундов" in status

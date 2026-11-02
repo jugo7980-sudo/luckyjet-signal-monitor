@@ -19,6 +19,7 @@ from luckyjet_signal.demo_ledger import (
 )
 
 log = logging.getLogger("luckyjet.auth")
+MENU_IDLE_SECONDS = 60
 THAILAND_TIME = timezone(timedelta(hours=7), name="Asia/Bangkok")
 
 
@@ -44,6 +45,8 @@ class TelegramPasswordGate:
         self._menu_locks = {}
         self.prompt_messages = {}
         self.menu_messages = {}
+        self.menu_deadlines = {}
+        self._menu_tasks = {}
         self.notifications_disabled = set()
         self.silent_users = set()
         self.thresholds = {}
@@ -139,6 +142,12 @@ class TelegramPasswordGate:
             await self.close()
 
     async def close(self):
+        menu_tasks = list(self._menu_tasks.values())
+        for task in menu_tasks:
+            task.cancel()
+        if menu_tasks:
+            await asyncio.gather(*menu_tasks, return_exceptions=True)
+        self._menu_tasks.clear()
         for task in list(self._refresh_tasks):
             task.cancel()
         if self._refresh_tasks:
@@ -595,6 +604,74 @@ class TelegramPasswordGate:
             return
         self.menu_messages.setdefault(user_id, message_id)
 
+    def _start_menu_timer(self, user_id):
+        task = self._menu_tasks.get(user_id)
+        if task is not None and not task.done():
+            return
+        task = asyncio.create_task(self._menu_timeout(user_id))
+        self._menu_tasks[user_id] = task
+
+        def finished(done):
+            if self._menu_tasks.get(user_id) is done:
+                self._menu_tasks.pop(user_id, None)
+        task.add_done_callback(finished)
+
+    def _touch_menu(self, user_id):
+        if user_id in self.menu_messages:
+            self.menu_deadlines[user_id] = time.time() + MENU_IDLE_SECONDS
+            self._start_menu_timer(user_id)
+
+    async def _menu_timeout(self, user_id):
+        while user_id in self.menu_messages:
+            deadline = self.menu_deadlines.get(user_id)
+            if deadline is None:
+                return
+            await asyncio.sleep(max(0, deadline - time.time()))
+            try:
+                if await self._close_menu(user_id, expected_deadline=deadline):
+                    return
+            except (httpx.HTTPError, RuntimeError):
+                log.warning("Menu timeout failed: user_id=%s", user_id)
+                await asyncio.sleep(5)
+
+    async def _close_menu(self, user_id, *, expected_deadline=None, now=None):
+        lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            if expected_deadline is not None:
+                instant = time.time() if now is None else now
+                if self.menu_deadlines.get(user_id) != expected_deadline or instant < expected_deadline:
+                    return False
+            message_id = self.menu_messages.get(user_id)
+            chat_id = self.chats.get(user_id)
+            if message_id is not None and chat_id is not None:
+                try:
+                    await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+                except httpx.HTTPStatusError as exc:
+                    try:
+                        description = str(exc.response.json().get("description", "")).lower()
+                    except (ValueError, AttributeError):
+                        description = ""
+                    if exc.response.status_code != 403 and not (
+                        exc.response.status_code == 400 and
+                        ("message to delete not found" in description or "message_id_invalid" in description)
+                    ):
+                        raise
+            self.menu_messages.pop(user_id, None)
+            self.menu_deadlines.pop(user_id, None)
+            task = self._menu_tasks.pop(user_id, None)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
+            self.demo_panel_messages.pop(user_id, None)
+            self._demo_panel_content.pop(user_id, None)
+            self._demo_history_views.pop(user_id, None)
+            self.demo_pending_inputs.pop(user_id, None)
+            self.pending_confirmations.pop(user_id, None)
+            self.admin_pending_actions.pop(user_id, None)
+            await self._persist_user(user_id)
+        if user_id in self.history_messages:
+            await self.ensure_private_history(user_id)
+        return True
+
     async def _send_transient(self, user_id, chat_id, text, reply_markup):
         lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
         async with lock:
@@ -630,6 +707,7 @@ class TelegramPasswordGate:
                 message_id = result.get("result", {}).get("message_id")
             if message_id is not None:
                 self.menu_messages[user_id] = int(message_id)
+                self._touch_menu(user_id)
                 if any(button.get("callback_data") == "demo_toggle"
                        for row in reply_markup.get("inline_keyboard", []) for button in row):
                     self.demo_panel_messages[user_id] = int(message_id)
@@ -716,6 +794,7 @@ class TelegramPasswordGate:
             ids = {self.history_messages.pop(user_id, None),
                    self.menu_messages.pop(user_id, None),
                    self.prompt_messages.pop(user_id, None)}
+            self.menu_deadlines.pop(user_id, None)
             self.history_hidden.discard(user_id)
             self.demo_pending_inputs.pop(user_id, None)
             self.pending_confirmations.pop(user_id, None)
@@ -873,6 +952,8 @@ class TelegramPasswordGate:
             return
 
         self.chats[user_id] = chat_id
+        if data != "menu_close":
+            self._touch_menu(user_id)
         self.demo_pending_inputs.pop(user_id, None)
         if data not in {"settings_reset_confirm", "demo_reset_confirm"}:
             self.pending_confirmations.pop(user_id, None)
@@ -880,6 +961,7 @@ class TelegramPasswordGate:
             self.admin_pending_actions.pop(user_id, None)
 
         if history_refresh:
+            await self._persist_user(user_id)
             task = asyncio.create_task(self._refresh_history_callback(user_id, callback))
             self._refresh_tasks.add(task)
             task.add_done_callback(self._refresh_tasks.discard)
@@ -930,16 +1012,7 @@ class TelegramPasswordGate:
         await self._delete_transient_source(user_id, chat_id, callback)
 
         if data == "menu_close":
-            lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
-            async with lock:
-                message_id = self.menu_messages.pop(user_id, None)
-                self.demo_panel_messages.pop(user_id, None)
-                self._demo_panel_content.pop(user_id, None)
-                self._demo_history_views.pop(user_id, None)
-                await self._safe_delete(chat_id, message_id)
-                await self._persist_user(user_id)
-            if user_id in self.history_messages:
-                await self.ensure_private_history(user_id)
+            await self._close_menu(user_id)
             return
         if data == "menu_main":
             answer = self._main_text()
@@ -1240,6 +1313,10 @@ class TelegramPasswordGate:
         chat_id = self.chats.get(user_id)
         history_message_id = self.history_messages.pop(user_id, None)
         menu_message_id = self.menu_messages.pop(user_id, None)
+        self.menu_deadlines.pop(user_id, None)
+        timer = self._menu_tasks.pop(user_id, None)
+        if timer is not None:
+            timer.cancel()
         streak_message_id = self.active_messages.pop(user_id, None)
         prompt_message_id = self.prompt_messages.pop(user_id, None)
         self.authorized.discard(user_id)

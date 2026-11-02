@@ -38,6 +38,10 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
                 int(k): int(v)
                 for k, v in (await self.redis.hgetall("luckyjet:menu_messages")).items()
             }
+            self.menu_deadlines = {
+                int(k): float(v)
+                for k, v in (await self.redis.hgetall("luckyjet:menu_deadlines")).items()
+            }
             self.active_messages = {
                 int(k): int(v)
                 for k, v in (await self.redis.hgetall("luckyjet:active_messages")).items()
@@ -64,6 +68,11 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
             pipe.hset("luckyjet:menu_messages", uid, str(self.menu_messages[user_id]))
         else:
             pipe.hdel("luckyjet:menu_messages", uid)
+
+        if user_id in self.menu_messages and user_id in self.menu_deadlines:
+            pipe.hset("luckyjet:menu_deadlines", uid, repr(self.menu_deadlines[user_id]))
+        else:
+            pipe.hdel("luckyjet:menu_deadlines", uid)
 
         if user_id in self.active_messages:
             pipe.hset("luckyjet:active_messages", uid, str(self.active_messages[user_id]))
@@ -105,8 +114,20 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
             await self._persist_runtime_user(user_id)
 
     async def restore_runtime_state(self, *, now=None):
-        """Resume known notices/deadlines without creating notifications on startup."""
+        """Resume menu timers and known notices without creating new notifications."""
         now = time.time() if now is None else float(now)
+        for user_id in list(self.menu_messages):
+            if user_id not in self.authorized or user_id not in self.chats:
+                await self._close_menu(user_id)
+                continue
+            if user_id not in self.menu_deadlines:
+                self._touch_menu(user_id)
+                await self._persist_runtime_user(user_id)
+            deadline = self.menu_deadlines[user_id]
+            if deadline <= now:
+                await self._close_menu(user_id, expected_deadline=deadline, now=now)
+            else:
+                self._start_menu_timer(user_id)
         for user_id, (message_id, deadline) in list(self.pending_deletions.items()):
             if user_id not in self.authorized or user_id not in self.chats or user_id in self.notifications_disabled:
                 await self._clear_streak_notice(user_id)

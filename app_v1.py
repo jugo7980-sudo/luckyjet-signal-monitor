@@ -225,7 +225,11 @@ async def _main_async() -> None:
 
     async def process_history(config, state, rounds):
         await password_gate.coefficient_stats.ingest(rounds)
-        return await original_process_history(config, state, rounds)
+        result = await original_process_history(config, state, rounds)
+        if getattr(state, "history_gap", False):
+            await password_gate.on_history_gap()
+            state.history_gap = False
+        return result
 
     monitor.process_network_history = process_history
 

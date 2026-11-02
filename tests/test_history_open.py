@@ -152,7 +152,7 @@ def test_selected_threshold_does_not_create_automatic_chat_messages():
     asyncio.run(run())
 
 
-def test_start_removes_command_and_does_not_reenable_hidden_history():
+def test_explicit_start_reopens_hidden_panels_for_recovery():
     gate, request, callback = setup()
     gate.history_messages[42] = 101
 
@@ -163,12 +163,12 @@ def test_start_removes_command_and_does_not_reenable_hidden_history():
             "chat": {"id": 42, "type": "private"},
             "from": {"id": 42, "is_bot": False},
         }})
-        assert 42 not in gate.history_messages
+        assert 42 in gate.history_messages
         assert 42 in gate.menu_messages
 
     asyncio.run(run())
     assert any(m == "deleteMessage" and p["message_id"] == 200 for m, p in request.calls)
-    assert not any(m == "sendMessage" and p.get("text") == "🎰 Lucky Jet — история" for m, p in request.calls)
+    assert any(m == "sendMessage" and p.get("text") == "🎰 Lucky Jet — история" for m, p in request.calls)
 
 
 def test_hidden_history_and_rounds_never_create_new_messages():

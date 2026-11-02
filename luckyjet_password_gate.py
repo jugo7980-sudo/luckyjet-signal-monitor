@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 import httpx
+from release_reset import apply_release_reset
 from luckyjet_signal.demo_ledger import (
     MINIMUM_STAKE_CENTS,
     TRIGGER_OPTIONS,
@@ -78,12 +79,15 @@ class TelegramPasswordGate:
             self.redis = from_url(self.redis_url, decode_responses=True)
             try:
                 await self.redis.ping()
+                if await apply_release_reset(self.redis):
+                    self.current_streak = []
                 await self._load_persisted_state()
                 log.info("Telegram private state loaded from Redis")
             except Exception:
-                log.exception("Redis initialization failed; using in-memory state")
+                log.exception("Redis initialization failed; persistent login cannot start")
                 await self.redis.aclose()
                 self.redis = None
+                raise
         else:
             log.warning("REDIS_URL missing: private bot state is in-memory only")
 
@@ -123,7 +127,7 @@ class TelegramPasswordGate:
                         await self.handle_update(update)
                 except asyncio.CancelledError:
                     raise
-                except (httpx.HTTPError, RuntimeError, ValueError, KeyError) as exc:
+                except (httpx.HTTPError, RuntimeError, ValueError, KeyError, TypeError) as exc:
                     log.warning("Telegram polling failed: %s", type(exc).__name__)
                     await asyncio.sleep(2)
         finally:
@@ -512,7 +516,17 @@ class TelegramPasswordGate:
                     {"chat_id": chat_id, "message_id": message_id, "text": text},
                 )
                 return
-            except (httpx.HTTPError, RuntimeError):
+            except (httpx.HTTPError, RuntimeError) as exc:
+                description = str(exc).lower()
+                if isinstance(exc, httpx.HTTPStatusError):
+                    try:
+                        description = str(exc.response.json().get("description", "")).lower()
+                    except (ValueError, AttributeError):
+                        pass
+                if "message is not modified" in description:
+                    return
+                if "message to edit not found" not in description and "message_id_invalid" not in description:
+                    raise
                 self.prompt_messages.pop(user_id, None)
         result = await self.request("sendMessage", {"chat_id": chat_id, "text": text})
         message_id = result.get("result", {}).get("message_id")
@@ -640,6 +654,23 @@ class TelegramPasswordGate:
             {"inline_keyboard": self._navigation_rows()},
         )
 
+    async def _prepare_start(self, user_id, chat_id):
+        """Explicit /start recovers panels even after a locally cleared chat."""
+        history_lock = self._history_locks.setdefault(user_id, asyncio.Lock())
+        menu_lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
+        async with history_lock, menu_lock:
+            self.chats[user_id] = chat_id
+            ids = {self.history_messages.pop(user_id, None),
+                   self.menu_messages.pop(user_id, None),
+                   self.prompt_messages.pop(user_id, None)}
+            self.history_hidden.discard(user_id)
+            self.demo_pending_inputs.pop(user_id, None)
+            self.demo_panel_messages.pop(user_id, None)
+            self._demo_panel_content.pop(user_id, None)
+            for message_id in ids:
+                await self._safe_delete(chat_id, message_id)
+            await self._persist_user(user_id)
+
     async def handle_update(self, update):
         callback = update.get("callback_query")
         if callback:
@@ -669,7 +700,11 @@ class TelegramPasswordGate:
         if await self.is_authorized(user_id):
             self.chats[user_id] = chat_id
             if command == "/start":
+                log.info("Telegram start: user_id=%s authorized=True", user_id)
+                await self._prepare_start(user_id, chat_id)
                 await self.ensure_private_history(user_id)
+                await self._send_transient(user_id, chat_id,
+                    "🎰 Lucky Jet Monitor\nВыберите раздел.", self.menu(user_id))
             elif command == "/menu":
                 await self._send_transient(
                     user_id,
@@ -707,9 +742,11 @@ class TelegramPasswordGate:
             return
 
         if command == "/start":
-            await self._safe_delete(chat_id, message_id)
+            log.info("Telegram start: user_id=%s authorized=False", user_id)
+            await self._prepare_start(user_id, chat_id)
             self.pending.add(user_id)
             await self._replace_prompt(user_id, chat_id, "🔐 Введите пароль для доступа к боту.")
+            await self._safe_delete(chat_id, message_id)
             return
 
         await self._safe_delete(chat_id, message_id)
@@ -721,15 +758,19 @@ class TelegramPasswordGate:
             await self._replace_prompt(user_id, chat_id, "⏳ Повторите попытку через 5 минут.")
             return
 
-        if hmac.compare_digest(value, self.password):
+        if hmac.compare_digest(value.encode("utf-8"), self.password.encode("utf-8")):
             self.authorized.add(user_id)
             self.chats[user_id] = chat_id
             self.pending.discard(user_id)
             self.failures.pop(user_id, None)
             self.blocked_until.pop(user_id, None)
             await self._persist_user(user_id)
-            await self._delete_prompt(user_id, chat_id)
+            self.history_hidden.discard(user_id)
             await self.ensure_private_history(user_id)
+            await self._send_transient(user_id, chat_id,
+                "🎰 Lucky Jet Monitor\nВыберите раздел.", self.menu(user_id))
+            await self._delete_prompt(user_id, chat_id)
+            log.info("Telegram login completed: user_id=%s", user_id)
             return
 
         count = self.failures.get(user_id, 0) + 1
@@ -761,7 +802,10 @@ class TelegramPasswordGate:
         )
         if not history_toggle and not history_refresh:
             try:
-                await self.request("answerCallbackQuery", {"callback_query_id": callback["id"]})
+                answer = {"callback_query_id": callback["id"]}
+                if user_id not in self.authorized:
+                    answer.update(text="Нажмите /start и введите пароль для доступа.", show_alert=True)
+                await self.request("answerCallbackQuery", answer)
             except (httpx.HTTPError, RuntimeError, KeyError):
                 pass
 

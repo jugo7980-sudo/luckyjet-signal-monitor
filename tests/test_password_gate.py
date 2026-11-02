@@ -71,8 +71,9 @@ def test_password_unlocks_into_clean_history_panel():
     assert gate.chats[42] == 42
     assert gate.history_messages[42] == 102
     sent = sent_messages(request)
-    assert sent[-1]["text"] == "🎰 Lucky Jet — история"
-    buttons = sent[-1]["reply_markup"]["inline_keyboard"]
+    assert sent[-2]["text"] == "🎰 Lucky Jet — история"
+    assert sent[-1]["text"].startswith("🎰 Lucky Jet Monitor")
+    buttons = sent[-2]["reply_markup"]["inline_keyboard"]
     assert buttons[-1][0]["callback_data"] == "menu_open"
     deleted = deleted_ids(request)
     assert 1 in deleted

@@ -6,6 +6,24 @@ import time
 
 log = logging.getLogger("luckyjet.direct_only")
 
+POLL_BACKOFF_SECONDS = (0.1, 0.25, 0.5, 1.0, 2.0)
+
+
+def next_poll_delay(success, current, base=0.1):
+    base = max(0.01, float(base))
+    if success:
+        return base
+    current = max(base, float(current))
+    steps = [base, *(value for value in POLL_BACKOFF_SECONDS if value > base)]
+    for value in steps:
+        if value > current + 1e-9:
+            return value
+    return max(base, POLL_BACKOFF_SECONDS[-1])
+
+
+def poll_sleep_seconds(started_at, interval, now):
+    return round(max(0.0, float(started_at) + float(interval) - float(now)), 6)
+
 
 def should_release_browser_page(rounds, source) -> bool:
     """Return True once completed-round history is coming from the direct API."""
@@ -74,6 +92,7 @@ async def run_monitor(monitor, config, *, state=None):
         missing_since = None
         stale_since = None
         last_diagnostic = 0.0
+        poll_delay = max(0.01, float(config.poll_seconds))
 
         async def close_browser_stack():
             nonlocal browser, context, page, owns_browser_lock
@@ -123,6 +142,7 @@ async def run_monitor(monitor, config, *, state=None):
 
         try:
             while True:
+                iteration_started = time.monotonic()
                 try:
                     probe = getattr(monitor, "demo_probe", None)
                     if direct_only and probe is not None and probe.requested:
@@ -159,7 +179,8 @@ async def run_monitor(monitor, config, *, state=None):
                         if now - last_error_notice >= config.error_notify_cooldown:
                             await monitor.send(config, issue)
                             last_error_notice = now
-                        await asyncio.sleep(config.poll_seconds)
+                        poll_delay = next_poll_delay(False, poll_delay, config.poll_seconds)
+                        await asyncio.sleep(poll_sleep_seconds(iteration_started, poll_delay, time.monotonic()))
                         continue
 
                     async def fetch_current():
@@ -178,6 +199,7 @@ async def run_monitor(monitor, config, *, state=None):
                         outcome = await fetch_current()
 
                     worked = outcome["worked"]
+                    poll_delay = next_poll_delay(bool(outcome.get("ok")), poll_delay, config.poll_seconds)
                     rounds, source = await capture.snapshot()
                     refresh_done_at = time.monotonic()
                     stale_since, stale = stale_direct_history(
@@ -200,7 +222,7 @@ async def run_monitor(monitor, config, *, state=None):
                         capture = None
                         missing_since = None
                         stale_since = None
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(2)
                         continue
 
                     if worked:
@@ -257,7 +279,7 @@ async def run_monitor(monitor, config, *, state=None):
 
                         last_diagnostic = now
 
-                    await asyncio.sleep(config.poll_seconds)
+                    await asyncio.sleep(poll_sleep_seconds(iteration_started, poll_delay, time.monotonic()))
 
                 except asyncio.CancelledError:
                     raise
@@ -285,8 +307,9 @@ async def run_monitor(monitor, config, *, state=None):
                     direct_only = False
                     capture = None
                     stale_since = None
+                    poll_delay = next_poll_delay(False, poll_delay, config.poll_seconds)
 
-                    await asyncio.sleep(max(3.0, config.poll_seconds))
+                    await asyncio.sleep(poll_sleep_seconds(iteration_started, poll_delay, time.monotonic()))
 
         finally:
             if monitor.history_refresh is not None:

@@ -14,7 +14,7 @@ class Config:
     base_amount: int = 150
     trigger_streak: int = 4
     threshold: float = 2.0
-    poll_seconds: float = 1.0
+    poll_seconds: float = 0.1
     headless: bool = True
     state_file: str = "data/state.json"
     storage_state_path: str | None = None
@@ -39,7 +39,7 @@ class Config:
             base_amount=int(os.getenv("BASE_AMOUNT", "150")),
             trigger_streak=int(os.getenv("TRIGGER_STREAK", "4")),
             threshold=float(os.getenv("THRESHOLD", "2.0")),
-            poll_seconds=float(os.getenv("POLL_SECONDS", "1.0")),
+            poll_seconds=float(os.getenv("POLL_SECONDS", "0.1")),
             headless=os.getenv("HEADLESS", "true").lower() in {"1", "true", "yes", "on"},
             state_file=os.getenv("STATE_FILE", "data/state.json"),
             storage_state_path=os.getenv("STORAGE_STATE_PATH", "").strip() or None,

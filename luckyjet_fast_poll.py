@@ -12,6 +12,7 @@ import httpx
 
 
 log = logging.getLogger("luckyjet.fast_poll")
+PREFERRED_HEDGE_SECONDS = 0.05
 
 
 @asynccontextmanager
@@ -82,7 +83,7 @@ async def poll_direct_gateways_fast(monitor, capture, *, request_timeout=4.0):
                 primary = asyncio.create_task(fetch(preferred))
                 tasks.append(primary)
                 # Hedge slow responses instead of waiting for the full timeout.
-                done, _ = await asyncio.wait([primary], timeout=0.25)
+                done, _ = await asyncio.wait([primary], timeout=PREFERRED_HEDGE_SECONDS)
                 if done and primary.result():
                     return primary.result()
                 candidates.remove(preferred)

@@ -42,15 +42,15 @@ def test_settings_selection_is_separate_from_demo_and_navigation_is_static():
         await click(gate, "menu_settings")
         menu_id = gate.menu_messages[42]
         await click(gate, "settings_threshold")
-        assert "Когда присылать уведомление" in screen(request)["text"]
-        assert "не меняет условие запуска демо" in screen(request)["text"]
+        assert "Уведомлять" in screen(request)["text"]
+        assert "ниже 2x" in screen(request)["text"]
         await click(gate, "threshold:6")
         assert gate.user_threshold(42) == 6
         assert gate._demo_ledger(42).trigger_streak == 4
         await click(gate, "settings_history")
         await click(gate, "history_size:50")
         await click(gate, "settings_delete")
-        assert "после результата 2x" in screen(request)["text"]
+        assert "после конца серии" in screen(request)["text"]
         await click(gate, "delete:5")
         await click(gate, "demo_trigger_menu")
         await click(gate, "demo_trigger:3")
@@ -161,7 +161,7 @@ def test_buttons_are_named_and_fit_callback_limits():
     menus = [gate.menu(42), gate.settings_menu(42), gate.demo_menu(42), gate._demo_history_menu(42)]
     for kind in ("settings_threshold", "settings_history", "settings_delete", "demo_trigger_menu"):
         text, markup = gate._choice_screen(42, kind)
-        assert len(text) > 40
+        assert 10 < len(text) < 120
         menus.append(markup)
     for markup in menus:
         for row in markup["inline_keyboard"]:
@@ -169,3 +169,25 @@ def test_buttons_are_named_and_fit_callback_limits():
                 assert not re.fullmatch(r"[✓\s]*\d+", button["text"])
                 assert 1 <= len(button["callback_data"].encode()) <= 64
                 assert gate._supported_callback(button["callback_data"], 42) or button["callback_data"] == "menu_history"
+
+
+def test_compact_tables_and_two_round_selection_in_both_modes():
+    gate, request = setup()
+    async def run():
+        for kind, action in (("settings_threshold", "threshold:2"), ("demo_trigger_menu", "demo_trigger:2")):
+            await click(gate, kind)
+            rows = screen(request)['reply_markup']['inline_keyboard']
+            assert any(b['callback_data'] == action for row in rows for b in row)
+            assert len(rows[0]) == 3
+            await click(gate, action)
+        assert gate.user_threshold(42) == 2
+        assert gate._demo_ledger(42).trigger_streak == 2
+        for kind in ("settings_threshold", "demo_trigger_menu"):
+            _, markup = gate._choice_screen(42, kind)
+            assert markup['inline_keyboard'][0][0]['text'] == '✓ 2 подряд'
+        for markup, count in ((gate.settings_menu(42), 5), (gate.demo_menu(42), 4)):
+            for row in markup['inline_keyboard'][:count]:
+                assert len(row) == 2
+                assert row[0]['callback_data'] == row[1]['callback_data']
+        assert len(gate._settings_text(42).splitlines()) == 1
+    asyncio.run(run())

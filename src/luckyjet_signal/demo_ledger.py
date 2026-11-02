@@ -8,7 +8,7 @@ from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 DEFAULT_BALANCE_CENTS = 1_000_000  # $10,000.00
 DEFAULT_STAKE_CENTS = 15_000  # $150.00
 MINIMUM_STAKE_CENTS = 1_000  # $10.00
-TRIGGER_OPTIONS = (3, 4, 5, 6)
+TRIGGER_OPTIONS = (2, 3, 4, 5, 6)
 
 
 def parse_dollars(value) -> int | None:

@@ -166,7 +166,8 @@ def test_history_size_setting_updates_panel_and_is_shown_in_settings():
         payload["text"] for method, payload in request.calls
         if method in {"sendMessage", "editMessageText"} and payload.get("text", "").startswith("⚙️ Настройки")
     ]
-    assert settings_text and "История: 50 раундов" in settings_text[-1]
+    assert settings_text
+    assert gate.settings_menu(42)["inline_keyboard"][2][1]["text"] == "50 результатов"
 
 
 def test_summary_and_status_show_recent_data_quality():
@@ -218,13 +219,13 @@ def test_demo_balance_button_refreshes_current_ledger_without_edit_prompt():
         p for method, p in request.calls
         if method in {"sendMessage", "editMessageText"} and p.get("reply_markup", {}).get("inline_keyboard")
     ][-1]
-    assert "Виртуальный баланс: $9,500.50" in latest_screen["text"]
+    assert latest_screen["reply_markup"]["inline_keyboard"][2][1]["text"] == "$9,500.50"
     labels = [
         button["text"]
         for row in latest_screen["reply_markup"]["inline_keyboard"]
         for button in row
     ]
-    assert "🔄 Обновить баланс: $9,500.50" in labels
+    assert "🔄 Демо-баланс" in labels and "$9,500.50" in labels
 
 
 def test_demo_stake_input_minimum_and_reset_confirmation_buttons():
@@ -355,7 +356,7 @@ def test_six_round_trigger_and_live_balance_update_stop_after_leaving_demo():
         assert gate.demo_ledgers[42].active
         await gate.on_round("1.50x")
         edits = [p for m, p in request.calls if m == "editMessageText" and p["message_id"] == panel_id]
-        assert "$9,850.00" in edits[-1]["text"]
+        assert edits[-1]["reply_markup"]["inline_keyboard"][2][1]["text"] == "$9,850.00"
         assert "$300.00" in edits[-1]["text"]
         await gate.handle_callback(callback(42, "menu_main", panel_id))
         count = len([1 for m, p in request.calls if m == "editMessageText" and p["message_id"] == panel_id])

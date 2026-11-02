@@ -256,7 +256,7 @@ class TelegramPasswordGate:
 
     def user_threshold(self, user_id):
         value = int(self.thresholds.get(int(user_id), 4))
-        return min(10, max(3, value))
+        return min(10, max(2, value))
 
     def user_delete_seconds(self, user_id):
         value = int(self.delete_seconds.get(int(user_id), 5))
@@ -278,12 +278,7 @@ class TelegramPasswordGate:
 
     @staticmethod
     def _main_text():
-        return (
-            "🎰 Lucky Jet Monitor\n"
-            "История коэффициентов — завершённые раунды, новые слева направо.\n"
-            "Демо — проверка схемы на виртуальном балансе.\n"
-            "Настройки — уведомления, звук и размер истории."
-        )
+        return "🎰 Lucky Jet Monitor"
 
     @staticmethod
     def _help_text():
@@ -316,7 +311,7 @@ class TelegramPasswordGate:
         if self.is_admin(user_id) and data == "admin_confirm":
             return True
         if data.startswith("threshold:"):
-            return self._to_int(data.split(":", 1)[1]) in range(3, 11)
+            return self._to_int(data.split(":", 1)[1]) in range(2, 11)
         if data.startswith("history_size:"):
             return self._to_int(data.split(":", 1)[1]) in {20, 50, 100}
         if data.startswith("delete:"):
@@ -334,14 +329,14 @@ class TelegramPasswordGate:
     def menu(self, user_id=None):
         hidden = user_id in self.history_hidden
         rows = [
-            [{"text": "📊 Показать историю коэффициентов" if hidden else "📊 Скрыть историю коэффициентов", "callback_data": "menu_history"}],
-            [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"}],
-            [{"text": "⚙️ Настройки уведомлений и истории", "callback_data": "menu_settings"}],
+            [{"text": "📊 Показать историю" if hidden else "📊 Скрыть историю", "callback_data": "menu_history"}],
+            [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"},
+             {"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
         ]
         if user_id is not None:
             balance = format_dollars(self._demo_ledger(user_id).balance_cents)
             rows.append([{"text": f"💵 Демо-баланс: {balance} · обновить", "callback_data": "demo_refresh_balance"}])
-        rows.append([{"text": "❓ Как пользоваться ботом", "callback_data": "menu_help"}])
+        rows.append([{"text": "❓ Справка", "callback_data": "menu_help"}])
         if user_id is not None and self.is_admin(user_id):
             rows.append([{"text": "🛡 Управление доступом", "callback_data": "admin_users"}])
         rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
@@ -360,58 +355,50 @@ class TelegramPasswordGate:
             )
         else:
             progress = f"Сейчас ниже 2x подряд: {ledger.low_streak} из {ledger.trigger_streak}"
-        return (
-            "🧪 Демо-режим — виртуальные ставки\n"
-            f"Состояние: {state}\n"
-            f"Виртуальный баланс: {format_dollars(ledger.balance_cents)}\n"
-            f"Начинать цикл после {ledger.trigger_streak} раундов подряд ниже 2x.\n"
-            f"Стартовая ставка: {format_dollars(ledger.base_stake_cents)} (минимум $10).\n"
-            f"{progress}\n\n"
-            "После условия ставка учитывается со следующего раунда. После проигрыша — удвоение. "
-            "Выход на 2x; после выигрыша — ожидание новой серии.\n"
-            "Это расчёт бота: баланс сайта не считывается, реальные ставки не выполняются."
-        )
+        return f"🧪 Демо · {state}\n{progress}"
+
+    @staticmethod
+    def _setting_row(label, value, action):
+        return [{"text": label, "callback_data": action},
+                {"text": value, "callback_data": action}]
 
     def demo_menu(self, user_id):
         ledger = self._demo_ledger(user_id)
         return {"inline_keyboard": [
-            [{"text": "⏸ Приостановить демо" if ledger.enabled else "▶️ Продолжить демо" if ledger.active else "▶️ Включить демо", "callback_data": "demo_toggle"}],
-            [{"text": f"🎯 Начать цикл после: {ledger.trigger_streak} раундов", "callback_data": "demo_trigger_menu"}],
-            [{"text": f"🔄 Обновить баланс: {format_dollars(ledger.balance_cents)}", "callback_data": "demo_refresh_balance"}],
-            [{"text": f"💰 Изменить стартовую ставку: {format_dollars(ledger.base_stake_cents)}", "callback_data": "demo_set_stake"}],
-            [{"text": "📜 Посмотреть историю демо-циклов", "callback_data": "demo_history"}],
-            [{"text": "♻️ Сбросить демо-баланс и циклы", "callback_data": "demo_reset"}],
+            self._setting_row("🧪 Демо", "⏸ Выключить" if ledger.enabled else "▶️ Включить", "demo_toggle"),
+            self._setting_row("🎯 Старт: серия <2x", f"{ledger.trigger_streak} подряд", "demo_trigger_menu"),
+            self._setting_row("🔄 Демо-баланс", format_dollars(ledger.balance_cents), "demo_refresh_balance"),
+            self._setting_row("💰 Первая ставка", format_dollars(ledger.base_stake_cents), "demo_set_stake"),
+            [{"text": "📜 История циклов", "callback_data": "demo_history"}],
+            [{"text": "♻️ Сбросить демо", "callback_data": "demo_reset"}],
+            [{"text": "❓ Справка", "callback_data": "menu_help"}],
             *self._navigation_rows(),
         ]}
 
     def _choice_screen(self, user_id, kind):
         ledger = self._demo_ledger(user_id)
         if kind == "demo_trigger_menu":
-            text = ("🎯 Условие запуска демо-цикла\n"
-                    "Сколько результатов подряд должны быть ниже 2x, чтобы начать виртуальный цикл? "
-                    "Первая ставка — в следующем раунде. Это не настройка уведомлений.")
+            text = "🎯 Старт демо: сколько раундов подряд ниже 2x?"
             if ledger.active:
-                text += " Текущий цикл продолжится; выбранное условие применяется к следующему циклу."
-            choices = [(f"После {n} раундов", f"demo_trigger:{n}", n == ledger.trigger_streak) for n in TRIGGER_OPTIONS]
+                text += "\nИзменение — со следующего цикла."
+            choices = [(f"{n} подряд", f"demo_trigger:{n}", n == ledger.trigger_streak) for n in TRIGGER_OPTIONS]
             back = "demo_menu"
         elif kind == "settings_threshold":
-            text = ("🔔 Когда присылать уведомление о серии?\n"
-                    "Выберите число результатов подряд ниже 2x. Бот пришлёт одно сообщение и будет обновлять его до конца серии. "
-                    "Это не меняет условие запуска демо.")
-            choices = [(f"После {n} раундов", f"threshold:{n}", n == self.user_threshold(user_id)) for n in range(3, 11)]
+            text = "🔔 Уведомлять: сколько раундов подряд ниже 2x?"
+            choices = [(f"{n} подряд", f"threshold:{n}", n == self.user_threshold(user_id)) for n in range(2, 11)]
             back = "menu_settings"
         elif kind == "settings_history":
-            text = "📋 Размер истории коэффициентов\nСколько последних завершённых раундов показывать в панели?"
+            text = "📋 Сколько результатов показывать в истории?"
             choices = [(f"{n} результатов", f"history_size:{n}", n == self.user_history_size(user_id)) for n in (20, 50, 100)]
             back = "menu_settings"
         else:
-            text = ("⏱ Когда удалять уведомление о серии?\n"
-                    "Таймер начинается после результата 2x или выше, когда серия завершилась. "
-                    "Пока серия идёт, сообщение обновляется на месте.")
+            text = "⏱ Удалять уведомление после конца серии через:"
             choices = [(label, f"delete:{n}" if n else "delete:off", n == self.user_delete_seconds(user_id))
-                       for n, label in ((5, "Через 5 секунд"), (30, "Через 30 секунд"), (60, "Через 60 секунд"), (0, "Без таймера удаления"))]
+                       for n, label in ((5, "Через 5 секунд"), (30, "Через 30 секунд"), (60, "Через 60 секунд"), (0, "Не удалять"))]
             back = "menu_settings"
-        rows = [[{"text": ("✓ " if selected else "") + label, "callback_data": action}] for label, action, selected in choices]
+        buttons = [{"text": ("✓ " if selected else "") + label, "callback_data": action} for label, action, selected in choices]
+        columns = 3 if kind in {"settings_threshold", "settings_history", "demo_trigger_menu"} else 2
+        rows = [buttons[i:i + columns] for i in range(0, len(buttons), columns)]
         return text, {"inline_keyboard": [*rows, *self._navigation_rows(back)]}
 
     @staticmethod
@@ -429,7 +416,7 @@ class TelegramPasswordGate:
     def _demo_history_text(self, user_id, page=0):
         history = self._demo_ledger(user_id).history
         if not history:
-            return "📜 История демо-циклов\nЦиклов пока нет. Включите демо и дождитесь выбранного условия запуска."
+            return "📜 История демо-циклов\nЦиклов пока нет."
         page = min(max(0, page), len(history) - 1)
         entry = history[page]
         lines = [f"📜 Демо-цикл {page + 1} из {len(history)} · новые сначала",
@@ -454,9 +441,9 @@ class TelegramPasswordGate:
         page = min(max(0, page), max(0, count - 1))
         pager = []
         if page:
-            pager.append({"text": "⬅️ Более новый цикл", "callback_data": f"demo_history:{page - 1}"})
+            pager.append({"text": "⬅️ Новый", "callback_data": f"demo_history:{page - 1}"})
         if page + 1 < count:
-            pager.append({"text": "Более старый цикл ➡️", "callback_data": f"demo_history:{page + 1}"})
+            pager.append({"text": "Старый ➡️", "callback_data": f"demo_history:{page + 1}"})
         return {"inline_keyboard": [*([pager] if pager else []), *self._navigation_rows("demo_menu")]}
 
     async def _demo_input(self, user_id, chat_id, raw, message_id=None):
@@ -497,31 +484,21 @@ class TelegramPasswordGate:
         return True
 
     def _settings_text(self, user_id):
-        notifications = "включены" if user_id not in self.notifications_disabled else "выключены"
-        sound = "без звука" if user_id in self.silent_users else "со звуком"
-        delay = self.user_delete_seconds(user_id)
-        timer = f"через {delay} сек. после конца серии" if delay else "без таймера"
-        return (
-            "⚙️ Настройки уведомлений и истории\n"
-            f"Уведомления о серии: {notifications}, {sound}.\n"
-            f"Сообщать после {self.user_threshold(user_id)} раундов подряд ниже 2x.\n"
-            f"Удалять уведомление: {timer}.\n"
-            f"История: {self.user_history_size(user_id)} раундов.\n\n"
-            "Нажмите нужную настройку, чтобы изменить её. Условие запуска демо задаётся отдельно в демо-режиме."
-        )
+        return "⚙️ Настройки уведомлений и истории"
 
     def settings_menu(self, user_id):
         enabled = user_id not in self.notifications_disabled
         sound = user_id not in self.silent_users
         delay = self.user_delete_seconds(user_id)
         return {"inline_keyboard": [
-            [{"text": f"🔔 Уведомления о сериях: {'включены' if enabled else 'выключены'}", "callback_data": "settings_notifications"}],
-            [{"text": f"🎯 Уведомлять после: {self.user_threshold(user_id)} раундов", "callback_data": "settings_threshold"}],
-            [{"text": f"📋 В истории: {self.user_history_size(user_id)} результатов", "callback_data": "settings_history"}],
-            [{"text": f"⏱ После конца серии: {str(delay) + ' сек.' if delay else 'без таймера'}", "callback_data": "settings_delete"}],
-            [{"text": f"🔊 Звук уведомлений: {'включён' if sound else 'выключен'}", "callback_data": "settings_sound"}],
-            [{"text": "🧪 Отправить тестовое уведомление", "callback_data": "settings_test"}],
-            [{"text": "♻️ Вернуть настройки по умолчанию", "callback_data": "settings_reset"}],
+            self._setting_row("🔔 Уведомления", "ВКЛ" if enabled else "ВЫКЛ", "settings_notifications"),
+            self._setting_row("🎯 Серия ниже 2x", f"{self.user_threshold(user_id)} подряд", "settings_threshold"),
+            self._setting_row("📋 История", f"{self.user_history_size(user_id)} результатов", "settings_history"),
+            self._setting_row("⏱ После серии", f"{delay} сек." if delay else "Не удалять", "settings_delete"),
+            self._setting_row("🔊 Звук", "ВКЛ" if sound else "ВЫКЛ", "settings_sound"),
+            [{"text": "🧪 Тест", "callback_data": "settings_test"},
+             {"text": "♻️ Сброс настроек", "callback_data": "settings_reset"}],
+            [{"text": "❓ Справка", "callback_data": "menu_help"}],
             *self._navigation_rows(),
         ]}
 
@@ -544,7 +521,7 @@ class TelegramPasswordGate:
             else:
                 rows += [[{"text": "🔑 Отозвать доступ", "callback_data": f"admin_revoke:{target}"}],
                          [{"text": "⛔ Заблокировать пользователя", "callback_data": f"admin_block:{target}"}]]
-        return (f"🛡 Пользователь ID {target}\nСтатус: {state}.\nВыберите действие. Перед изменением доступа потребуется подтверждение.",
+        return (f"🛡 Пользователь ID {target}\nСтатус: {state}.",
                 {"inline_keyboard": [*rows, *self._navigation_rows("admin_users")]})
 
     async def _safe_delete(self, chat_id, message_id):
@@ -1043,7 +1020,7 @@ class TelegramPasswordGate:
                 value = int(data.split(":", 1)[1])
             except ValueError:
                 return
-            if value not in range(3, 11):
+            if value not in range(2, 11):
                 return
             self.thresholds[user_id] = value
             await self._persist_user(user_id)
@@ -1096,8 +1073,7 @@ class TelegramPasswordGate:
         elif data == "settings_reset":
             self.pending_confirmations[user_id] = "settings"
             answer = ("♻️ Вернуть настройки по умолчанию?\n"
-                      "Уведомления и звук включатся, порог станет 4 раунда, история — 20 результатов, "
-                      "удаление — через 5 секунд после конца серии. Демо-баланс и циклы сохранятся.")
+                      "Уведомления и звук: ВКЛ · серия: 4 · история: 20 · удаление: 5 сек.\nДемо сохранится.")
             markup = {"inline_keyboard": [
                 [{"text": "✅ Да, вернуть настройки", "callback_data": "settings_reset_confirm"}],
                 [{"text": "⬅️ Отмена", "callback_data": "menu_settings"}],
@@ -1118,8 +1094,7 @@ class TelegramPasswordGate:
             markup = self.settings_menu(user_id)
         elif data == "admin_users" and self.is_admin(user_id):
             self.admin_pending_actions.pop(user_id, None)
-            answer = (f"🛡 Управление доступом\nС доступом: {len(self.authorized)}. Заблокировано: {len(self.blocked)}.\n"
-                      "Выберите пользователя, затем нужное действие.")
+            answer = f"🛡 Управление доступом\nС доступом: {len(self.authorized)} · Заблокировано: {len(self.blocked)}"
             markup = self._admin_menu()
         elif data.startswith("admin_user:") and self.is_admin(user_id):
             answer, markup = self._admin_user_screen(self._to_int(data.split(":", 1)[1]))

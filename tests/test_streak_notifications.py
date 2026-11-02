@@ -28,7 +28,7 @@ def setup():
     return gate, request
 
 
-@pytest.mark.parametrize("threshold", [3, 4, 5, 6, 10])
+@pytest.mark.parametrize("threshold", [2, 3, 4, 5, 6, 10])
 def test_one_notice_at_threshold_updates_same_id_and_schedules_five_seconds(threshold):
     gate, request = setup()
     gate.thresholds[42] = threshold
@@ -111,7 +111,7 @@ def test_legacy_durations_and_buttons_use_five_seconds():
                                        "message": {"message_id": 999, "chat": {"id": 42}}})
             assert gate.delete_seconds[42] == 5
     asyncio.run(run())
-    text = gate._settings_text(42)
+    text = str(gate.settings_menu(42))
     assert "5 сек." in text and "10 сек." not in text
     _, choices = gate._choice_screen(42, "settings_delete")
     buttons = [b for row in choices["inline_keyboard"] for b in row]

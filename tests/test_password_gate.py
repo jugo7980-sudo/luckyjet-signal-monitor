@@ -96,12 +96,12 @@ def test_main_menu_keeps_existing_buttons_and_can_close():
 
     menu = sent_messages(request)[1]["reply_markup"]["inline_keyboard"]
     labels = [button["text"] for row in menu for button in row]
-    assert "📊 Скрыть историю коэффициентов" in labels
+    assert "📊 Скрыть историю" in labels
     assert "📡 Статус" not in labels
     assert "📈 Сводка" not in labels
     assert "🧪 Демо: проверка" not in labels
-    assert "❓ Как пользоваться ботом" in labels
-    assert "⚙️ Настройки уведомлений и истории" in labels
+    assert "❓ Справка" in labels
+    assert "⚙️ Настройки" in labels
     assert "✖ Закрыть меню" in labels
     assert 101 not in deleted_ids(request)
     assert 102 in deleted_ids(request)
@@ -135,13 +135,13 @@ def test_settings_are_top_to_bottom_and_keep_navigation():
     markup = gate.settings_menu(42)["inline_keyboard"]
     callbacks = [[button["callback_data"] for button in row] for row in markup]
 
-    assert callbacks[0] == ["settings_notifications"]
-    assert callbacks[1] == ["settings_threshold"]
-    assert callbacks[2] == ["settings_history"]
-    assert callbacks[3] == ["settings_delete"]
-    assert callbacks[4] == ["settings_sound"]
-    assert callbacks[5] == ["settings_test"]
-    assert callbacks[6] == ["settings_reset"]
+    assert callbacks[0] == ["settings_notifications", "settings_notifications"]
+    assert callbacks[1] == ["settings_threshold", "settings_threshold"]
+    assert callbacks[2] == ["settings_history", "settings_history"]
+    assert callbacks[3] == ["settings_delete", "settings_delete"]
+    assert callbacks[4] == ["settings_sound", "settings_sound"]
+    assert callbacks[5] == ["settings_test", "settings_reset"]
+    assert callbacks[6] == ["menu_help"]
     assert callbacks[-1] == ["menu_main", "menu_close"]
 
 

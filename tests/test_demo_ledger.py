@@ -117,3 +117,15 @@ def test_demo_state_round_trips_without_losing_open_cycle_or_history():
     assert restored.next_stake_cents == 30_000
     assert restored.balance_cents == 985_000
     assert restored.cycle_rounds == ledger.cycle_rounds
+
+
+def test_two_round_trigger_bets_only_on_following_round_and_survives_reload():
+    ledger = DemoLedger(enabled=True)
+    assert ledger.set_trigger(2)
+    assert ledger.process_round('1.10') is None
+    assert ledger.process_round('1.90')['type'] == 'trigger'
+    assert ledger.balance_cents == DEFAULT_BALANCE_CENTS
+    restored = DemoLedger(**ledger.dump())
+    assert restored.trigger_streak == 2
+    assert restored.process_round('2.00')['type'] == 'recovered'
+    assert restored.balance_cents == DEFAULT_BALANCE_CENTS + DEFAULT_STAKE_CENTS

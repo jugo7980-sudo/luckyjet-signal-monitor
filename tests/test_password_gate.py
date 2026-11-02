@@ -140,10 +140,11 @@ def test_settings_are_top_to_bottom_and_keep_navigation():
     assert callbacks[0] == ["settings_notifications"]
     assert callbacks[1] == ["threshold:3", "threshold:4", "threshold:5", "threshold:6"]
     assert callbacks[2] == ["threshold:7", "threshold:8", "threshold:9", "threshold:10"]
-    assert callbacks[3] == ["delete:10", "delete:30", "delete:60", "delete:off"]
-    assert callbacks[4] == ["settings_sound"]
-    assert callbacks[5] == ["settings_test"]
-    assert callbacks[6] == ["settings_reset"]
+    assert callbacks[3] == ["history_size:20", "history_size:50", "history_size:100"]
+    assert callbacks[4] == ["delete:10", "delete:30", "delete:60", "delete:off"]
+    assert callbacks[5] == ["settings_sound"]
+    assert callbacks[6] == ["settings_test"]
+    assert callbacks[7] == ["settings_reset"]
     assert callbacks[-1] == ["menu_main", "menu_close"]
 
 

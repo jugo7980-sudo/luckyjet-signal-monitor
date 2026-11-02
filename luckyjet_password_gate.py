@@ -493,10 +493,19 @@ class TelegramPasswordGate(HistoryPanels):
             from datetime import datetime,timedelta
             from zoneinfo import ZoneInfo
             today=datetime.now(ZoneInfo("Asia/Bangkok")).date()
-            for i in range(10):
-                day=(today-timedelta(days=i)).isoformat()
-                rows.append([{"text":day,"callback_data":f"coef_day:{day}:10:0"}])
-            return "📈 Коэффициенты · последние 10 дней · UTC+7", {"inline_keyboard":rows+self._navigation_rows("demo_menu")}
+            dates=[(today-timedelta(days=i)).isoformat() for i in range(10)]
+            pipe=stats.redis.pipeline()
+            for day in dates:
+                pipe.hget(f'luckyjet:coef:{day}', 'total')
+            totals=await pipe.execute()
+            for day,total in zip(dates,totals):
+                if total and int(total)>0:
+                    label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y')
+                    rows.append([{"text":f"{label} · {int(total)} раундов","callback_data":f"coef_day:{day}:10:0"}])
+            title="📈 История Кэф · 1/1\nТаиланд, UTC+7 · новые сначала"
+            if not rows:
+                title+="\nДанных пока нет."
+            return title, {"inline_keyboard":rows+self._navigation_rows("demo_menu", "🧪 Демо-режим")}
         _,day,threshold,page=parts
         threshold=int(threshold);page=int(page)
         summary=await stats.summary(day)
@@ -513,7 +522,7 @@ class TelegramPasswordGate(HistoryPanels):
         pager=[]
         if page: pager.append({"text":"⬅️","callback_data":f"coef_day:{day}:{threshold}:{page-1}"})
         if (page+1)*10<total: pager.append({"text":"➡️","callback_data":f"coef_day:{day}:{threshold}:{page+1}"})
-        return text,{"inline_keyboard":buttons+([pager] if pager else [])+self._navigation_rows("demo_menu")}
+        return text,{"inline_keyboard":buttons+([pager] if pager else [])+self._navigation_rows("coef_days:0", "📈 История Кэф")}
 
     def _demo_history_menu(self, user_id, page=0):
         count = len(self._demo_ledger(user_id).history)

@@ -35,6 +35,7 @@ class TelegramPasswordGate:
         self.silent_users = set()
         self.thresholds = {}
         self.delete_seconds = {}
+        self.history_sizes = {}
         self.failures = {}
         self.blocked_until = {}
         self.offset = None
@@ -155,6 +156,10 @@ class TelegramPasswordGate:
             int(k): int(v)
             for k, v in (await self.redis.hgetall("luckyjet:delete_seconds")).items()
         }
+        self.history_sizes = {
+            int(k): int(v)
+            for k, v in (await self.redis.hgetall("luckyjet:history_sizes")).items()
+        }
 
     async def _persist_user(self, user_id):
         if not self.redis:
@@ -191,6 +196,7 @@ class TelegramPasswordGate:
             pipe.hdel("luckyjet:history_messages", uid)
         pipe.hset("luckyjet:thresholds", uid, str(self.user_threshold(user_id)))
         pipe.hset("luckyjet:delete_seconds", uid, str(self.user_delete_seconds(user_id)))
+        pipe.hset("luckyjet:history_sizes", uid, str(self.user_history_size(user_id)))
         await pipe.execute()
 
     async def is_authorized(self, user_id):
@@ -209,6 +215,10 @@ class TelegramPasswordGate:
             return 10
         return value if value in {0, 10, 30, 60} else 30
 
+    def user_history_size(self, user_id):
+        value = int(self.history_sizes.get(int(user_id), 20))
+        return value if value in {20, 50, 100} else 20
+
     def _navigation_rows(self):
         return [[
             {"text": "⬅️ Меню", "callback_data": "menu_main"},
@@ -225,6 +235,7 @@ class TelegramPasswordGate:
                 {"text": "🔔 Уведомления", "callback_data": "menu_notifications"},
                 {"text": "⚙️ Настройки", "callback_data": "menu_settings"},
             ],
+            [{"text": "📈 Сводка", "callback_data": "menu_stats"}],
         ]
         if user_id is not None and self.is_admin(user_id):
             rows.append([{"text": "🧪 Демо: проверка", "callback_data": "demo_probe"}])
@@ -241,6 +252,7 @@ class TelegramPasswordGate:
             "⚙️ Настройки\n"
             f"🔔 Уведомления: {notifications}\n"
             f"🎯 Серия: {self.user_threshold(user_id)} подряд ниже 2x\n"
+            f"📋 История: {self.user_history_size(user_id)} раундов\n"
             f"⏱ Автоудаление: {delete_label}\n"
             f"🔊 Звук: {sound}"
         )
@@ -248,6 +260,7 @@ class TelegramPasswordGate:
     def settings_menu(self, user_id):
         threshold = self.user_threshold(user_id)
         delete = self.user_delete_seconds(user_id)
+        history_size = self.user_history_size(user_id)
         notifications_enabled = user_id not in self.notifications_disabled
         sound_enabled = user_id not in self.silent_users
 
@@ -260,6 +273,10 @@ class TelegramPasswordGate:
                 row.append({"text": f"{prefix}{value}", "callback_data": f"threshold:{value}"})
             threshold_rows.append(row)
 
+        history_row = [
+            {"text": f"{'✓ ' if value == history_size else ''}{value}", "callback_data": f"history_size:{value}"}
+            for value in (20, 50, 100)
+        ]
         delete_row = []
         for value, label in ((10, "10с"), (30, "30с"), (60, "60с"), (0, "Без удаления")):
             prefix = "✓ " if value == delete else ""
@@ -273,6 +290,7 @@ class TelegramPasswordGate:
                     "callback_data": "settings_notifications",
                 }],
                 *threshold_rows,
+                history_row,
                 delete_row,
                 [{
                     "text": f"🔊 Звук: {'ВКЛ' if sound_enabled else 'ВЫКЛ'}",
@@ -353,21 +371,33 @@ class TelegramPasswordGate:
         if message_id is not None:
             self.menu_messages[user_id] = int(message_id)
 
-    async def _show_status(self, user_id, chat_id):
+    def _status_text(self, user_id):
         uptime = max(0, int(time.monotonic() - self.started_at))
         hours, rem = divmod(uptime, 3600)
         minutes, seconds = divmod(rem, 60)
-        latest = self.last_round or "нет данных"
-        answer = (
-            "📡 Статус: работает\n"
+        values = list(self.history_provider() if self.history_provider else [])
+        latest = self.last_round or (self._format_coefficient(values[0]) if values else None) or "нет данных"
+        if self.last_round_at is None:
+            freshness = "нет отметки о поступлении нового раунда"
+            connection = "статус пока неизвестен"
+        else:
+            age = max(0, int(time.time() - self.last_round_at))
+            freshness = f"обновлено {age} сек. назад"
+            connection = "активно" if age <= 90 else "нет свежих данных"
+        return (
+            f"📡 Статус: {connection}\n"
             f"Последний коэффициент: {latest}\n"
-            f"Текущая серия <2x: {len(self.current_streak)}\n"
+            f"Данные: {freshness}\n"
+            f"История: {min(len(values), self.user_history_size(user_id))} раундов\n"
+            f"Серия ниже 2x: {len(self.current_streak)} из {self.user_threshold(user_id)}\n"
             f"Аптайм: {hours:02d}:{minutes:02d}:{seconds:02d}"
         )
+
+    async def _show_status(self, user_id, chat_id):
         await self._send_transient(
             user_id,
             chat_id,
-            answer,
+            self._status_text(user_id),
             {"inline_keyboard": self._navigation_rows()},
         )
 
@@ -546,16 +576,10 @@ class TelegramPasswordGate:
             answer = "🎰 Lucky Jet Monitor\nВыберите раздел."
             markup = self.menu(user_id)
         elif data == "menu_status":
-            uptime = max(0, int(time.monotonic() - self.started_at))
-            hours, rem = divmod(uptime, 3600)
-            minutes, seconds = divmod(rem, 60)
-            latest = self.last_round or "нет данных"
-            answer = (
-                "📡 Статус: работает\n"
-                f"Последний коэффициент: {latest}\n"
-                f"Текущая серия <2x: {len(self.current_streak)}\n"
-                f"Аптайм: {hours:02d}:{minutes:02d}:{seconds:02d}"
-            )
+            answer = self._status_text(user_id)
+            markup = {"inline_keyboard": self._navigation_rows()}
+        elif data == "menu_stats":
+            answer = self._summary_text(user_id)
             markup = {"inline_keyboard": self._navigation_rows()}
         elif data == "menu_notifications":
             if user_id in self.notifications_disabled:
@@ -586,6 +610,15 @@ class TelegramPasswordGate:
                 return
             self.thresholds[user_id] = value
             await self._persist_user(user_id)
+            answer = self._settings_text(user_id)
+            markup = self.settings_menu(user_id)
+        elif data.startswith("history_size:"):
+            value = self._to_int(data.split(":", 1)[1])
+            if value not in {20, 50, 100}:
+                return
+            self.history_sizes[user_id] = value
+            await self._persist_user(user_id)
+            await self.ensure_private_history(user_id)
             answer = self._settings_text(user_id)
             markup = self.settings_menu(user_id)
         elif data.startswith("delete:"):
@@ -624,6 +657,7 @@ class TelegramPasswordGate:
         elif data == "settings_reset":
             self.thresholds.pop(user_id, None)
             self.delete_seconds.pop(user_id, None)
+            self.history_sizes.pop(user_id, None)
             self.notifications_disabled.discard(user_id)
             self.silent_users.discard(user_id)
             await self._persist_user(user_id)
@@ -691,6 +725,31 @@ class TelegramPasswordGate:
         except (TimeoutError, httpx.HTTPError, RuntimeError, KeyError):
             log.warning("Manual history refresh failed for user_id=%s", user_id)
 
+    def _summary_text(self, user_id):
+        limit = self.user_history_size(user_id)
+        raw_values = list(self.history_provider() if self.history_provider else [])[:limit]
+        values = []
+        for value in raw_values:
+            formatted = self._format_coefficient(value)
+            if formatted is not None:
+                values.append(float(formatted[:-1]))
+        if not values:
+            return "📈 Сводка\nПока нет завершённых раундов."
+        below_two = sum(value < 2 for value in values)
+        current_streak = 0
+        for value in values:
+            if value < 2:
+                current_streak += 1
+            else:
+                break
+        return (
+            f"📈 Сводка за последние {len(values)} раундов\n"
+            f"Средний коэффициент: {sum(values) / len(values):.2f}x\n"
+            f"Максимальный: {max(values):.2f}x\n"
+            f"Ниже 2x: {below_two}\n"
+            f"Текущая серия ниже 2x: {current_streak}"
+        )
+
     async def _revoke_user(self, user_id, *, block):
         chat_id = self.chats.get(user_id)
         history_message_id = self.history_messages.pop(user_id, None)
@@ -704,6 +763,7 @@ class TelegramPasswordGate:
         self.silent_users.discard(user_id)
         self.thresholds.pop(user_id, None)
         self.delete_seconds.pop(user_id, None)
+        self.history_sizes.pop(user_id, None)
         self.chats.pop(user_id, None)
         if block:
             self.blocked.add(user_id)
@@ -735,8 +795,9 @@ class TelegramPasswordGate:
         marker = "🟦" if number < 2 else "🟪" if number < 10 else "🟧"
         return f"{marker}{formatted}"
 
-    def _history_markup(self):
-        values = list(self.history_provider() if self.history_provider else [])[:20]
+    def _history_markup(self, user_id=None):
+        limit = self.user_history_size(user_id) if user_id is not None else 20
+        values = list(self.history_provider() if self.history_provider else [])[:limit]
         rows = []
         for start in range(0, len(values), 5):
             rows.append(
@@ -794,7 +855,7 @@ class TelegramPasswordGate:
         chat_id = self.chats.get(user_id)
         if chat_id is None:
             return False
-        markup = self._history_markup()
+        markup = self._history_markup(user_id)
         message_id = self.history_messages.get(user_id)
         if message_id is not None:
             try:

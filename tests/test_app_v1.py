@@ -40,3 +40,20 @@ def test_runtime_configuration_installs_fast_direct_poll(monkeypatch):
     assert calls == ["guard", "fast"]
     assert app_v1.monitor.async_playwright == "playwright-wrapper"
     assert app_v1.monitor.click_demo_mode == "demo-wrapper"
+
+
+def test_unchanged_telegram_edit_is_not_logged_as_error(caplog):
+    import asyncio
+    import httpx
+    import pytest
+
+    async def request(method, payload):
+        response = httpx.Response(400, json={'description': 'Bad Request: message is not modified'},
+                                  request=httpx.Request('POST', 'https://example.test/edit'))
+        response.raise_for_status()
+
+    async def run():
+        with pytest.raises(httpx.HTTPStatusError):
+            await app_v1.telegram_request_with_diagnostics(request, 'editMessageText', {})
+    asyncio.run(run())
+    assert not any(record.levelno >= 40 for record in caplog.records)

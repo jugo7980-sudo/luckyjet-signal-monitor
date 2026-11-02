@@ -35,6 +35,10 @@ async def telegram_request_with_diagnostics(request, method, payload):
             description = str(exc.response.json().get("description", ""))
         except Exception:
             description = ""
+        if (method.startswith("editMessage") and exc.response.status_code == 400
+                and "message is not modified" in description.lower()):
+            log.debug("Telegram %s already up to date", method)
+            raise
         log.error(
             "Telegram API %s failed: HTTP %s %s",
             method,

@@ -378,18 +378,36 @@ class TelegramPasswordGate:
         values = list(self.history_provider() if self.history_provider else [])
         latest = self.last_round or (self._format_coefficient(values[0]) if values else None) or "нет данных"
         if self.last_round_at is None:
-            freshness = "нет отметки о поступлении нового раунда"
-            connection = "статус пока неизвестен"
+            freshness = "ожидаю первый раунд"
+            monitor_state = "нет свежих данных"
         else:
             age = max(0, int(time.time() - self.last_round_at))
             freshness = f"обновлено {age} сек. назад"
-            connection = "активно" if age <= 90 else "нет свежих данных"
+            monitor_state = "раунд получен недавно" if age <= 90 else "раундов не было более 90 сек."
+
+        probe = self.demo_probe
+        demo_state = "не проверен"
+        if probe is not None:
+            if probe.requested:
+                demo_state = "проверяется"
+            else:
+                demo_state = {
+                    "region_blocked": "сайт недоступен из региона сервера",
+                    "verification": "страница запросила проверку",
+                    "demo_available": "демо-кнопка найдена, баланс не подтверждён",
+                    "game_loaded": "интерфейс загружен, баланс не подтверждён",
+                    "unconfirmed": "не подтверждён",
+                    "timeout": "проверка превысила время ожидания",
+                    "error": "ошибка чтения страницы",
+                }.get(probe.result, "не проверен")
+
         return (
-            f"📡 Статус: {connection}\n"
-            f"Последний коэффициент: {latest}\n"
-            f"Данные: {freshness}\n"
-            f"История: {min(len(values), self.user_history_size(user_id))} раундов\n"
-            f"Серия ниже 2x: {len(self.current_streak)} из {self.user_threshold(user_id)}\n"
+            f"📡 Мониторинг: {monitor_state}\\n"
+            f"Последний коэффициент: {latest}\\n"
+            f"Данные: {freshness}\\n"
+            f"Деморежим: {demo_state}\\n"
+            f"История: {min(len(values), self.user_history_size(user_id))} раундов\\n"
+            f"Серия ниже 2x: {len(self.current_streak)} из {self.user_threshold(user_id)}\\n"
             f"Аптайм: {hours:02d}:{minutes:02d}:{seconds:02d}"
         )
 
@@ -747,7 +765,8 @@ class TelegramPasswordGate:
             f"Средний коэффициент: {sum(values) / len(values):.2f}x\n"
             f"Максимальный: {max(values):.2f}x\n"
             f"Ниже 2x: {below_two}\n"
-            f"Текущая серия ниже 2x: {current_streak}"
+            f"Текущая серия ниже 2x: {current_streak}\\n"
+            "Статистика описывает завершённые раунды и не является прогнозом."
         )
 
     async def _revoke_user(self, user_id, *, block):

@@ -1,0 +1,166 @@
+name: Apply demo UI hardening
+
+on:
+  push:
+    branches:
+      - feature/demo-hardening-2026-11-03
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/demo-hardening-2026-11-03
+      - name: Apply surgical source patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, got {count}')
+              return text.replace(old, new, 1)
+
+          def replace_between(text, start, end, new, label):
+              a = text.find(start)
+              if a < 0:
+                  raise SystemExit(f'{label}: start marker missing')
+              b = text.find(end, a)
+              if b < 0:
+                  raise SystemExit(f'{label}: end marker missing')
+              return text[:a] + new + text[b:]
+
+          path = Path('luckyjet_password_gate.py')
+          text = path.read_text(encoding='utf-8')
+
+          text = replace_once(text,
+              'from luckyjet_signal.demo_ledger import (\n    MINIMUM_STAKE_CENTS,',
+              'from luckyjet_signal.demo_ledger import (\n    MAX_HISTORY,\n    MINIMUM_STAKE_CENTS,',
+              'import MAX_HISTORY')
+
+          text = replace_once(text,
+              '        self._demo_history_views = {}\n        self.demo_pending_inputs = {}',
+              '        self._demo_history_views = {}\n        self.demo_history_pages = {}\n        self.demo_pending_inputs = {}',
+              'demo history page state')
+
+          text = replace_once(text,
+              '            "demo_history", "demo_reset", "demo_reset_confirm", "demo_trigger_menu",',
+              '            "demo_history", "demo_stats", "demo_reset", "demo_reset_confirm", "demo_trigger_menu",',
+              'demo stats callback')
+
+          text = replace_once(text,
+              '                    and self._to_int(parts[2]) is not None and 0 <= self._to_int(parts[2]) < 50)',
+              '                    and self._to_int(parts[2]) is not None and 0 <= self._to_int(parts[2]) < MAX_HISTORY)',
+              'history callback bound')
+
+          text = replace_once(text,
+              '            rows.append([{"text": f"💵 Баланс: {balance} 🔄", "callback_data": "demo_refresh_balance"}])',
+              '            rows.append([{"text": f"🔄 💵 Баланс: {balance}", "callback_data": "demo_refresh_balance"}])',
+              'balance icon order')
+
+          old_progress = '''        if ledger.active:\n            progress = (\n                f"Следующая виртуальная ставка: {format_dollars(ledger.next_stake_cents)}\\n"\n                f"Уже поставлено в цикле: {format_dollars(ledger.cycle_stake_cents)}"\n            )\n        else:\n            progress = f"Сейчас ниже 2x подряд: {ledger.low_streak} из {ledger.trigger_streak}"\n'''
+          new_progress = '''        if ledger.active:\n            current_net = ledger.balance_cents - ledger.cycle_start_balance_cents\n            progress = (\n                f"Шаг: {len(ledger.cycle_rounds) + 1}\\n"\n                f"Следующая виртуальная ставка: {format_dollars(ledger.next_stake_cents)}\\n"\n                f"Текущий результат: {'+' if current_net > 0 else ''}{format_dollars(current_net)}\\n"\n                f"Баланс: {format_dollars(ledger.balance_cents)}"\n            )\n        else:\n            progress = (\n                f"Сейчас ниже 2x подряд: {ledger.low_streak} из {ledger.trigger_streak}\\n"\n                f"Баланс: {format_dollars(ledger.balance_cents)}"\n            )\n'''
+          text = replace_once(text, old_progress, new_progress, 'active demo text')
+
+          text = replace_once(text,
+              '            [{"text": "📜 История циклов", "callback_data": "demo_history"}],\n            [{"text": "📈 История Кэф", "callback_data": "coef_days:0"}],',
+              '            [{"text": "📜 История циклов", "callback_data": "demo_history"}],\n            [{"text": "📊 Статистика DEMO", "callback_data": "demo_stats"}],\n            [{"text": "📈 История Кэф", "callback_data": "coef_days:0"}],',
+              'demo stats menu button')
+
+          text = replace_once(text,
+              '            if ledger.active:\n                text += "\\nИзменение — со следующего цикла."',
+              '            if ledger.active:\n                text += "\\nТекущая сессия активна. Изменить можно после её завершения."',
+              'active trigger explanation')
+
+          duration_block = '''    @staticmethod\n    def _cycle_duration(started_at, ended_at):\n        try:\n            start = datetime.fromisoformat(started_at)\n            end = datetime.fromisoformat(ended_at)\n            if start.tzinfo is None:\n                start = start.replace(tzinfo=timezone.utc)\n            if end.tzinfo is None:\n                end = end.replace(tzinfo=timezone.utc)\n            seconds = max(0, int((end - start).total_seconds()))\n        except (TypeError, ValueError):\n            return "неизвестно"\n        hours, remainder = divmod(seconds, 3600)\n        minutes, seconds = divmod(remainder, 60)\n        if hours:\n            return f"{hours} ч {minutes} мин {seconds} сек"\n        if minutes:\n            return f"{minutes} мин {seconds} сек"\n        return f"{seconds} сек"\n\n'''
+          text = replace_once(text,
+              '    def _demo_history_text(self, user_id, page=0, history=None):\n',
+              duration_block + '    def _demo_history_text(self, user_id, page=0, history=None):\n',
+              'cycle duration helper')
+
+          history_text = '''    def _demo_history_text(self, user_id, page=0, history=None):\n        history = self._demo_ledger(user_id).history if history is None else history\n        if not history:\n            return "📜 История демо-циклов\\nЦиклов пока нет."\n        page = min(max(0, page), len(history) - 1)\n        entry = history[page]\n        outcome = entry.get("outcome")\n        reason = {\n            "recovered": "цель 2x достигнута",\n            "insufficient_balance": "недостаточно баланса на следующий шаг",\n            "incomplete_data": "неполные данные",\n            "stopped_by_user": "остановлена пользователем",\n        }.get(outcome, str(outcome or "неизвестно"))\n        lines = [\n            f"📜 Демо-цикл {page + 1} из {len(history)} · новые сначала",\n            "Время Таиланда, UTC+7",\n            f"Начало: {self._cycle_time(entry.get('started_at'))}",\n            f"Завершение: {self._cycle_time(entry.get('ended_at'))}",\n            f"Длительность: {self._cycle_duration(entry.get('started_at'), entry.get('ended_at'))}",\n            "",\n        ]\n        for step, item in enumerate(entry.get("rounds", []), 1):\n            stake = int(item.get("stake_cents", 0) or 0)\n            payout = int(item.get("payout_cents", 0) or 0)\n            step_net = payout - stake if payout else -stake\n            step_result = ("+" if step_net > 0 else "") + format_dollars(step_net)\n            lines.append(\n                f"Шаг {step}: {format_dollars(stake)} · {item.get('coefficient', '?')}x · {step_result}"\n            )\n        lines += ["", f"Причина завершения: {reason}",\n                  f"Всего поставлено: {format_dollars(entry.get('total_stake_cents', 0) or 0)}"]\n        payout = entry.get("payout_cents")\n        if payout is not None:\n            lines.append(f"Выплата: {format_dollars(payout)}")\n        net = entry.get("net_cents")\n        if net is not None:\n            net = int(net)\n            lines.append(f"Чистый результат: {'+' if net > 0 else ''}{format_dollars(net)}")\n        lines.append(\n            f"Баланс: {format_dollars(entry.get('balance_before_cents', 0) or 0)} → "\n            f"{format_dollars(entry.get('balance_after_cents', 0) or 0)}"\n        )\n        return "\\n".join(lines)\n\n\n    def _demo_stats_text(self, user_id):\n        history = list(self._demo_ledger(user_id).history)\n        successful = sum(entry.get("outcome") == "recovered" for entry in history)\n        losses = sum(entry.get("outcome") == "insufficient_balance" for entry in history)\n        incomplete = sum(entry.get("outcome") == "incomplete_data" for entry in history)\n        stopped = sum(entry.get("outcome") == "stopped_by_user" for entry in history)\n        financial = [entry for entry in history\n                     if entry.get("outcome") in {"recovered", "insufficient_balance"}\n                     and entry.get("net_cents") is not None]\n        total_net = sum(int(entry.get("net_cents", 0)) for entry in financial)\n        average_steps = (\n            sum(len(entry.get("rounds") or []) for entry in financial) / len(financial)\n            if financial else 0.0\n        )\n        return (\n            "📊 Статистика DEMO\\n"\n            f"Всего сессий: {len(history)}\\n"\n            f"Успешных: {successful}\\n"\n            f"Проигрышных: {losses}\\n"\n            f"Неполных: {incomplete}\\n"\n            f"Остановлено вручную: {stopped}\\n"\n            f"Общий результат: {'+' if total_net > 0 else ''}{format_dollars(total_net)}\\n"\n            f"Среднее шагов: {average_steps:.1f}"\n        )\n\n\n'''
+          text = replace_between(text,
+              '    def _demo_history_text(self, user_id, page=0, history=None):\n',
+              '    async def _coefficient_screen(self, data):\n',
+              history_text,
+              'history detail and stats')
+
+          history_list = '''    def _set_demo_history_page(self, user_id, page):\n        self.demo_history_pages[user_id] = max(0, int(page))\n        self.menu_deadlines.pop(user_id, None)\n        task = self._menu_tasks.pop(user_id, None)\n        if task is not None and task is not asyncio.current_task():\n            task.cancel()\n\n    def _demo_history_list(self, user_id, page=0, token=None):\n        view = self._demo_history_views.get(user_id)\n        if page == 0 and token is not None:\n            view = None\n        if not view or token != view[0]:\n            token = secrets.token_hex(4)\n            history = json.loads(json.dumps(self._demo_ledger(user_id).history))\n            view = self._demo_history_views[user_id] = (token, history)\n        token, history = view\n        pages = max(1, (len(history) + 9) // 10)\n        page = min(max(0, page), pages - 1)\n        text = f"📜 История демо-циклов · {len(history)} циклов · {page + 1}/{pages}\\nТаиланд, UTC+7 · новые сначала"\n        if not history:\n            text += "\\nЦиклов пока нет."\n        rows = []\n        for index in range(page * 10, min(len(history), (page + 1) * 10)):\n            entry = history[index]\n            stamp = self._cycle_time(entry.get("ended_at") or entry.get("started_at"))\n            if stamp != "время не сохранено":\n                stamp = stamp[:5] + " " + stamp[11:16]\n            if entry.get("outcome") == "incomplete_data" or entry.get("net_cents") is None:\n                result = "⚠️ данные"\n            else:\n                net = int(entry.get("net_cents", 0))\n                result = ("+" if net > 0 else "") + format_dollars(net)\n            round_count = len(entry.get("rounds") or [])\n            rows.append([{"text": f"{round_count} шаг. · {stamp} · {result}", "callback_data": f"demo_cycle:{token}:{index}"}])\n        pager = []\n        if page:\n            pager.append({"text": "⬅️ Назад", "callback_data": f"demo_list:{token}:{page - 1}"})\n        if page + 1 < pages:\n            pager.append({"text": "Вперёд ➡️", "callback_data": f"demo_list:{token}:{page + 1}"})\n        return text, {"inline_keyboard": [*rows, *([pager] if pager else []), *self._navigation_rows("demo_menu", "🧪 Демо-режим")]}\n\n'''
+          text = replace_between(text,
+              '    def _demo_history_list(self, user_id, page=0, token=None):\n',
+              '    def _demo_cycle_screen(self, user_id, token, index):\n',
+              history_list,
+              'history list')
+
+          text = replace_once(text,
+              '    def _touch_menu(self, user_id):\n        if user_id in self.menu_messages:',
+              '    def _touch_menu(self, user_id):\n        if user_id in self.demo_history_pages:\n            return\n        if user_id in self.menu_messages:',
+              'persistent demo history timeout')
+
+          text = replace_once(text,
+              '            self._demo_history_views.pop(user_id, None)\n            self.demo_pending_inputs.pop(user_id, None)',
+              '            self._demo_history_views.pop(user_id, None)\n            self.demo_history_pages.pop(user_id, None)\n            self.demo_pending_inputs.pop(user_id, None)',
+              'close menu history state')
+
+          text = replace_once(text,
+              '            self._demo_history_views.pop(user_id, None)\n            self.demo_panel_messages.pop(user_id, None)',
+              '            self._demo_history_views.pop(user_id, None)\n            self.demo_history_pages.pop(user_id, None)\n            self.demo_panel_messages.pop(user_id, None)',
+              'prepare start history state')
+
+          text = replace_once(text,
+              '        self._demo_history_views.pop(user_id, None)\n        self.demo_pending_inputs.pop(user_id, None)',
+              '        self._demo_history_views.pop(user_id, None)\n        self.demo_history_pages.pop(user_id, None)\n        self.demo_pending_inputs.pop(user_id, None)',
+              'revoke history state')
+
+          old_callback_touch = '''        self.chats[user_id] = chat_id\n        if data != "menu_close":\n            self._touch_menu(user_id)\n        self.demo_pending_inputs.pop(user_id, None)\n'''
+          new_callback_touch = '''        self.chats[user_id] = chat_id\n        if data == "demo_warning_close":\n            await self._safe_delete(chat_id, message_id)\n            return\n\n        history_page = None\n        if data == "demo_history":\n            history_page = 0\n        elif data.startswith("demo_list:"):\n            history_page = self._to_int(data.rsplit(":", 1)[-1])\n        elif data.startswith("demo_cycle:"):\n            history_index = self._to_int(data.rsplit(":", 1)[-1])\n            history_page = history_index // 10 if history_index is not None else 0\n        elif data.startswith("demo_history:"):\n            history_index = self._to_int(data.split(":", 1)[1])\n            history_page = history_index // 10 if history_index is not None else 0\n\n        if history_page is not None:\n            self._set_demo_history_page(user_id, history_page)\n        else:\n            self.demo_history_pages.pop(user_id, None)\n            if data != "menu_close":\n                self._touch_menu(user_id)\n        self.demo_pending_inputs.pop(user_id, None)\n'''
+          text = replace_once(text, old_callback_touch, new_callback_touch, 'callback history routing')
+
+          old_toggle = '''        elif data == "demo_toggle":\n            ledger = self._demo_ledger(user_id)\n            was_enabled = ledger.enabled\n            ledger.enabled = not ledger.enabled\n            if ledger.enabled and not was_enabled:\n                trigger_event = ledger.sync_history(\n                    self.history_provider() if self.history_provider else []\n                )\n            else:\n                trigger_event = None\n            await self._persist_demo(user_id)\n            answer = self._demo_text(user_id)\n            if trigger_event and trigger_event["type"] == "insufficient_balance":\n                answer += (\n                    f"\\nНедостаточно баланса для стартовой ставки "\n                    f"{format_dollars(trigger_event['needed_cents'])}."\n                )\n            markup = self.demo_menu(user_id)\n'''
+          new_toggle = '''        elif data == "demo_toggle":\n            ledger = self._demo_ledger(user_id)\n            if ledger.active and ledger.enabled:\n                answer = "Активная DEMO-сессия ещё не завершена. Выключить DEMO можно после её завершения или сброса."\n                markup = self.demo_menu(user_id)\n            else:\n                was_enabled = ledger.enabled\n                ledger.enabled = not ledger.enabled\n                if ledger.enabled and not was_enabled:\n                    trigger_event = ledger.sync_history(\n                        self.history_provider() if self.history_provider else []\n                    )\n                else:\n                    trigger_event = None\n                await self._persist_demo(user_id)\n                answer = self._demo_text(user_id)\n                if trigger_event and trigger_event["type"] == "insufficient_balance":\n                    answer += (\n                        f"\\nНедостаточно баланса для стартовой ставки "\n                        f"{format_dollars(trigger_event['needed_cents'])}."\n                    )\n                markup = self.demo_menu(user_id)\n'''
+          text = replace_once(text, old_toggle, new_toggle, 'active demo toggle guard')
+
+          old_trigger = '''        elif data.startswith("demo_trigger:"):\n            value = self._to_int(data.split(":", 1)[1])\n            ledger = self._demo_ledger(user_id)\n            if value not in TRIGGER_OPTIONS or not ledger.set_trigger(value):\n                return\n            if ledger.enabled:\n                ledger.sync_history(\n                    self.history_provider() if self.history_provider else []\n                )\n            await self._persist_demo(user_id)\n            answer = self._demo_text(user_id)\n            markup = self.demo_menu(user_id)\n'''
+          new_trigger = '''        elif data.startswith("demo_trigger:"):\n            value = self._to_int(data.split(":", 1)[1])\n            ledger = self._demo_ledger(user_id)\n            if value not in TRIGGER_OPTIONS:\n                return\n            if ledger.active:\n                answer = "Текущая DEMO-сессия ещё не завершена. Условие запуска можно изменить после её завершения."\n                markup = self.demo_menu(user_id)\n            else:\n                if not ledger.set_trigger(value):\n                    return\n                if ledger.enabled:\n                    ledger.sync_history(\n                        self.history_provider() if self.history_provider else []\n                    )\n                await self._persist_demo(user_id)\n                answer = self._demo_text(user_id)\n                markup = self.demo_menu(user_id)\n'''
+          text = replace_once(text, old_trigger, new_trigger, 'active trigger guard')
+
+          text = replace_once(text,
+              '        elif data == "demo_history":\n            answer, markup = self._demo_history_list(user_id)\n',
+              '        elif data == "demo_history":\n            answer, markup = self._demo_history_list(user_id)\n        elif data == "demo_stats":\n            answer = self._demo_stats_text(user_id)\n            markup = {"inline_keyboard": self._navigation_rows("demo_menu")}\n',
+              'demo stats handler')
+
+          old_reset = '''            answer = ("♻️ Сбросить демо-баланс и циклы?\\n"\n                      "Баланс станет $10,000.00, текущий цикл будет прерван, история циклов удалится. "\n                      f"Ставка и условие запуска сохранятся. Демо останется {state}.")\n'''
+          new_reset = '''            answer = ("♻️ Сбросить DEMO?\\n"\n                      "Баланс станет $10,000.00, стартовая ставка — $10.00. "\n                      "Если сессия активна, она сохранится как остановленная пользователем. "\n                      f"История не удаляется. Условие запуска сохраняется. Демо останется {state}.")\n'''
+          text = replace_once(text, old_reset, new_reset, 'reset prompt')
+
+          demo_round_block = '''    async def _send_demo_warning(self, user_id, text):\n        chat_id = self.chats.get(user_id)\n        if chat_id is None:\n            return\n        try:\n            result = await self.request("sendMessage", {\n                "chat_id": chat_id,\n                "text": text,\n                "reply_markup": {"inline_keyboard": [[\n                    {"text": "✖ Закрыть", "callback_data": "demo_warning_close"}\n                ]]},\n            })\n            message_id = result.get("result", {}).get("message_id")\n            if message_id is not None:\n                task = asyncio.create_task(self._schedule_delete(chat_id, int(message_id), 600))\n                self._deletion_tasks.add(task)\n                task.add_done_callback(self._deletion_tasks.discard)\n        except (httpx.HTTPError, RuntimeError):\n            log.warning("Demo warning delivery failed: user_id=%s", user_id)\n\n    async def _refresh_open_demo_history(self, user_id):\n        if self.demo_history_pages.get(user_id) != 0 or user_id not in self.menu_messages:\n            return\n        self._demo_history_views.pop(user_id, None)\n        text, markup = self._demo_history_list(user_id)\n        chat_id = self.chats.get(user_id)\n        if chat_id is not None:\n            await self._send_transient(user_id, chat_id, text, markup)\n\n    async def _handle_demo_round(self, user_id, coefficient):\n        ledger = self.demo_ledgers.get(user_id)\n        if ledger is None or not ledger.enabled:\n            return None\n        event = ledger.process_round(coefficient)\n        await self._persist_demo(user_id)\n        if not event:\n            return None\n        if event.get("type") == "insufficient_balance" and event.get("entry"):\n            entry = event["entry"]\n            net = int(entry.get("net_cents", 0) or 0)\n            await self._send_demo_warning(\n                user_id,\n                "⚠️ DEMO-сессия завершена\\n"\n                "Причина: недостаточно баланса\\n"\n                f"Шагов: {len(entry.get('rounds') or [])}\\n"\n                f"Результат: {'+' if net > 0 else ''}{format_dollars(net)}\\n"\n                f"Остаток: {format_dollars(ledger.balance_cents)}\\n"\n                f"Новая ставка: {format_dollars(ledger.base_stake_cents)}",\n            )\n        if event.get("type") == "recovered" or event.get("entry") is not None:\n            await self._refresh_open_demo_history(user_id)\n        return event\n\n    async def on_history_gap(self):\n        for user_id in list(self.authorized):\n            ledger = self.demo_ledgers.get(user_id)\n            if ledger is None or not ledger.enabled:\n                continue\n            ledger.low_streak = 0\n            entry = ledger.finish_active("incomplete_data") if ledger.active else None\n            await self._persist_demo(user_id)\n            if entry is not None:\n                await self._send_demo_warning(\n                    user_id,\n                    "⚠️ DEMO-сессия остановлена\\n"\n                    "Причина: не удалось восстановить пропущенные результаты\\n"\n                    f"Подтверждено шагов: {len(entry.get('rounds') or [])}\\n"\n                    "Баланс сохранён на последнем подтверждённом значении",\n                )\n                await self._refresh_open_demo_history(user_id)\n\n'''
+          text = replace_between(text,
+              '    async def _handle_demo_round(self, user_id, coefficient):\n',
+              '    def _streak_markup(self, ending=None):\n',
+              demo_round_block,
+              'demo round event handling')
+
+          path.write_text(text, encoding='utf-8')
+
+          app = Path('app_v1.py')
+          text = app.read_text(encoding='utf-8')
+          old = '''    async def process_history(config, state, rounds):\n        await password_gate.coefficient_stats.ingest(rounds)\n        return await original_process_history(config, state, rounds)\n'''
+          new = '''    async def process_history(config, state, rounds):\n        await password_gate.coefficient_stats.ingest(rounds)\n        result = await original_process_history(config, state, rounds)\n        if getattr(state, "history_gap", False):\n            await password_gate.on_history_gap()\n            state.history_gap = False\n        return result\n'''
+          text = replace_once(text, old, new, 'history gap integration')
+          app.write_text(text, encoding='utf-8')
+          PY
+      - name: Commit source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add luckyjet_password_gate.py app_v1.py
+          if ! git diff --cached --quiet; then
+            git commit -m "feat: harden demo telegram state and history"
+            git push origin HEAD:feature/demo-hardening-2026-11-03
+          fi

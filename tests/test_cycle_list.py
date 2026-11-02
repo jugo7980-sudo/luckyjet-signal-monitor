@@ -25,6 +25,7 @@ def test_cycle_list_pages_details_and_return_are_static_and_stable():
         await click(gate, 'demo_history')
         menu_id = gate.menu_messages[42]
         first = screen(request)
+        assert '21 циклов · 1/3' in first['text']
         assert len(buttons(first, 'demo_cycle:')) == 10
         assert '02.11 23:00' in buttons(first, 'demo_cycle:')[0]['text']
         assert '+$10.00' in buttons(first, 'demo_cycle:')[0]['text']

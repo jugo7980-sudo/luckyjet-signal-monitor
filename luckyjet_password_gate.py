@@ -548,7 +548,7 @@ class TelegramPasswordGate(HistoryPanels):
         token, history = view
         pages = max(1, (len(history) + 9) // 10)
         page = min(max(0, page), pages - 1)
-        text = f"📜 История демо-циклов · {page + 1}/{pages}\nТаиланд, UTC+7 · новые сначала"
+        text = f"📜 История демо-циклов · {len(history)} циклов · {page + 1}/{pages}\nТаиланд, UTC+7 · новые сначала"
         if not history:
             text += "\nЦиклов пока нет."
         rows = []

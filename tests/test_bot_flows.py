@@ -161,7 +161,7 @@ def test_history_size_setting_updates_panel_and_is_shown_in_settings():
     asyncio.run(gate.handle_callback(callback(42, "history_size:50", 500)))
 
     assert gate.user_history_size(42) == 50
-    assert len([button for row in gate._history_markup(42)["inline_keyboard"][:-1] for button in row]) == 50
+    assert len([button for row in gate._history_markup(42)["inline_keyboard"] for button in row if button["callback_data"] == "history_refresh"]) == 50
     settings_text = [
         payload["text"] for method, payload in request.calls
         if method in {"sendMessage", "editMessageText"} and payload.get("text", "").startswith("⚙️ Настройки")
@@ -275,7 +275,12 @@ def test_demo_history_button_renders_recovered_initial_stake_and_cycle_result():
     ledger.process_round("1.50")
     ledger.process_round("2.00")
 
-    asyncio.run(gate.handle_callback(callback(42, "demo_history", 700)))
+    async def run():
+        await gate.handle_callback(callback(42, "demo_history", 700))
+        listing = [p for m, p in request.calls if m == "editMessageText" and p.get("text", "").startswith("📜")][-1]
+        action = listing["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        await gate.handle_callback(callback(42, action, 700))
+    asyncio.run(run())
 
     screen = [
         p for method, p in request.calls

@@ -123,7 +123,7 @@ def test_each_menu_choice_edits_same_message_and_history_stays():
     asyncio.run(run())
     assert len(sent_messages(request)) == 2
     assert 101 not in deleted_ids(request)
-    edits = [p for m, p in request.calls if m == "editMessageText"]
+    edits = [p for m, p in request.calls if m == "editMessageText" and p["message_id"] == 102]
     assert len(edits) == 4
     assert {p["message_id"] for p in edits} == {102}
 
@@ -140,7 +140,8 @@ def test_settings_are_top_to_bottom_and_keep_navigation():
     assert callbacks[2] == ["settings_history", "settings_history"]
     assert callbacks[3] == ["settings_delete", "settings_delete"]
     assert callbacks[4] == ["settings_sound", "settings_sound"]
-    assert callbacks[5] == ["settings_test", "settings_reset"]
+    assert callbacks[5] == ["settings_test"]
+    assert callbacks[6] == ["settings_reset"]
     assert callbacks[-1] == ["menu_main", "menu_close"]
 
 

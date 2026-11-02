@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import os
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -49,6 +50,7 @@ class TelegramPasswordGate:
         self.delete_seconds = {}
         self.history_sizes = {}
         self.demo_ledgers = {}
+        self._demo_history_views = {}
         self.demo_pending_inputs = {}
         self.admin_pending_actions = {}
         self.pending_confirmations = {}
@@ -189,6 +191,7 @@ class TelegramPasswordGate:
             for k, v in (await self.redis.hgetall("luckyjet:history_sizes")).items()
         }
         self.demo_ledgers = {}
+        self._demo_history_views = {}
         for key, raw in (await self.redis.hgetall("luckyjet:demo_sessions")).items():
             try:
                 self.demo_ledgers[int(key)] = DemoLedger(**json.loads(raw))
@@ -267,13 +270,12 @@ class TelegramPasswordGate:
         value = int(self.history_sizes.get(int(user_id), 20))
         return value if value in {20, 50, 100} else 20
 
-    def _navigation_rows(self, back=None):
-        rows = [[{"text": "⬅️ Назад", "callback_data": back}]] if back else []
-        rows.append([
-            {"text": "🏠 Главное меню", "callback_data": "menu_main"},
-            {"text": "✖ Закрыть", "callback_data": "menu_close"},
-        ])
-        return rows
+    def _navigation_rows(self, back=None, back_label="⬅️ Назад"):
+        main = {"text": "🏠 Главное меню", "callback_data": "menu_main"}
+        close = {"text": "✖ Закрыть", "callback_data": "menu_close"}
+        if back:
+            return [[main], [{"text": back_label, "callback_data": back}, close]]
+        return [[main, close]]
 
     @staticmethod
     def _main_text():
@@ -289,6 +291,11 @@ class TelegramPasswordGate:
             "settings_threshold", "settings_history", "settings_delete", "settings_reset_confirm", "menu_help",
         }:
             return True
+        if data.startswith(("demo_list:", "demo_cycle:")):
+            parts = data.split(":")
+            return (len(parts) == 3 and len(parts[1]) == 8
+                    and all(c in "0123456789abcdef" for c in parts[1])
+                    and self._to_int(parts[2]) is not None and 0 <= self._to_int(parts[2]) < 50)
         if data.startswith("demo_history:"):
             page = self._to_int(data.split(":", 1)[1])
             return page is not None and page >= 0
@@ -316,8 +323,8 @@ class TelegramPasswordGate:
         hidden = user_id in self.history_hidden
         rows = [
             [{"text": "📊 Показать историю" if hidden else "📊 Скрыть историю", "callback_data": "menu_history"}],
-            [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"},
-             {"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
+            [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"}],
+            [{"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
         ]
         if user_id is not None:
             balance = format_dollars(self._demo_ledger(user_id).balance_cents)
@@ -395,8 +402,8 @@ class TelegramPasswordGate:
         except (ValueError, TypeError):
             return "время не сохранено"
 
-    def _demo_history_text(self, user_id, page=0):
-        history = self._demo_ledger(user_id).history
+    def _demo_history_text(self, user_id, page=0, history=None):
+        history = self._demo_ledger(user_id).history if history is None else history
         if not history:
             return "📜 История демо-циклов\nЦиклов пока нет."
         page = min(max(0, page), len(history) - 1)
@@ -427,6 +434,42 @@ class TelegramPasswordGate:
         if page + 1 < count:
             pager.append({"text": "Старый ➡️", "callback_data": f"demo_history:{page + 1}"})
         return {"inline_keyboard": [*([pager] if pager else []), *self._navigation_rows("demo_menu")]}
+
+    def _demo_history_list(self, user_id, page=0, token=None):
+        view = self._demo_history_views.get(user_id)
+        if not view or token != view[0]:
+            token = secrets.token_hex(4)
+            history = json.loads(json.dumps(self._demo_ledger(user_id).history))
+            view = self._demo_history_views[user_id] = (token, history)
+        token, history = view
+        pages = max(1, (len(history) + 9) // 10)
+        page = min(max(0, page), pages - 1)
+        text = f"📜 История демо-циклов · {page + 1}/{pages}\nТаиланд, UTC+7 · новые сначала"
+        if not history:
+            text += "\nЦиклов пока нет."
+        rows = []
+        for index in range(page * 10, min(len(history), (page + 1) * 10)):
+            entry = history[index]
+            stamp = self._cycle_time(entry.get("ended_at") or entry.get("started_at"))
+            if stamp != "время не сохранено":
+                stamp = stamp[:5] + " " + stamp[11:16]
+            net = int(entry.get("net_cents", 0))
+            result = ("+" if net > 0 else "") + format_dollars(net)
+            rows.append([{"text": f"{stamp} · {result}", "callback_data": f"demo_cycle:{token}:{index}"}])
+        pager = []
+        if page:
+            pager.append({"text": "⬅️ Назад", "callback_data": f"demo_list:{token}:{page - 1}"})
+        if page + 1 < pages:
+            pager.append({"text": "Вперёд ➡️", "callback_data": f"demo_list:{token}:{page + 1}"})
+        return text, {"inline_keyboard": [*rows, *([pager] if pager else []), *self._navigation_rows("demo_menu", "🧪 Демо-режим")]}
+
+    def _demo_cycle_screen(self, user_id, token, index):
+        view = self._demo_history_views.get(user_id)
+        if not view or view[0] != token or index >= len(view[1]):
+            return self._demo_history_list(user_id)
+        text = self._demo_history_text(user_id, index, history=view[1])
+        return text, {"inline_keyboard": self._navigation_rows(
+            f"demo_list:{token}:{index // 10}", "⬅️ К списку циклов")}
 
     async def _demo_input(self, user_id, chat_id, raw, message_id=None):
         field = self.demo_pending_inputs.pop(user_id, None)
@@ -478,8 +521,8 @@ class TelegramPasswordGate:
             self._setting_row("📋 История", f"{self.user_history_size(user_id)} результатов", "settings_history"),
             self._setting_row("⏱ После серии", f"{delay} сек." if delay else "Не удалять", "settings_delete"),
             self._setting_row("🔊 Звук", "ВКЛ" if sound else "ВЫКЛ", "settings_sound"),
-            [{"text": "🧪 Тест", "callback_data": "settings_test"},
-             {"text": "♻️ Сброс настроек", "callback_data": "settings_reset"}],
+            [{"text": "🧪 Тест", "callback_data": "settings_test"}],
+            [{"text": "♻️ Сброс настроек", "callback_data": "settings_reset"}],
             *self._navigation_rows(),
         ]}
 
@@ -555,6 +598,7 @@ class TelegramPasswordGate:
     async def _send_transient(self, user_id, chat_id, text, reply_markup):
         lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
         async with lock:
+            was_open = user_id in self.menu_messages
             self.demo_panel_messages.pop(user_id, None)
             self._demo_panel_content.pop(user_id, None)
             message_id = self.menu_messages.get(user_id)
@@ -590,6 +634,9 @@ class TelegramPasswordGate:
                        for row in reply_markup.get("inline_keyboard", []) for button in row):
                     self.demo_panel_messages[user_id] = int(message_id)
                     self._demo_panel_content[user_id] = (text, reply_markup)
+
+        if not was_open and user_id in self.menu_messages and user_id in self.history_messages:
+            await self.ensure_private_history(user_id)
 
     async def _refresh_demo_panel(self, user_id):
         lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
@@ -673,6 +720,7 @@ class TelegramPasswordGate:
             self.demo_pending_inputs.pop(user_id, None)
             self.pending_confirmations.pop(user_id, None)
             self.admin_pending_actions.pop(user_id, None)
+            self._demo_history_views.pop(user_id, None)
             self.demo_panel_messages.pop(user_id, None)
             self._demo_panel_content.pop(user_id, None)
             for message_id in ids:
@@ -882,10 +930,16 @@ class TelegramPasswordGate:
         await self._delete_transient_source(user_id, chat_id, callback)
 
         if data == "menu_close":
-            message_id = self.menu_messages.pop(user_id, None)
-            self.demo_panel_messages.pop(user_id, None)
-            self._demo_panel_content.pop(user_id, None)
-            await self._safe_delete(chat_id, message_id)
+            lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
+            async with lock:
+                message_id = self.menu_messages.pop(user_id, None)
+                self.demo_panel_messages.pop(user_id, None)
+                self._demo_panel_content.pop(user_id, None)
+                self._demo_history_views.pop(user_id, None)
+                await self._safe_delete(chat_id, message_id)
+                await self._persist_user(user_id)
+            if user_id in self.history_messages:
+                await self.ensure_private_history(user_id)
             return
         if data == "menu_main":
             answer = self._main_text()
@@ -963,8 +1017,17 @@ class TelegramPasswordGate:
             self.demo_pending_inputs.pop(user_id, None)
             answer = self._demo_text(user_id)
             markup = self.demo_menu(user_id)
-        elif data == "demo_history" or data.startswith("demo_history:"):
-            page = 0 if data == "demo_history" else self._to_int(data.split(":", 1)[1])
+        elif data == "demo_history":
+            answer, markup = self._demo_history_list(user_id)
+        elif data.startswith("demo_list:"):
+            _, token, page = data.split(":")
+            answer, markup = self._demo_history_list(user_id, int(page), token)
+        elif data.startswith("demo_cycle:"):
+            _, token, index = data.split(":")
+            answer, markup = self._demo_cycle_screen(user_id, token, int(index))
+        elif data.startswith("demo_history:"):
+            # Compatibility with buttons rendered before the paginated list.
+            page = self._to_int(data.split(":", 1)[1])
             answer, markup = self._demo_history_text(user_id, page), self._demo_history_menu(user_id, page)
         elif data == "demo_reset":
             self.pending_confirmations[user_id] = "demo"
@@ -984,6 +1047,7 @@ class TelegramPasswordGate:
                 return
             ledger = self._demo_ledger(user_id)
             ledger.reset()
+            self._demo_history_views.pop(user_id, None)
             await self._persist_demo(user_id)
             answer = self._demo_text(user_id)
             markup = self.demo_menu(user_id)
@@ -1187,6 +1251,7 @@ class TelegramPasswordGate:
         self.delete_seconds.pop(user_id, None)
         self.history_sizes.pop(user_id, None)
         self.demo_ledgers.pop(user_id, None)
+        self._demo_history_views.pop(user_id, None)
         self.demo_pending_inputs.pop(user_id, None)
         self.chats.pop(user_id, None)
         self.demo_panel_messages.pop(user_id, None)
@@ -1234,7 +1299,8 @@ class TelegramPasswordGate:
                     for value in values[start : start + 5]
                 ]
             )
-        rows.append([{"text": "☰ Меню", "callback_data": "menu_open"}])
+        if user_id not in self.menu_messages:
+            rows.append([{"text": "☰ Меню", "callback_data": "menu_open"}])
         return {"inline_keyboard": rows}
 
     async def toggle_private_history(self, user_id):

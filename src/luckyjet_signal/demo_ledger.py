@@ -1,6 +1,7 @@
 """Virtual-only demo progression and balance ledger for Lucky Jet rounds."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
@@ -42,6 +43,7 @@ class DemoLedger:
         self.next_stake_cents = max(MINIMUM_STAKE_CENTS, self._int(state.get("next_stake_cents", self.base_stake_cents), self.base_stake_cents))
         self.cycle_stake_cents = max(0, self._int(state.get("cycle_stake_cents", 0), 0))
         self.cycle_start_balance_cents = max(0, self._int(state.get("cycle_start_balance_cents", self.balance_cents), self.balance_cents))
+        self.cycle_started_at = state.get("cycle_started_at")
         self.cycle_rounds = list(state.get("cycle_rounds", []))[-100:]
         self.history = list(state.get("history", []))[-50:]
 
@@ -63,6 +65,7 @@ class DemoLedger:
             "next_stake_cents": self.next_stake_cents,
             "cycle_stake_cents": self.cycle_stake_cents,
             "cycle_start_balance_cents": self.cycle_start_balance_cents,
+            "cycle_started_at": self.cycle_started_at,
             "cycle_rounds": self.cycle_rounds,
             "history": self.history,
         }
@@ -111,6 +114,7 @@ class DemoLedger:
         if self.balance_cents < self.base_stake_cents:
             return {"type": "insufficient_balance", "needed_cents": self.base_stake_cents}
         self.active = True
+        self.cycle_started_at = datetime.now(timezone.utc).isoformat()
         self.next_stake_cents = self.base_stake_cents
         self.cycle_stake_cents = 0
         self.cycle_rounds = []
@@ -130,6 +134,8 @@ class DemoLedger:
     def _finish_cycle(self, *, outcome: str, payout_cents: int = 0, coefficient=None):
         net_cents = payout_cents - self.cycle_stake_cents
         entry = {
+            "started_at": self.cycle_started_at,
+            "ended_at": datetime.now(timezone.utc).isoformat(),
             "rounds": self.cycle_rounds[:],
             "base_stake_cents": self.base_stake_cents,
             "balance_before_cents": self.cycle_start_balance_cents,
@@ -143,6 +149,7 @@ class DemoLedger:
         self.history.insert(0, entry)
         self.history = self.history[:50]
         self.active = False
+        self.cycle_started_at = None
         self.low_streak = 0
         self.next_stake_cents = self.base_stake_cents
         self.cycle_stake_cents = 0
@@ -171,6 +178,7 @@ class DemoLedger:
             if self.balance_cents < self.base_stake_cents:
                 return {"type": "insufficient_balance", "needed_cents": self.base_stake_cents}
             self.active = True
+            self.cycle_started_at = datetime.now(timezone.utc).isoformat()
             self.next_stake_cents = self.base_stake_cents
             self.cycle_stake_cents = 0
             self.cycle_rounds = []

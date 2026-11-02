@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
 
 import httpx
 from luckyjet_signal.demo_ledger import (
@@ -37,6 +38,7 @@ class TelegramPasswordGate:
         self.history_messages = {}
         self.history_hidden = set()
         self._history_locks = {}
+        self._menu_locks = {}
         self.prompt_messages = {}
         self.menu_messages = {}
         self.notifications_disabled = set()
@@ -262,7 +264,7 @@ class TelegramPasswordGate:
             "menu_open", "menu_close", "menu_main", "menu_status", "menu_stats",
             "menu_notifications", "menu_settings", "settings_notifications",
             "settings_sound", "settings_test", "settings_reset", "demo_menu",
-            "demo_toggle", "demo_set_balance", "demo_set_stake", "demo_input_cancel",
+            "demo_toggle", "demo_refresh_balance", "demo_set_balance", "demo_set_stake", "demo_input_cancel",
             "demo_history", "demo_reset", "demo_reset_confirm",
         }:
             return True
@@ -286,20 +288,17 @@ class TelegramPasswordGate:
         rows = [
             [
                 {"text": "📊 История", "callback_data": "menu_history"},
-                {"text": "📡 Статус", "callback_data": "menu_status"},
             ],
             [
                 {"text": "🔔 Уведомления", "callback_data": "menu_notifications"},
                 {"text": "⚙️ Настройки", "callback_data": "menu_settings"},
             ],
-            [{"text": "📈 Сводка", "callback_data": "menu_stats"}],
             [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"}],
         ]
         if user_id is not None:
             balance = format_dollars(self._demo_ledger(user_id).balance_cents)
-            rows.append([{"text": f"💵 Баланс демо-счёта: {balance}", "callback_data": "demo_menu"}])
+            rows.append([{"text": f"💵 Баланс демо-счёта: {balance}", "callback_data": "demo_refresh_balance"}])
         if user_id is not None and self.is_admin(user_id):
-            rows.append([{"text": "🧪 Демо: проверка", "callback_data": "demo_probe"}])
             rows.append([{"text": "🛡 Админ", "callback_data": "admin_users"}])
         rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
@@ -344,13 +343,22 @@ class TelegramPasswordGate:
                     "callback_data": "demo_toggle",
                 }],
                 trigger_row,
-                [{"text": f"💵 Баланс: {format_dollars(ledger.balance_cents)}", "callback_data": "demo_set_balance"}],
+                [{"text": f"💵 Баланс: {format_dollars(ledger.balance_cents)}", "callback_data": "demo_refresh_balance"}],
                 [{"text": f"🎯 Стартовая ставка: {format_dollars(ledger.base_stake_cents)}", "callback_data": "demo_set_stake"}],
                 [{"text": "📜 История демо-циклов", "callback_data": "demo_history"}],
                 [{"text": "♻️ Сбросить баланс и историю", "callback_data": "demo_reset"}],
                 *self._navigation_rows(),
             ]
         }
+
+    @staticmethod
+    def _cycle_time(value):
+        if not value:
+            return "время не сохранено"
+        try:
+            return datetime.fromisoformat(value).strftime("%d.%m.%Y %H:%M:%S UTC")
+        except (ValueError, TypeError):
+            return "время не сохранено"
 
     def _demo_history_text(self, user_id):
         ledger = self._demo_ledger(user_id)
@@ -371,7 +379,7 @@ class TelegramPasswordGate:
                 if entry.get("outcome") == "recovered" else ""
             )
             lines.append(
-                f"\n{index}) {path}\n"
+                f"\n{index}) {self._cycle_time(entry.get('started_at'))} → {self._cycle_time(entry.get('ended_at'))}\n{path}\n"
                 f"{recovery}выплата {format_dollars(payout)}, "
                 f"итог {sign}{format_dollars(net)}\n"
                 f"Баланс: {format_dollars(int(entry.get('balance_before_cents', 0)))} → "
@@ -516,56 +524,72 @@ class TelegramPasswordGate:
         await self._safe_delete(chat_id, message_id)
 
     async def _delete_transient_source(self, user_id, chat_id, callback):
+        # Navigation reuses the existing menu. Adopt an old menu after restart.
         message_id = self._to_int((callback.get("message") or {}).get("message_id"))
-        if message_id is None:
+        if message_id is None or message_id in {
+            self.history_messages.get(user_id), self.active_messages.get(user_id)
+        }:
             return
-        if message_id == self.history_messages.get(user_id):
-            return
-        if message_id == self.active_messages.get(user_id):
-            return
-        if self.menu_messages.get(user_id) == message_id:
-            self.menu_messages.pop(user_id, None)
-        if self.demo_panel_messages.get(user_id) == message_id:
-            self.demo_panel_messages.pop(user_id, None)
-            self._demo_panel_content.pop(user_id, None)
-        await self._safe_delete(chat_id, message_id)
+        self.menu_messages.setdefault(user_id, message_id)
 
     async def _send_transient(self, user_id, chat_id, text, reply_markup):
-        self.demo_panel_messages.pop(user_id, None)
-        self._demo_panel_content.pop(user_id, None)
-        old_message_id = self.menu_messages.pop(user_id, None)
-        await self._safe_delete(chat_id, old_message_id)
-        result = await self.request(
-            "sendMessage",
-            {"chat_id": chat_id, "text": text, "reply_markup": reply_markup},
-        )
-        message_id = result.get("result", {}).get("message_id")
-        if message_id is not None:
-            self.menu_messages[user_id] = int(message_id)
-            if any(
-                button.get("callback_data") == "demo_toggle"
-                for row in reply_markup.get("inline_keyboard", []) for button in row
-            ):
-                self.demo_panel_messages[user_id] = int(message_id)
-                self._demo_panel_content[user_id] = (text, reply_markup)
+        lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            self.demo_panel_messages.pop(user_id, None)
+            self._demo_panel_content.pop(user_id, None)
+            message_id = self.menu_messages.get(user_id)
+            if message_id is not None:
+                try:
+                    await self.request("editMessageText", {
+                        "chat_id": chat_id, "message_id": message_id,
+                        "text": text, "reply_markup": reply_markup,
+                    })
+                except (httpx.HTTPError, RuntimeError) as exc:
+                    description = str(exc).lower()
+                    if isinstance(exc, httpx.HTTPStatusError):
+                        try:
+                            description = str(exc.response.json().get("description", "")).lower()
+                        except (ValueError, AttributeError):
+                            pass
+                    if "message is not modified" in description:
+                        pass
+                    elif "message to edit not found" in description or "message_id_invalid" in description:
+                        self.menu_messages.pop(user_id, None)
+                        message_id = None
+                    else:
+                        # Network errors must never create duplicate menus.
+                        raise
+            if message_id is None:
+                result = await self.request("sendMessage", {
+                    "chat_id": chat_id, "text": text, "reply_markup": reply_markup,
+                })
+                message_id = result.get("result", {}).get("message_id")
+            if message_id is not None:
+                self.menu_messages[user_id] = int(message_id)
+                if any(button.get("callback_data") == "demo_toggle"
+                       for row in reply_markup.get("inline_keyboard", []) for button in row):
+                    self.demo_panel_messages[user_id] = int(message_id)
+                    self._demo_panel_content[user_id] = (text, reply_markup)
 
     async def _refresh_demo_panel(self, user_id):
-        message_id = self.demo_panel_messages.get(user_id)
-        chat_id = self.chats.get(user_id)
-        if message_id is None or chat_id is None:
-            return
-        text, markup = self._demo_text(user_id), self.demo_menu(user_id)
-        if self._demo_panel_content.get(user_id) == (text, markup):
-            return
-        try:
-            await self.request("editMessageText", {
-                "chat_id": chat_id, "message_id": message_id,
-                "text": text, "reply_markup": markup,
-            })
-            if self.demo_panel_messages.get(user_id) == message_id:
-                self._demo_panel_content[user_id] = (text, markup)
-        except (httpx.HTTPError, RuntimeError):
-            log.warning("Demo panel update failed: user_id=%s", user_id)
+        lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            message_id = self.demo_panel_messages.get(user_id)
+            chat_id = self.chats.get(user_id)
+            if message_id is None or chat_id is None:
+                return
+            text, markup = self._demo_text(user_id), self.demo_menu(user_id)
+            if self._demo_panel_content.get(user_id) == (text, markup):
+                return
+            try:
+                await self.request("editMessageText", {
+                    "chat_id": chat_id, "message_id": message_id,
+                    "text": text, "reply_markup": markup,
+                })
+                if self.demo_panel_messages.get(user_id) == message_id:
+                    self._demo_panel_content[user_id] = (text, markup)
+            except (httpx.HTTPError, RuntimeError):
+                log.warning("Demo panel update failed: user_id=%s", user_id)
 
     def _status_text(self, user_id):
         uptime = max(0, int(time.monotonic() - self.started_at))
@@ -797,6 +821,10 @@ class TelegramPasswordGate:
         await self._delete_transient_source(user_id, chat_id, callback)
 
         if data == "menu_close":
+            message_id = self.menu_messages.pop(user_id, None)
+            self.demo_panel_messages.pop(user_id, None)
+            self._demo_panel_content.pop(user_id, None)
+            await self._safe_delete(chat_id, message_id)
             return
         if data == "menu_main":
             answer = "🎰 Lucky Jet Monitor\nВыберите раздел."
@@ -852,10 +880,10 @@ class TelegramPasswordGate:
             await self._persist_demo(user_id)
             answer = self._demo_text(user_id)
             markup = self.demo_menu(user_id)
-        elif data == "demo_set_balance":
-            self.demo_pending_inputs[user_id] = "balance"
-            answer = "Введите новый виртуальный баланс в USD, например 10000 или 9500.50. Для отмены отправьте /cancel."
-            markup = {"inline_keyboard": [[{"text": "⬅️ Отмена", "callback_data": "demo_input_cancel"}]]}
+        elif data in {"demo_refresh_balance", "demo_set_balance"}:
+            self.demo_pending_inputs.pop(user_id, None)
+            answer = self._demo_text(user_id)
+            markup = self.demo_menu(user_id)
         elif data == "demo_set_stake":
             self.demo_pending_inputs[user_id] = "stake"
             answer = "Введите стартовую виртуальную ставку в USD (минимум $10), например 150. Для отмены отправьте /cancel."
@@ -1211,56 +1239,8 @@ class TelegramPasswordGate:
         ledger = self.demo_ledgers.get(user_id)
         if ledger is None or not ledger.enabled:
             return
-        event = ledger.process_round(coefficient)
+        ledger.process_round(coefficient)
         await self._persist_demo(user_id)
-        if event is None or user_id in self.notifications_disabled:
-            return
-        chat_id = self.chats.get(user_id)
-        if chat_id is None:
-            return
-        if event["type"] == "trigger":
-            text = (
-                f"🧪 Демо: условие выполнено — {ledger.trigger_streak} раундов подряд ниже 2x. "
-                f"Следующий раунд: виртуальная ставка {format_dollars(event['next_stake_cents'])}."
-            )
-        elif event["type"] == "loss":
-            text = (
-                f"🧪 Демо: {event['coefficient']:.2f}x — виртуальная ставка "
-                f"{format_dollars(event['stake_cents'])} потеряна. "
-                f"Следующий шаг: {format_dollars(event['next_stake_cents'])}. "
-                f"Баланс: {format_dollars(event['balance_cents'])}."
-            )
-        elif event["type"] == "recovered":
-            net = int(event["net_cents"])
-            sign = "+" if net > 0 else ""
-            base = int(event.get("base_stake_cents", ledger.base_stake_cents))
-            text = (
-                f"✅ Демо-цикл закрыт при {event['coefficient']}x. "
-                f"Сумма ставок: {format_dollars(event['total_stake_cents'])}; "
-                f"выплата: {format_dollars(event['payout_cents'])}. "
-                f"Исходная ставка {format_dollars(base)} возвращена; "
-                f"итог цикла: {sign}{format_dollars(net)}. "
-                f"Баланс: {format_dollars(event['balance_after_cents'])}. "
-                "Ожидаю новую серию."
-            )
-        else:
-            needed = event.get("needed_cents", 0)
-            text = (
-                f"⏸ Демо-цикл остановлен: виртуального баланса недостаточно "
-                f"для следующего шага {format_dollars(needed)}. "
-                f"Баланс: {format_dollars(ledger.balance_cents)}."
-            )
-        try:
-            await self.request(
-                "sendMessage",
-                {
-                    "chat_id": chat_id,
-                    "text": text,
-                    "disable_notification": user_id in self.silent_users,
-                },
-            )
-        except (httpx.HTTPError, RuntimeError):
-            log.warning("Demo notification failed: user_id=%s event=%s", user_id, event["type"])
 
     def _streak_markup(self, ending=None):
         count = len(self.current_streak)
@@ -1290,70 +1270,8 @@ class TelegramPasswordGate:
 
         if number < 2:
             self.current_streak.append(value)
-            for user_id, chat_id in list(self.chats.items()):
-                if user_id not in self.authorized:
-                    continue
-
-                if user_id in self.active_messages:
-                    try:
-                        await self.request(
-                            "editMessageReplyMarkup",
-                            {
-                                "chat_id": chat_id,
-                                "message_id": self.active_messages[user_id],
-                                "reply_markup": self._streak_markup(),
-                            },
-                        )
-                    except (httpx.HTTPError, RuntimeError):
-                        log.warning("Private streak update failed: user_id=%s", user_id)
-                        self.active_messages.pop(user_id, None)
-                    continue
-
-                if user_id in self.notifications_disabled:
-                    continue
-
-                threshold = self.user_threshold(user_id)
-                if len(self.current_streak) >= threshold:
-                    try:
-                        result = await self.request(
-                            "sendMessage",
-                            {
-                                "chat_id": chat_id,
-                                "text": "🎰 Lucky Jet | Серия <2x",
-                                "reply_markup": self._streak_markup(),
-                                "disable_notification": user_id in self.silent_users,
-                            },
-                        )
-                        message_id = result.get("result", {}).get("message_id")
-                        if message_id is not None:
-                            self.active_messages[user_id] = int(message_id)
-                    except (httpx.HTTPError, RuntimeError):
-                        log.warning("Private streak create failed: user_id=%s", user_id)
-            return
-
-        for user_id, message_id in list(self.active_messages.items()):
-            chat_id = self.chats.get(user_id)
-            if chat_id is None:
-                continue
-            try:
-                await self.request(
-                    "editMessageReplyMarkup",
-                    {
-                        "chat_id": chat_id,
-                        "message_id": message_id,
-                        "reply_markup": self._streak_markup(ending=value),
-                    },
-                )
-                delay = self.user_delete_seconds(user_id)
-                if delay > 0:
-                    task = asyncio.create_task(self._schedule_delete(chat_id, message_id, delay))
-                    self._deletion_tasks.add(task)
-                    task.add_done_callback(self._deletion_tasks.discard)
-                    await asyncio.sleep(0)
-            except (httpx.HTTPError, RuntimeError):
-                log.warning("Private streak completion failed: user_id=%s", user_id)
-        self.current_streak = []
-        self.active_messages = {}
+        else:
+            self.current_streak = []
 
     async def _schedule_delete(self, chat_id, message_id, delay):
         try:

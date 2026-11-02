@@ -61,14 +61,14 @@ def test_authorized_commands_remove_user_message_and_render_expected_screen():
     for command_id in (10, 11, 12, 13):
         assert command_id in deleted
     for transient_id in (menu_id, status_id, settings_id):
-        assert transient_id in deleted
+        assert transient_id not in deleted
 
-    texts = [p["text"] for m, p in request.calls if m == "sendMessage"]
+    texts = [p["text"] for m, p in request.calls if m in {"sendMessage", "editMessageText"}]
     assert any(text.startswith("🎰 Lucky Jet Monitor") for text in texts)
     assert any("📡 Статус" in text for text in texts)
     assert any("⚙️ Настройки" in text for text in texts)
     assert any("ℹ️ Lucky Jet Monitor" in text for text in texts)
-    assert help_id > settings_id
+    assert menu_id == status_id == settings_id == help_id
 
 
 def test_test_notification_respects_sound_setting_and_is_scheduled_for_cleanup():
@@ -161,7 +161,7 @@ def test_history_size_setting_updates_panel_and_is_shown_in_settings():
     assert len([button for row in gate._history_markup(42)["inline_keyboard"][:-1] for button in row]) == 50
     settings_text = [
         payload["text"] for method, payload in request.calls
-        if method == "sendMessage" and payload.get("text", "").startswith("⚙️ Настройки")
+        if method in {"sendMessage", "editMessageText"} and payload.get("text", "").startswith("⚙️ Настройки")
     ]
     assert settings_text and "История: 50 раундов" in settings_text[-1]
 
@@ -184,7 +184,7 @@ def test_summary_and_status_show_recent_data_quality():
     assert "История: 3 раундов" in status
 
 
-def test_demo_buttons_toggle_select_trigger_and_update_usd_balance():
+def test_demo_balance_button_refreshes_current_ledger_without_edit_prompt():
     request = FakeRequest()
     gate = TelegramPasswordGate(request)
     gate.authorized.add(42)
@@ -197,8 +197,8 @@ def test_demo_buttons_toggle_select_trigger_and_update_usd_balance():
         menu_id = gate.menu_messages[42]
         await gate.handle_callback(callback(42, "demo_trigger:3", menu_id))
         menu_id = gate.menu_messages[42]
-        await gate.handle_callback(callback(42, "demo_set_balance", menu_id))
-        await gate.handle_update(message(42, "9500.50", 77))
+        gate.demo_ledgers[42].balance_cents = 950_050
+        await gate.handle_callback(callback(42, "demo_refresh_balance", menu_id))
 
     asyncio.run(run())
 
@@ -206,16 +206,16 @@ def test_demo_buttons_toggle_select_trigger_and_update_usd_balance():
     assert ledger.enabled is True
     assert ledger.trigger_streak == 3
     assert ledger.balance_cents == 950_050
-    assert 77 in [p["message_id"] for m, p in request.calls if m == "deleteMessage"]
+    assert 42 not in gate.demo_pending_inputs
     answers = [p for method, p in request.calls if method == "answerCallbackQuery"]
     assert [p["callback_query_id"] for p in answers] == [
-        "cb-demo_menu", "cb-demo_toggle", "cb-demo_trigger:3", "cb-demo_set_balance"
+        "cb-demo_menu", "cb-demo_toggle", "cb-demo_trigger:3", "cb-demo_refresh_balance"
     ]
     latest_screen = [
         p for method, p in request.calls
-        if method == "sendMessage" and p.get("reply_markup", {}).get("inline_keyboard")
+        if method in {"sendMessage", "editMessageText"} and p.get("reply_markup", {}).get("inline_keyboard")
     ][-1]
-    assert "Виртуальный баланс установлен: $9,500.50" in latest_screen["text"]
+    assert "Виртуальный баланс: $9,500.50" in latest_screen["text"]
     labels = [
         button["text"]
         for row in latest_screen["reply_markup"]["inline_keyboard"]
@@ -236,7 +236,7 @@ def test_demo_stake_input_minimum_and_reset_confirmation_buttons():
         await gate.handle_update(message(42, "9", 78))
         assert gate.demo_ledgers[42].base_stake_cents == 15_000
         invalid_prompt = [
-            p for method, p in request.calls if method == "sendMessage"
+            p for method, p in request.calls if method in {"sendMessage", "editMessageText"}
         ][-1]
         assert invalid_prompt["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "demo_input_cancel"
         await gate.handle_update(message(42, "10", 79))
@@ -275,7 +275,7 @@ def test_demo_history_button_renders_recovered_initial_stake_and_cycle_result():
 
     screen = [
         p for method, p in request.calls
-        if method == "sendMessage" and p.get("text", "").startswith("📜")
+        if method in {"sendMessage", "editMessageText"} and p.get("text", "").startswith("📜")
     ][-1]
     assert "Возвращено изначальных $150.00" in screen["text"]
     assert "итог +$150.00" in screen["text"]
@@ -314,7 +314,7 @@ def test_invalid_stale_demo_button_is_acknowledged_without_deleting_menu():
     assert any(m == "answerCallbackQuery" for m, p in request.calls)
 
 
-def test_demo_ledger_is_connected_to_live_round_handler_and_reports_recovery():
+def test_demo_ledger_tracks_cycles_without_sending_demo_notifications():
     request = FakeRequest()
     gate = TelegramPasswordGate(request, history_provider=lambda: [])
     gate.authorized.add(42)
@@ -330,10 +330,9 @@ def test_demo_ledger_is_connected_to_live_round_handler_and_reports_recovery():
     asyncio.run(run())
 
     texts = [p["text"] for method, p in request.calls if method == "sendMessage"]
-    assert any("условие выполнено" in text for text in texts)
-    assert any("виртуальная ставка $150.00 потеряна" in text for text in texts)
-    assert any("Исходная ставка $150.00 возвращена" in text for text in texts)
-    assert any("итог цикла: +$150.00" in text for text in texts)
+    assert not any("🧪 Демо:" in text or "Демо-цикл закрыт" in text for text in texts)
+    assert "итог +$150.00" in gate._demo_history_text(42)
+    assert "UTC" in gate._demo_history_text(42)
     assert ledger.balance_cents == 1_015_000
     assert ledger.history[0]["balance_before_cents"] == 1_000_000
 

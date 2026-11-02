@@ -179,24 +179,6 @@ async def main_async() -> None:
     monitor.demo_probe = demo_probe
     password_gate.demo_probe = demo_probe
 
-    async def initial_demo_check():
-        await demo_probe.wait_result()
-        # Only the active Telegram polling owner has loaded the authorized chats.
-        for _ in range(60):
-            if password_gate.admin_chat_id in password_gate.authorized:
-                break
-            await asyncio.sleep(1)
-        admin = password_gate.admin_chat_id
-        if admin in password_gate.authorized and admin in password_gate.chats:
-            try:
-                await password_gate._send_transient(
-                    admin, password_gate.chats[admin], demo_probe.text(),
-                    password_gate.menu(admin),
-                )
-                log.info("Demo probe report delivered to Telegram admin")
-            except (httpx.HTTPError, RuntimeError):
-                log.warning("Demo probe report delivery failed; result available in menu")
-
     polling_lease = TelegramPollingLease(os.getenv("REDIS_URL", ""))
     seed_private_streak(password_gate, state.previous)
 
@@ -220,7 +202,6 @@ async def main_async() -> None:
         await asyncio.gather(
             base.health_server(),
             render_self_keepalive(),
-            initial_demo_check(),
             polling_lease.run(password_gate.start()),
             direct_only.run_monitor(monitor, config, state=state),
         )

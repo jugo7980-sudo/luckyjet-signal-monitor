@@ -138,17 +138,17 @@ def test_hidden_history_and_visible_menu_survive_restart():
     asyncio.run(run())
 
 
-def test_selected_three_round_threshold_triggers_after_three():
+def test_selected_threshold_does_not_create_automatic_chat_messages():
     gate, request, _ = setup()
     gate.thresholds[42] = 3
-
     async def run():
-        for _ in range(2):
-            await gate.on_round("1.10x")
+        await gate.ensure_private_history(42)
+        before = len([1 for m, _ in request.calls if m == "sendMessage"])
+        for _ in range(3):
+            await gate.on_round("1.20x")
+        assert len(gate.current_streak) == 3
         assert not gate.active_messages
-        await gate.on_round("1.20x")
-        assert 42 in gate.active_messages
-
+        assert len([1 for m, _ in request.calls if m == "sendMessage"]) == before
     asyncio.run(run())
 
 
@@ -171,26 +171,16 @@ def test_start_removes_command_and_does_not_reenable_hidden_history():
     assert not any(m == "sendMessage" and p.get("text") == "🎰 Lucky Jet — история" for m, p in request.calls)
 
 
-def test_only_consecutive_low_rounds_trigger_one_live_streak_while_history_hidden():
-    gate, request, callback = setup()
+def test_hidden_history_and_rounds_never_create_new_messages():
+    gate, request, cb = setup()
     gate.history_messages[42] = 101
-
     async def run():
-        await gate.handle_callback(callback)
-        for value in ["1.10x", "1.20x", "2.00x", "1.30x", "1.40x", "1.50x"]:
+        await gate.handle_callback(cb)
+        for value in ["1.10x", "1.20x", "2.00x", "1.30x", "1.40x", "1.50x", "1.60x", "2.10x"]:
             await gate.on_round(value)
         assert not gate.active_messages
-        await gate.on_round("1.60x")
-        message_id = gate.active_messages[42]
-        await gate.on_round("1.70x")
-        assert gate.active_messages[42] == message_id
-        await gate.on_round("2.10x")
-        assert not gate.active_messages
         assert 42 not in gate.history_messages
+        assert gate.current_streak == []
         await gate.close()
-
     asyncio.run(run())
-    sends = [p for m, p in request.calls if m == "sendMessage"]
-    assert len(sends) == 1
-    assert sends[0]["text"] == "🎰 Lucky Jet | Серия <2x"
-    assert sends[0]["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Серия 4")
+    assert not any(m == "sendMessage" for m, _ in request.calls)

@@ -14,7 +14,7 @@ class RacingRequest:
         self.calls.append((method, payload))
         if method == "editMessageReplyMarkup" and payload.get("message_id") == 799:
             await asyncio.sleep(0)
-            raise httpx.HTTPError("stale history message")
+            raise httpx.HTTPError("message to edit not found")
         if method == "sendMessage":
             await asyncio.sleep(0)
             self.next_message_id += 1

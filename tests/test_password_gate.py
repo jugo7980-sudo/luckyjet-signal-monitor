@@ -96,7 +96,9 @@ def test_main_menu_keeps_existing_buttons_and_can_close():
     menu = sent_messages(request)[1]["reply_markup"]["inline_keyboard"]
     labels = [button["text"] for row in menu for button in row]
     assert "📊 История" in labels
-    assert "📡 Статус" in labels
+    assert "📡 Статус" not in labels
+    assert "📈 Сводка" not in labels
+    assert "🧪 Демо: проверка" not in labels
     assert "🔔 Уведомления" in labels
     assert "⚙️ Настройки" in labels
     assert "✖ Закрыть меню" in labels
@@ -104,30 +106,25 @@ def test_main_menu_keeps_existing_buttons_and_can_close():
     assert 102 in deleted_ids(request)
 
 
-def test_each_menu_choice_replaces_old_transient_message_and_history_stays():
+def test_each_menu_choice_edits_same_message_and_history_stays():
     request = FakeRequest()
     gate = TelegramPasswordGate(request, history_provider=lambda: ["1.10x", "2.20x"])
     gate.authorized.add(42)
     gate.chats[42] = 42
-
     async def run():
-        await gate.ensure_private_history(42)  # 101
-        await gate.handle_callback(callback(42, "menu_open", 101))  # 102
-        await gate.handle_callback(callback(42, "menu_status", 102))  # 103
-        await gate.handle_callback(callback(42, "menu_settings", 103))  # 104
-        await gate.handle_callback(callback(42, "menu_close", 104))
-
+        await gate.ensure_private_history(42)
+        await gate.handle_callback(callback(42, "menu_open", 101))
+        panel_id = gate.menu_messages[42]
+        for action in ("menu_settings", "demo_menu", "demo_history", "menu_main"):
+            await gate.handle_callback(callback(42, action, panel_id))
+            assert gate.menu_messages[42] == panel_id
+        await gate.handle_callback(callback(42, "menu_close", panel_id))
     asyncio.run(run())
-
-    deleted = deleted_ids(request)
-    assert 101 not in deleted
-    assert 102 in deleted
-    assert 103 in deleted
-    assert 104 in deleted
-    sent = sent_messages(request)
-    assert sent[1]["text"].startswith("🎰 Lucky Jet Monitor")
-    assert "📡 Статус" in sent[2]["text"]
-    assert "⚙️ Настройки" in sent[3]["text"]
+    assert len(sent_messages(request)) == 2
+    assert 101 not in deleted_ids(request)
+    edits = [p for m, p in request.calls if m == "editMessageText"]
+    assert len(edits) == 4
+    assert {p["message_id"] for p in edits} == {102}
 
 
 
@@ -168,7 +165,8 @@ def test_user_can_change_and_reset_settings():
     assert 42 not in gate.notifications_disabled
     assert 42 not in gate.silent_users
     deleted = deleted_ids(request)
-    assert all(message_id in deleted for message_id in [70, 101, 102, 103, 104])
+    assert not deleted
+    assert gate.menu_messages[42] == 70
 
 
 def test_private_streak_uses_user_threshold_updates_and_finishes():
@@ -176,25 +174,19 @@ def test_private_streak_uses_user_threshold_updates_and_finishes():
     gate = TelegramPasswordGate(request)
     gate.authorized.add(42)
     gate.chats[42] = 42
-    gate.thresholds[42] = 4
-    gate.delete_seconds[42] = 15
-    scheduled = []
-
-    async def fake_schedule(chat_id, message_id, delay):
-        scheduled.append((chat_id, message_id, delay))
-
-    gate._schedule_delete = fake_schedule
-
+    gate.silent_users.add(42)
     async def run():
-        for value in ["1.10x", "1.20x", "1.30x", "1.40x", "2.10x"]:
+        await gate.ensure_private_history(42)
+        before = len(sent_messages(request))
+        for value in ["1.10x", "1.20x", "1.30x", "1.40x"]:
             await gate.on_round(value)
-
+        assert len(gate.current_streak) == 4
+        gate.notifications_disabled.add(42)
+        await gate.on_round("2.10x")
+        assert gate.current_streak == []
+        assert len(sent_messages(request)) == before
     asyncio.run(run())
-
-    streak_sends = [p for p in sent_messages(request) if p["text"] == "🎰 Lucky Jet | Серия <2x"]
-    assert len(streak_sends) == 1
-    assert streak_sends[0]["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Серия 4")
-    assert scheduled == [(42, 102, 10)]
+    assert not gate.active_messages
 
 
 def test_disabling_notifications_does_not_kill_existing_streak_message():
@@ -202,20 +194,19 @@ def test_disabling_notifications_does_not_kill_existing_streak_message():
     gate = TelegramPasswordGate(request)
     gate.authorized.add(42)
     gate.chats[42] = 42
-    gate.thresholds[42] = 4
-
+    gate.silent_users.add(42)
     async def run():
+        await gate.ensure_private_history(42)
+        before = len(sent_messages(request))
         for value in ["1.10x", "1.20x", "1.30x", "1.40x"]:
             await gate.on_round(value)
-        streak_id = gate.active_messages[42]
+        assert len(gate.current_streak) == 4
         gate.notifications_disabled.add(42)
-        await gate.on_round("1.40x")
         await gate.on_round("2.10x")
-        return streak_id
-
-    streak_id = asyncio.run(run())
-    edits = [p for m, p in request.calls if m == "editMessageReplyMarkup" and p["message_id"] == streak_id]
-    assert len(edits) == 2
+        assert gate.current_streak == []
+        assert len(sent_messages(request)) == before
+    asyncio.run(run())
+    assert not gate.active_messages
 
 
 def test_notifications_disabled_suppresses_new_streak_but_not_history():
@@ -240,17 +231,19 @@ def test_silent_setting_marks_new_streak_notification_silent():
     gate = TelegramPasswordGate(request)
     gate.authorized.add(42)
     gate.chats[42] = 42
-    gate.thresholds[42] = 4
     gate.silent_users.add(42)
-
     async def run():
+        await gate.ensure_private_history(42)
+        before = len(sent_messages(request))
         for value in ["1.10x", "1.20x", "1.30x", "1.40x"]:
             await gate.on_round(value)
-
+        assert len(gate.current_streak) == 4
+        gate.notifications_disabled.add(42)
+        await gate.on_round("2.10x")
+        assert gate.current_streak == []
+        assert len(sent_messages(request)) == before
     asyncio.run(run())
-
-    streak = next(p for p in sent_messages(request) if p["text"] == "🎰 Lucky Jet | Серия <2x")
-    assert streak["disable_notification"] is True
+    assert not gate.active_messages
 
 
 def test_history_panel_recreates_if_saved_message_was_deleted():
@@ -285,7 +278,7 @@ def test_admin_can_list_and_revoke_authorized_user():
 
     assert 42 not in gate.authorized
     assert 42 not in gate.chats
-    sent = [payload["text"] for payload in sent_messages(request)]
+    sent = [p["text"] for m, p in request.calls if m in {"sendMessage", "editMessageText"}]
     assert any("42" in text for text in sent)
     assert any("отозван" in text.lower() for text in sent)
 
@@ -302,7 +295,7 @@ def test_status_reports_last_round_and_uptime():
 
     asyncio.run(run())
 
-    text = sent_messages(request)[-1]["text"]
+    text = [p["text"] for m, p in request.calls if m in {"sendMessage", "editMessageText"}][-1]
     assert "1.23x" in text
     assert "Аптайм" in text
 

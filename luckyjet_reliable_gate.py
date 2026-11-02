@@ -55,68 +55,8 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
             return ""
 
     async def _ensure_private_history(self, user_id):
-        chat_id = self.chats.get(user_id)
-        if chat_id is None:
-            return False
-
-        markup = self._history_markup(user_id)
-        message_id = self.history_messages.get(user_id)
-        if message_id is not None:
-            try:
-                await self.request(
-                    "editMessageReplyMarkup",
-                    {
-                        "chat_id": chat_id,
-                        "message_id": message_id,
-                        "reply_markup": markup,
-                    },
-                )
-                return True
-            except httpx.HTTPStatusError as exc:
-                description = self._telegram_description(exc).lower()
-                if exc.response.status_code == 400 and "message is not modified" in description:
-                    return True
-                log.warning(
-                    "Private history edit rejected: status=%s description=%s",
-                    exc.response.status_code,
-                    self._telegram_description(exc)[:180],
-                )
-                self.history_messages.pop(user_id, None)
-                await self._persist_user(user_id)
-            except (httpx.RequestError, RuntimeError, httpx.HTTPError) as exc:
-                log.warning(
-                    "Private history edit failed; recreating: error=%s",
-                    type(exc).__name__,
-                )
-                self.history_messages.pop(user_id, None)
-                await self._persist_user(user_id)
-
-        try:
-            result = await self.request(
-                "sendMessage",
-                {
-                    "chat_id": chat_id,
-                    "text": "🎰 Lucky Jet — история",
-                    "reply_markup": markup,
-                },
-            )
-            message_id = result.get("result", {}).get("message_id")
-            if message_id is None:
-                return False
-            self.history_messages[user_id] = int(message_id)
-            await self._persist_user(user_id)
-            log.info("Private history panel ready")
-            return True
-        except httpx.HTTPStatusError as exc:
-            log.warning(
-                "Private history create rejected: status=%s description=%s",
-                exc.response.status_code,
-                self._telegram_description(exc)[:180],
-            )
-            return False
-        except (httpx.RequestError, RuntimeError, httpx.HTTPError) as exc:
-            log.warning("Private history create failed: error=%s", type(exc).__name__)
-            return False
+        # Recreate only a confirmed missing message, never after a network error.
+        return await super()._ensure_private_history(user_id)
 
     async def _load_persisted_state(self):
         await super()._load_persisted_state()
@@ -238,80 +178,14 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
                 await self._persist_runtime_user(user_id)
 
     async def restore_runtime_state(self, *, now=None):
-        """Preserve visible UI and restore active/pending streak messages after restart."""
-        now = time.time() if now is None else float(now)
-
-        # Keep explicitly opened menus/settings visible across restarts.
-
-        for user_id, pending in list(self.pending_deletions.items()):
-            message_id, deadline = pending
-            chat_id = self.chats.get(user_id)
-            if chat_id is None:
-                self.pending_deletions.pop(user_id, None)
-                await self._persist_runtime_user(user_id)
-                continue
-
-            remaining = float(deadline) - now
-            if remaining <= 0:
-                await self._safe_delete(chat_id, message_id)
-                self.pending_deletions.pop(user_id, None)
-                await self._persist_runtime_user(user_id)
-                continue
-
-            task = asyncio.create_task(
-                self._resume_pending_delete(user_id, chat_id, message_id, remaining)
-            )
-            self._deletion_tasks.add(task)
-            task.add_done_callback(self._deletion_tasks.discard)
-
-        for user_id, message_id in list(self.active_messages.items()):
-            chat_id = self.chats.get(user_id)
-            qualifies = (
-                user_id in self.authorized
-                and chat_id is not None
-                and len(self.current_streak) >= self.user_threshold(user_id)
-            )
-
-            if not qualifies:
-                if chat_id is not None:
-                    await self._safe_delete(chat_id, message_id)
-                self.active_messages.pop(user_id, None)
-                await self._persist_runtime_user(user_id)
-                continue
-
-            try:
-                await self.request(
-                    "editMessageReplyMarkup",
-                    {
-                        "chat_id": chat_id,
-                        "message_id": message_id,
-                        "reply_markup": self._streak_markup(),
-                    },
-                )
-            except (httpx.HTTPError, RuntimeError):
-                self.active_messages.pop(user_id, None)
-                await self._persist_runtime_user(user_id)
-
-        if self.current_streak:
-            for user_id in list(self.authorized):
-                if user_id in self.active_messages or user_id in self.notifications_disabled:
-                    continue
-                chat_id = self.chats.get(user_id)
-                if chat_id is None or len(self.current_streak) < self.user_threshold(user_id):
-                    continue
-                try:
-                    result = await self.request(
-                        "sendMessage",
-                        {
-                            "chat_id": chat_id,
-                            "text": "🎰 Lucky Jet | Серия <2x",
-                            "reply_markup": self._streak_markup(),
-                            "disable_notification": user_id in self.silent_users,
-                        },
-                    )
-                    message_id = result.get("result", {}).get("message_id")
-                    if message_id is not None:
-                        self.active_messages[user_id] = int(message_id)
-                        await self._persist_runtime_user(user_id)
-                except (httpx.HTTPError, RuntimeError):
-                    log.warning("Could not restore active streak: user_id=%s", user_id)
+        """Keep menu/history panels and remove tracked legacy notifications."""
+        tracked = {(uid, mid) for uid, mid in self.active_messages.items()}
+        tracked.update((uid, item[0]) for uid, item in self.pending_deletions.items())
+        for user_id, message_id in tracked:
+            if message_id not in {self.menu_messages.get(user_id), self.history_messages.get(user_id)}:
+                await self._safe_delete(self.chats.get(user_id), message_id)
+        users = set(self.active_messages) | set(self.pending_deletions)
+        self.active_messages.clear()
+        self.pending_deletions.clear()
+        for user_id in users:
+            await self._persist_runtime_user(user_id)

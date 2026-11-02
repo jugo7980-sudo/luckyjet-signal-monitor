@@ -402,12 +402,12 @@ class TelegramPasswordGate:
                 }.get(probe.result, "не проверен")
 
         return (
-            f"📡 Мониторинг: {monitor_state}\\n"
-            f"Последний коэффициент: {latest}\\n"
-            f"Данные: {freshness}\\n"
-            f"Деморежим: {demo_state}\\n"
-            f"История: {min(len(values), self.user_history_size(user_id))} раундов\\n"
-            f"Серия ниже 2x: {len(self.current_streak)} из {self.user_threshold(user_id)}\\n"
+            f"📡 Мониторинг: {monitor_state}\n"
+            f"Последний коэффициент: {latest}\n"
+            f"Данные: {freshness}\n"
+            f"Деморежим: {demo_state}\n"
+            f"История: {min(len(values), self.user_history_size(user_id))} раундов\n"
+            f"Серия ниже 2x: {len(self.current_streak)} из {self.user_threshold(user_id)}\n"
             f"Аптайм: {hours:02d}:{minutes:02d}:{seconds:02d}"
         )
 
@@ -765,7 +765,7 @@ class TelegramPasswordGate:
             f"Средний коэффициент: {sum(values) / len(values):.2f}x\n"
             f"Максимальный: {max(values):.2f}x\n"
             f"Ниже 2x: {below_two}\n"
-            f"Текущая серия ниже 2x: {current_streak}\\n"
+            f"Текущая серия ниже 2x: {current_streak}\n"
             "Статистика описывает завершённые раунды и не является прогнозом."
         )
 

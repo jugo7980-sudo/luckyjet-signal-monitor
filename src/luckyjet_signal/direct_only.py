@@ -117,10 +117,16 @@ async def run_monitor(monitor, config, *, state=None):
             )
             capture = monitor.LiveCapture()
             page = await monitor.open_game(context, config, capture)
+            probe = getattr(monitor, "demo_probe", None)
+            if probe is not None and page is not None:
+                await probe.observe(page)
 
         try:
             while True:
                 try:
+                    probe = getattr(monitor, "demo_probe", None)
+                    if direct_only and probe is not None and probe.requested:
+                        direct_only = False
                     if not direct_only and (page is None or page.is_closed()):
                         if monitor.history_refresh is not None:
                             monitor.history_refresh.bind(None)

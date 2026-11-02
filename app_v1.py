@@ -175,15 +175,17 @@ async def main_async() -> None:
         admin_chat_id=config.telegram_chat_id,
     )
     monitor.browser_lock = asyncio.Lock()
-    demo_probe = DemoProbe(browser_lock=monitor.browser_lock)
+    demo_probe = DemoProbe()
+    monitor.demo_probe = demo_probe
     password_gate.demo_probe = demo_probe
 
     async def initial_demo_check():
-        # Let normal source startup finish before opening the diagnostic browser.
-        await asyncio.sleep(60)
-        task = demo_probe.start()
-        if task is not None:
-            await task
+        await demo_probe.wait_result()
+        # Only the active Telegram polling owner has loaded the authorized chats.
+        for _ in range(60):
+            if password_gate.admin_chat_id in password_gate.authorized:
+                break
+            await asyncio.sleep(1)
         admin = password_gate.admin_chat_id
         if admin in password_gate.authorized and admin in password_gate.chats:
             try:

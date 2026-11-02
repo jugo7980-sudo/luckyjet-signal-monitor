@@ -4,10 +4,9 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from luckyjet_signal.browser_runtime import low_memory_async_playwright
+from urllib.parse import urlsplit
 
 log = logging.getLogger('luckyjet.demo_probe')
-DEMO_URL = 'https://1whnva.com/casino/play/v_1wGames:LuckyJet'
 
 
 def classify_page(text):
@@ -22,12 +21,15 @@ def classify_page(text):
 
 
 class DemoProbe:
-    def __init__(self, browser_lock=None):
-        self.browser_lock = browser_lock or asyncio.Lock()
+    def __init__(self):
         self.task = None
         self.result = 'not_checked'
         self.checked_at = None
         self.started_at = -float('inf')
+        self.requested = True
+        self.ready = asyncio.Event()
+        self.source = 'страница мониторинга'
+        self.game_loaded = False
 
     def start(self):
         if self.task and not self.task.done():
@@ -35,57 +37,70 @@ class DemoProbe:
         if time.monotonic() - self.started_at < 60:
             return self.task
         self.started_at = time.monotonic()
-        self.task = asyncio.create_task(self._run())
+        self.ready.clear()
+        self.requested = True
+        self.task = asyncio.create_task(self.wait_result())
         return self.task
+
+    async def wait_result(self):
+        try:
+            await asyncio.wait_for(self.ready.wait(), timeout=180)
+        except asyncio.TimeoutError:
+            self.result = 'timeout'
+            self.requested = False
+            self.checked_at = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            log.info('Demo probe completed: status=timeout')
 
     def text(self):
         messages = {
             'not_checked': 'Проверка ещё не выполнена.',
             'region_blocked': 'Сайт блокирует доступ из региона сервера.',
             'verification': 'Сайт требует проверку браузера. Проверка остановлена.',
-            'demo_available': 'На странице найдена кнопка деморежима. Запуск игры и виртуальный баланс ещё не подтверждены.',
-            'unconfirmed': 'Страница открыта, но деморежим не подтверждён.',
-            'timeout': 'Страница не загрузилась за отведённое время.',
-            'error': 'Не удалось открыть страницу с сервера.',
+            'demo_available': 'Найдена кнопка деморежима. Виртуальный баланс не подтверждён.',
+            'game_loaded': 'Интерфейс игры загружен. Виртуальный баланс не подтверждён.',
+            'unconfirmed': 'Деморежим не подтверждён.',
+            'timeout': 'Не удалось дождаться страницы мониторинга за 3 минуты.',
+            'error': 'Не удалось прочитать страницу игры.',
         }
-        status = 'Проверка выполняется…' if self.task and not self.task.done() else messages[self.result]
+        status = 'Ожидаю проверку страницы мониторинга…' if self.requested else messages[self.result]
         stamp = f'\nПроверено: {self.checked_at} UTC' if self.checked_at else ''
-        return f'🧪 Проверка деморежима\nИсточник: 1whnva.com\n{status}{stamp}\nСтавки не выполняются.'
+        return f'🧪 Проверка деморежима\nИсточник: {self.source}\n{status}{stamp}\nСтавки не выполняются.'
 
-    async def _inspect(self):
-        async with low_memory_async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            try:
-                page = await browser.new_page(locale='ru-RU')
-                await page.goto(DEMO_URL, wait_until='domcontentloaded', timeout=25000)
-                for _ in range(6):
-                    texts = []
-                    for frame in page.frames:
-                        try:
-                            texts.append(await frame.locator('body').inner_text(timeout=1500))
-                        except Exception:
-                            pass
-                    result = classify_page('\n'.join(texts))
-                    if result != 'unconfirmed':
-                        return result
-                    await asyncio.sleep(2)
-                return 'unconfirmed'
-            finally:
-                await browser.close()
-
-    async def _run(self):
+    async def observe(self, page):
+        """Read the already loaded monitoring page; no new browser or navigation."""
+        if not self.requested:
+            return
         try:
-            async with self.browser_lock:
-                self.result = await asyncio.wait_for(self._inspect(), timeout=45)
-        except asyncio.TimeoutError:
-            self.result = 'timeout'
+            await asyncio.wait_for(self._read_page(page), timeout=10)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self.result = 'error'
-            log.warning('Demo probe failed: %s', type(exc).__name__)
+            log.warning('Demo page observation failed: %s', type(exc).__name__)
         self.checked_at = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-        log.info('Demo probe completed: status=%s', self.result)
+        self.requested = False
+        self.ready.set()
+        log.info('Demo probe completed: status=%s source=%s game_loaded=%s',
+                 self.result, self.source, self.game_loaded)
+
+    async def _read_page(self, page):
+        self.source = urlsplit(str(page.url)).hostname or 'страница мониторинга'
+        texts = []
+        self.game_loaded = False
+        for frame in page.frames:
+            try:
+                text = await frame.locator('body').inner_text(timeout=1500)
+            except Exception:
+                continue
+            texts.append(text)
+            # A frame URL or completed-round coefficients alone do not prove a game UI.
+            if '/lucky2/' in str(frame.url).lower() and any(
+                label in text.casefold() for label in ('ставка', 'auto bet', 'cash out')
+            ):
+                self.game_loaded = True
+        self.result = classify_page('\n'.join(texts))
+        if self.result == 'unconfirmed' and self.game_loaded:
+            self.result = 'game_loaded'
 
     async def close(self):
         if self.task and not self.task.done():

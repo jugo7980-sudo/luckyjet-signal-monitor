@@ -32,22 +32,26 @@ def test_page_classification_does_not_treat_history_or_demo_button_as_active_dem
     assert classify_page('Verify you are human') == 'verification'
 
 
-def test_probe_waits_until_monitor_releases_browser_memory():
+def test_probe_uses_existing_page_and_does_not_mistake_game_controls_for_demo():
     from demo_probe import DemoProbe
+    from types import SimpleNamespace
     async def run():
-        lock = asyncio.Lock()
-        await lock.acquire()
-        probe = DemoProbe(browser_lock=lock)
-        entered = asyncio.Event()
-        async def inspect():
-            entered.set()
-            return 'unconfirmed'
-        probe._inspect = inspect
+        probe = DemoProbe()
+        class Body:
+            async def inner_text(self, **kwargs):
+                return 'Lucky Jet 1000 RUB Ставка Автоставка'
+        class Frame:
+            url = 'https://1play.gamedev-tech.cc/lucky2/vgs/'
+            def locator(self, selector):
+                assert selector == 'body'
+                return Body()
+        page = SimpleNamespace(url='https://example.com/casino/play/luckyjet', frames=[Frame()])
         task = probe.start()
-        await asyncio.sleep(0)
-        assert not entered.is_set()
-        lock.release()
+        await probe.observe(page)
         await task
-        assert entered.is_set()
-        assert not lock.locked()
+        assert probe.result == 'game_loaded'
+        assert probe.requested is False
+        assert 'example.com' in probe.text()
+        assert 'не подтвержд' in probe.text()
+        assert probe.game_loaded is True
     asyncio.run(run())

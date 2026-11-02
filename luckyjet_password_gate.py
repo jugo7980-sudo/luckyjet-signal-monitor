@@ -23,7 +23,10 @@ MENU_IDLE_SECONDS = 60
 THAILAND_TIME = timezone(timedelta(hours=7), name="Asia/Bangkok")
 
 
-class TelegramPasswordGate:
+from history_panels import HistoryPanels
+
+
+class TelegramPasswordGate(HistoryPanels):
     def __init__(self, request, history_provider=None, admin_chat_id=None, password=None, history_refresher=None):
         self.request = request
         self.history_provider = history_provider
@@ -142,6 +145,9 @@ class TelegramPasswordGate:
             await self.close()
 
     async def close(self):
+        panels = getattr(self, "live_panels", None)
+        if panels is not None:
+            await panels.close()
         menu_tasks = list(self._menu_tasks.values())
         for task in menu_tasks:
             task.cancel()
@@ -1340,6 +1346,7 @@ class TelegramPasswordGate:
         await self._persist_user(user_id)
         if self.redis:
             await self.redis.hdel("luckyjet:demo_sessions", str(user_id))
+            await self.redis.hdel("luckyjet:demo_completed_cycles", str(user_id))
         if chat_id is not None:
             await self._safe_delete(chat_id, menu_message_id)
             await self._safe_delete(chat_id, prompt_message_id)
@@ -1414,85 +1421,6 @@ class TelegramPasswordGate:
             await self._persist_user(user_id)
             return False
 
-    async def ensure_private_history(self, user_id):
-        user_id = int(user_id)
-        lock = self._history_locks.setdefault(user_id, asyncio.Lock())
-        async with lock:
-            if user_id in self.history_hidden:
-                return False
-            return await self._ensure_private_history(user_id)
-
-    async def _ensure_private_history(self, user_id):
-        chat_id = self.chats.get(user_id)
-        if chat_id is None:
-            return False
-        markup = self._history_markup(user_id)
-        message_id = self.history_messages.get(user_id)
-        if message_id is not None:
-            try:
-                await self.request(
-                    "editMessageText",
-                    {"chat_id": chat_id, "message_id": message_id, "text": "📊", "reply_markup": markup},
-                )
-                return True
-            except httpx.HTTPStatusError as exc:
-                description = ""
-                try:
-                    description = str(exc.response.json().get("description", "")).lower()
-                except (ValueError, AttributeError):
-                    pass
-                if exc.response.status_code == 400 and "message is not modified" in description:
-                    return True
-                if exc.response.status_code == 400 and ("message to edit not found" in description or "message_id_invalid" in description):
-                    log.info("Private history message deleted; recreating: user_id=%s", user_id)
-                    self.history_messages.pop(user_id, None)
-                    await self._persist_user(user_id)
-                else:
-                    log.warning("Private history edit rejected: user_id=%s status=%s", user_id, exc.response.status_code)
-                    return False
-            except httpx.HTTPError as exc:
-                # A deleted message cannot be edited; recreate it. Network errors
-                # should not cause duplicates, so only recover known missing-message errors.
-                if "message missing" not in str(exc).lower() and "message to edit not found" not in str(exc).lower():
-                    log.warning("Private history edit failed: user_id=%s error=%s", user_id, type(exc).__name__)
-                    return False
-                log.info("Private history message missing; recreating: user_id=%s", user_id)
-                self.history_messages.pop(user_id, None)
-                await self._persist_user(user_id)
-            except RuntimeError:
-                log.warning("Private history edit failed: user_id=%s", user_id)
-                return False
-        try:
-            result = await self.request(
-                "sendMessage",
-                {"chat_id": chat_id, "text": "📊", "reply_markup": markup},
-            )
-            message_id = result.get("result", {}).get("message_id")
-            if message_id is None:
-                return False
-            self.history_messages[user_id] = int(message_id)
-            await self._persist_user(user_id)
-            return True
-        except (httpx.HTTPError, RuntimeError):
-            log.warning("Private history create failed: user_id=%s", user_id)
-            return False
-
-    async def update_private_histories(self):
-        # A slow Telegram response must not hold up every other user's panel.
-        # Keep a small shared limit across overlapping refresh calls.
-        if not hasattr(self, "_history_refresh_slots"):
-            self._history_refresh_slots = asyncio.Semaphore(4)
-
-        async def update(user_id):
-            async with self._history_refresh_slots:
-                if user_id in self.authorized and user_id in self.chats:
-                    await self.ensure_private_history(user_id)
-
-        async with asyncio.TaskGroup() as group:
-            for user_id in list(self.authorized):
-                if user_id in self.chats and user_id not in self.history_hidden:
-                    group.create_task(update(user_id))
-
     async def _handle_demo_round(self, user_id, coefficient):
         ledger = self.demo_ledgers.get(user_id)
         if ledger is None or not ledger.enabled:
@@ -1515,6 +1443,8 @@ class TelegramPasswordGate:
         }
 
     async def _clear_streak_notice(self, user_id):
+        if user_id not in self.active_messages and user_id not in self.pending_deletions:
+            return
         ids = {self.active_messages.pop(user_id, None)}
         pending = self.pending_deletions.pop(user_id, None)
         if pending:
@@ -1599,10 +1529,15 @@ class TelegramPasswordGate:
             return
         self.last_round = value
         self.last_round_at = time.time()
-        await self.update_private_histories()
+        panels = getattr(self, "live_panels", None)
+        if panels is None:
+            await self.update_private_histories()
         for user_id in list(self.authorized):
             await self._handle_demo_round(user_id, value)
-            await self._refresh_demo_panel(user_id)
+            if panels is None:
+                await self._refresh_demo_panel(user_id)
+        if panels is not None:
+            panels.request()
         number = float(value[:-1])
 
         if number < 2:

@@ -8,6 +8,7 @@ import time
 import httpx
 
 from luckyjet_password_gate import TelegramPasswordGate
+from demo_persistence import DemoPersistence
 
 
 log = logging.getLogger("luckyjet.reliable_gate")
@@ -19,6 +20,7 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pending_deletions = {}
+        self._demo_storage = DemoPersistence()
         self._runtime_saved = {}
         self._runtime_save_locks = {}
 
@@ -36,6 +38,7 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
     async def _load_persisted_state(self):
         await super()._load_persisted_state()
         if self.redis:
+            await self._demo_storage.restore(self.redis, self.demo_ledgers)
             self.menu_messages = {
                 int(k): int(v)
                 for k, v in (await self.redis.hgetall("luckyjet:menu_messages")).items()
@@ -105,6 +108,10 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
 
             await pipe.execute()
             self._runtime_saved[user_id] = snapshot
+
+    async def _persist_demo(self, user_id):
+        if self.redis:
+            await self._demo_storage.save(self.redis, user_id, self._demo_ledger(user_id))
 
     async def _persist_user(self, user_id):
         await super()._persist_user(user_id)

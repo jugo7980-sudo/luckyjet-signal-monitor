@@ -7,6 +7,8 @@ import os
 import httpx
 
 from history_refresh import HistoryRefresh
+from telegram_delivery import TelegramDelivery
+from live_panel_updates import LivePanelUpdates
 from demo_probe import DemoProbe
 
 import main as base
@@ -170,8 +172,10 @@ async def _main_async() -> None:
     state = await monitor.load_state(config)
     panel = base.TelegramHistoryPanel(config, initial_history=state.previous)
 
+    delivery = TelegramDelivery(panel._request)
+
     async def telegram_request(method, payload):
-        return await telegram_request_with_diagnostics(panel._request, method, payload)
+        return await telegram_request_with_diagnostics(delivery, method, payload)
 
     await prepare_telegram_polling(telegram_request, config.telegram_chat_id)
 
@@ -184,6 +188,13 @@ async def _main_async() -> None:
         history_refresher=refresh.request,
         admin_chat_id=config.telegram_chat_id,
     )
+    async def render_panels():
+        await password_gate.update_private_histories()
+        for user_id in list(password_gate.authorized):
+            await password_gate._refresh_demo_panel(user_id)
+
+    live_panels = LivePanelUpdates(render_panels)
+    password_gate.live_panels = live_panels
     monitor.browser_lock = asyncio.Lock()
     demo_probe = DemoProbe()
     monitor.demo_probe = demo_probe
@@ -215,6 +226,7 @@ async def _main_async() -> None:
             tasks.create_task(polling_lease.run(password_gate.start()))
             tasks.create_task(direct_only.run_monitor(monitor, config, state=state))
     finally:
+        await live_panels.close()
         await demo_probe.close()
         await password_gate.close()
         await refresh.close()

@@ -10,6 +10,7 @@ from history_refresh import HistoryRefresh
 from telegram_delivery import TelegramDelivery
 from live_panel_updates import LivePanelUpdates
 from notification_queue import NotificationQueue
+from coefficient_stats import CoefficientStats
 from demo_probe import DemoProbe
 
 import main as base
@@ -197,6 +198,7 @@ async def _main_async() -> None:
     live_panels = LivePanelUpdates(render_panels)
     password_gate.live_panels = live_panels
     password_gate.notification_queue = NotificationQueue(password_gate)
+    password_gate.coefficient_stats = CoefficientStats(password_gate.redis)
     monitor.browser_lock = asyncio.Lock()
     demo_probe = DemoProbe()
     monitor.demo_probe = demo_probe
@@ -216,6 +218,8 @@ async def _main_async() -> None:
             return False
 
         await password_gate.on_round(formatted)
+        if password_gate.coefficient_stats:
+            await password_gate.coefficient_stats.record(formatted)
         return True
 
     monitor.send = handle_round

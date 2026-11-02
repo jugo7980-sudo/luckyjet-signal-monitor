@@ -345,6 +345,8 @@ class TelegramPasswordGate(HistoryPanels):
             "settings_threshold", "settings_history", "settings_delete", "settings_reset_confirm", "menu_help",
         }:
             return True
+        if data.startswith(("coef_days:", "coef_day:", "coef_filter:", "coef_page:")):
+            return all(part.isdigit() or (len(part)==10 and part[4]=='-' and part[7]=='-') for part in data.split(":")[1:])
         if data.startswith(("demo_list:", "demo_cycle:")):
             parts = data.split(":")
             return (len(parts) == 3 and len(parts[1]) == 8
@@ -414,6 +416,7 @@ class TelegramPasswordGate(HistoryPanels):
             self._setting_row("🔄 Демо-баланс", format_dollars(ledger.balance_cents), "demo_refresh_balance"),
             self._setting_row("💰 Первая ставка", format_dollars(ledger.base_stake_cents), "demo_set_stake"),
             [{"text": "📜 История циклов", "callback_data": "demo_history"}],
+            [{"text": "📈 История Кэф", "callback_data": "coef_days:0"}],
             [{"text": "♻️ Сбросить демо", "callback_data": "demo_reset"}],
             *self._navigation_rows(),
         ]}
@@ -478,6 +481,39 @@ class TelegramPasswordGate(HistoryPanels):
                   f"Чистый результат: {'+' if net > 0 else ''}{format_dollars(net)}",
                   f"Баланс: {format_dollars(entry.get('balance_before_cents', 0))} → {format_dollars(entry.get('balance_after_cents', 0))}"]
         return "\n".join(lines)
+
+
+    async def _coefficient_screen(self, data):
+        stats = getattr(self, "coefficient_stats", None)
+        if stats is None or stats.redis is None:
+            return "📈 Статистика появится после подключения хранилища.", {"inline_keyboard": self._navigation_rows("demo_menu")}
+        parts=data.split(":")
+        if parts[0]=="coef_days":
+            rows=[]
+            from datetime import datetime,timedelta
+            from zoneinfo import ZoneInfo
+            today=datetime.now(ZoneInfo("Asia/Bangkok")).date()
+            for i in range(10):
+                day=(today-timedelta(days=i)).isoformat()
+                rows.append([{"text":day,"callback_data":f"coef_day:{day}:10:0"}])
+            return "📈 Коэффициенты · последние 10 дней · UTC+7", {"inline_keyboard":rows+self._navigation_rows("demo_menu")}
+        _,day,threshold,page=parts
+        threshold=int(threshold);page=int(page)
+        summary=await stats.summary(day)
+        rows,total=await stats.rounds(day,threshold,page)
+        text=f"📈 {day} · >{threshold}x · {page+1}/{max(1,(total+9)//10)}\nРаундов: {total}"
+        if page==0 and threshold==10:
+            text+=f"\nВсего: {summary.get('total',0)}"
+            text+=''.join(f"\n>{t}x: {summary.get(str(t),0)}" for t in (10,25,50,100,200,300,500,800))
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        for stamp,value in rows:
+            text+=f"\n{datetime.fromtimestamp(stamp,ZoneInfo('Asia/Bangkok')).strftime('%H:%M:%S')} · {value:.2f}x"
+        buttons=[[{"text":f">{t}x","callback_data":f"coef_day:{day}:{t}:0"} for t in (10,25,50,100)],[{"text":f">{t}x","callback_data":f"coef_day:{day}:{t}:0"} for t in (200,300,500,800)]]
+        pager=[]
+        if page: pager.append({"text":"⬅️","callback_data":f"coef_day:{day}:{threshold}:{page-1}"})
+        if (page+1)*10<total: pager.append({"text":"➡️","callback_data":f"coef_day:{day}:{threshold}:{page+1}"})
+        return text,{"inline_keyboard":buttons+([pager] if pager else [])+self._navigation_rows("demo_menu")}
 
     def _demo_history_menu(self, user_id, page=0):
         count = len(self._demo_ledger(user_id).history)
@@ -1135,6 +1171,8 @@ class TelegramPasswordGate(HistoryPanels):
             self.demo_pending_inputs.pop(user_id, None)
             answer = self._demo_text(user_id)
             markup = self.demo_menu(user_id)
+        elif data.startswith("coef_"):
+            answer, markup = await self._coefficient_screen(data)
         elif data == "demo_history":
             answer, markup = self._demo_history_list(user_id)
         elif data.startswith("demo_list:"):

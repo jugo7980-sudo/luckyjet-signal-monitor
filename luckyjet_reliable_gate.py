@@ -40,6 +40,9 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
 
     async def _load_persisted_state(self):
         await super()._load_persisted_state()
+        stats = getattr(self, "coefficient_stats", None)
+        if stats is not None:
+            stats.redis = self.redis
         if self.redis:
             await self._demo_storage.restore(self.redis, self.demo_ledgers)
             self.menu_messages = {

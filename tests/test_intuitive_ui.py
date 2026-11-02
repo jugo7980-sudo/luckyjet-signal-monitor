@@ -144,14 +144,14 @@ def test_stake_input_is_guarded_during_cycle_and_cancelled_by_main_menu():
         assert gate.demo_pending_inputs[42] == "stake"
         await gate.handle_update({"message": {"text": "1e99999999", "message_id": 4,
                                              "chat": {"id": 42, "type": "private"}, "from": {"id": 42}}})
-        assert ledger.base_stake_cents == 15_000
+        assert ledger.base_stake_cents == 1_000
         await click(gate, "menu_main")
         assert 42 not in gate.demo_pending_inputs
         await click(gate, "demo_set_stake")
         ledger.active = True  # A new live round starts the cycle while the user types.
         await gate.handle_update({"message": {"text": "10", "message_id": 5,
                                              "chat": {"id": 42, "type": "private"}, "from": {"id": 42}}})
-        assert ledger.base_stake_cents == 15_000
+        assert ledger.base_stake_cents == 1_000
         assert 42 not in gate.demo_pending_inputs
     asyncio.run(run())
 

@@ -250,7 +250,7 @@ def test_demo_stake_input_minimum_and_reset_confirmation_buttons():
         await gate.handle_callback(callback(42, "demo_menu", 600))
         await gate.handle_callback(callback(42, "demo_set_stake", gate.menu_messages[42]))
         await gate.handle_update(message(42, "9", 78))
-        assert gate.demo_ledgers[42].base_stake_cents == 15_000
+        assert gate.demo_ledgers[42].base_stake_cents == 1_000
         invalid_prompt = [
             p for method, p in request.calls if method in {"sendMessage", "editMessageText"}
         ][-1]
@@ -299,8 +299,8 @@ def test_demo_history_button_renders_recovered_initial_stake_and_cycle_result():
         if method in {"sendMessage", "editMessageText"} and p.get("text", "").startswith("📜")
     ][-1]
     assert "Потраченные средства возвращены." in screen["text"]
-    assert "Чистый результат: +$150.00" in screen["text"]
-    assert "Баланс: $10,000.00 → $10,150.00" in screen["text"]
+    assert "Чистый результат: +$10.00" in screen["text"]
+    assert "Баланс: $10,000.00 → $10,010.00" in screen["text"]
 
 
 def test_demo_toggle_arms_when_existing_history_already_meets_selected_trigger():
@@ -318,7 +318,7 @@ def test_demo_toggle_arms_when_existing_history_already_meets_selected_trigger()
 
     assert ledger.enabled is True
     assert ledger.active is True
-    assert ledger.next_stake_cents == 15_000
+    assert ledger.next_stake_cents == 1_000
 
 
 def test_invalid_stale_demo_button_is_acknowledged_without_deleting_menu():
@@ -352,9 +352,9 @@ def test_demo_ledger_tracks_cycles_without_sending_demo_notifications():
 
     texts = [p["text"] for method, p in request.calls if method == "sendMessage"]
     assert not any("🧪 Демо:" in text or "Демо-цикл закрыт" in text for text in texts)
-    assert "Чистый результат: +$150.00" in gate._demo_history_text(42)
+    assert "Чистый результат: +$10.00" in gate._demo_history_text(42)
     assert "Время Таиланда, UTC+7" in gate._demo_history_text(42)
-    assert ledger.balance_cents == 1_015_000
+    assert ledger.balance_cents == 1_001_000
     assert ledger.history[0]["balance_before_cents"] == 1_000_000
 
 
@@ -373,8 +373,8 @@ def test_six_round_trigger_and_live_balance_update_stop_after_leaving_demo():
         assert gate.demo_ledgers[42].active
         await gate.on_round("1.50x")
         edits = [p for m, p in request.calls if m == "editMessageText" and p["message_id"] == panel_id]
-        assert edits[-1]["reply_markup"]["inline_keyboard"][2][1]["text"] == "$9,850.00"
-        assert "$300.00" in edits[-1]["text"]
+        assert edits[-1]["reply_markup"]["inline_keyboard"][2][1]["text"] == "$9,990.00"
+        assert "$20.00" in edits[-1]["text"]
         await gate.handle_callback(callback(42, "menu_main", panel_id))
         count = len([1 for m, p in request.calls if m == "editMessageText" and p["message_id"] == panel_id])
         await gate.on_round("2.00x")

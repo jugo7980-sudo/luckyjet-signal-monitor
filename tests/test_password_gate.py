@@ -162,7 +162,7 @@ def test_user_can_change_and_reset_settings():
     asyncio.run(run())
 
     assert gate.user_threshold(42) == 4
-    assert gate.user_delete_seconds(42) == 5
+    assert gate.user_delete_seconds(42) == 10
     assert 42 not in gate.notifications_disabled
     assert 42 not in gate.silent_users
     deleted = deleted_ids(request)

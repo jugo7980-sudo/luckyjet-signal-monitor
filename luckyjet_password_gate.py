@@ -235,12 +235,12 @@ class TelegramPasswordGate(HistoryPanels):
             int(k): int(v)
             for k, v in (await self.redis.hgetall("luckyjet:delete_seconds")).items()
         }
-        legacy_durations = [uid for uid, value in self.delete_seconds.items() if value in {10, 15}]
+        legacy_durations = [uid for uid, value in self.delete_seconds.items() if value in {5, 15}]
         if legacy_durations:
             pipe = self.redis.pipeline()
             for uid in legacy_durations:
-                self.delete_seconds[uid] = 5
-                pipe.hset("luckyjet:delete_seconds", str(uid), "5")
+                self.delete_seconds[uid] = 10
+                pipe.hset("luckyjet:delete_seconds", str(uid), "10")
             await pipe.execute()
         self.history_sizes = {
             int(k): int(v)
@@ -317,10 +317,10 @@ class TelegramPasswordGate(HistoryPanels):
         return min(10, max(2, value))
 
     def user_delete_seconds(self, user_id):
-        value = int(self.delete_seconds.get(int(user_id), 5))
-        if value in {10, 15}:
-            return 5
-        return value if value in {0, 5, 30, 60} else 5
+        value = int(self.delete_seconds.get(int(user_id), 10))
+        if value in {5, 15}:
+            return 10
+        return value if value in {0, 10, 30, 60} else 10
 
     def user_history_size(self, user_id):
         value = int(self.history_sizes.get(int(user_id), 20))
@@ -458,7 +458,7 @@ class TelegramPasswordGate(HistoryPanels):
         else:
             text = "⏱ Удалять уведомление после конца серии через:"
             choices = [(label, f"delete:{n}" if n else "delete:off", n == self.user_delete_seconds(user_id))
-                       for n, label in ((5, "Через 5 секунд"), (30, "Через 30 секунд"), (60, "Через 60 секунд"), (0, "Не удалять"))]
+                       for n, label in ((10, "Через 10 секунд"), (30, "Через 30 секунд"), (60, "Через 60 секунд"), (0, "Не удалять"))]
             back = "menu_settings"
         buttons = [{"text": ("✓ " if selected else "") + label, "callback_data": action} for label, action, selected in choices]
         columns = 3 if kind in {"settings_threshold", "demo_trigger_menu"} else 2
@@ -1383,9 +1383,9 @@ class TelegramPasswordGate(HistoryPanels):
         elif data.startswith("delete:"):
             raw = data.split(":", 1)[1]
             value = 0 if raw == "off" else self._to_int(raw)
-            if value in {10, 15}:
-                value = 5
-            if value not in {0, 5, 30, 60}:
+            if value in {5, 15}:
+                value = 10
+            if value not in {0, 10, 30, 60}:
                 return
             self.delete_seconds[user_id] = value
             await self._persist_user(user_id)
@@ -1418,7 +1418,7 @@ class TelegramPasswordGate(HistoryPanels):
         elif data == "settings_reset":
             self.pending_confirmations[user_id] = "settings"
             answer = ("♻️ Вернуть настройки по умолчанию?\n"
-                      "Уведомления и звук: ВКЛ · серия: 4 · история: 20 · удаление: 5 сек.\nДемо сохранится.")
+                      "Уведомления и звук: ВКЛ · серия: 4 · история: 20 · удаление: 10 сек.\nДемо сохранится.")
             markup = {"inline_keyboard": [
                 [{"text": "✅ Да, вернуть настройки", "callback_data": "settings_reset_confirm"}],
                 [{"text": "⬅️ Отмена", "callback_data": "menu_settings"}],

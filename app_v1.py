@@ -229,6 +229,10 @@ async def _main_async() -> None:
         if getattr(state, "history_gap", False):
             await password_gate.on_history_gap()
             state.history_gap = False
+            # Persist the advanced source cursor only after all affected DEMO
+            # ledgers have safely recorded the gap. A crash before this save
+            # leaves the old cursor in Redis, so the gap is detected again.
+            await monitor.save_state(config, state)
         return result
 
     monitor.process_network_history = process_history

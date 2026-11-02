@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import logging
 import time
 
@@ -10,6 +11,8 @@ import httpx
 from luckyjet_password_gate import TelegramPasswordGate
 from demo_persistence import DemoPersistence
 
+
+_demo_batch = ContextVar("demo_batch", default=None)
 
 log = logging.getLogger("luckyjet.reliable_gate")
 
@@ -111,7 +114,11 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
 
     async def _persist_demo(self, user_id):
         if self.redis:
-            await self._demo_storage.save(self.redis, user_id, self._demo_ledger(user_id))
+            batch = _demo_batch.get()
+            if batch is not None and batch[0] is self:
+                batch[1][str(int(user_id))] = self._demo_ledger(user_id)
+            else:
+                await self._demo_storage.save(self.redis, user_id, self._demo_ledger(user_id))
 
     async def _persist_user(self, user_id):
         await super()._persist_user(user_id)
@@ -131,7 +138,14 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         await self._persist_runtime_user(user_id)
 
     async def on_round(self, coefficient):
-        await super().on_round(coefficient)
+        batch = {}
+        token = _demo_batch.set((self, batch))
+        try:
+            await super().on_round(coefficient)
+        finally:
+            _demo_batch.reset(token)
+            if self.redis and batch:
+                await self._demo_storage.save_many(self.redis, batch)
         users = set(self.chats) | set(self.active_messages) | set(self.pending_deletions)
         for user_id in users:
             await self._persist_runtime_user(user_id)

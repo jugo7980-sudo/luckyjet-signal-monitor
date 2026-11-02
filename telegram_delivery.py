@@ -2,6 +2,7 @@
 import asyncio
 import copy
 import time
+import httpx
 
 
 class TelegramDelivery:
@@ -26,8 +27,20 @@ class TelegramDelivery:
             async with self._pace:
                 await asyncio.sleep(max(0, self._next - time.monotonic()))
                 self._next = time.monotonic() + self.interval
-            result = await self.request(method, payload)
+            for attempt in range(3):
+                try:
+                    result = await self.request(method, payload)
+                    break
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code != 429 or attempt == 2:
+                        raise
+                    delay = max(0, float(exc.response.json().get('parameters', {}).get('retry_after', 1)))
+                    async with self._pace:
+                        self._next = max(self._next, time.monotonic() + delay)
+                    await asyncio.sleep(delay)
+
             if method.startswith('editMessage') and result.get('ok', True):
+                self._cache = {k: v for k, v in self._cache.items() if k[1:] != key[1:]}
                 self._cache[key] = (copy.deepcopy(payload), time.monotonic())
             if method == 'deleteMessage':
                 self._cache = {k: v for k, v in self._cache.items() if k[1:] != key[1:]}

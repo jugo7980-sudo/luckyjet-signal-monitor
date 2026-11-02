@@ -24,6 +24,7 @@ THAILAND_TIME = timezone(timedelta(hours=7), name="Asia/Bangkok")
 
 
 from history_panels import HistoryPanels
+from notification_queue import streak_view
 
 
 class TelegramPasswordGate(HistoryPanels):
@@ -73,6 +74,15 @@ class TelegramPasswordGate(HistoryPanels):
         self.last_round_at = None
         self.started_at = time.monotonic()
         self._deletion_tasks = set()
+
+    @property
+    def current_streak(self):
+        view = streak_view.get()
+        return view[1] if view is not None and view[0] is self else self._current_streak
+
+    @current_streak.setter
+    def current_streak(self, value):
+        self._current_streak = value
 
     @staticmethod
     def _to_int(value):
@@ -133,9 +143,27 @@ class TelegramPasswordGate(HistoryPanels):
                             "allowed_updates": ["message", "callback_query"],
                         },
                     )
-                    for update in result.get("result", []):
-                        self.offset = update["update_id"] + 1
-                        await self.handle_update(update)
+                    updates = result.get("result", [])
+                    groups = {}
+                    for update in updates:
+                        event = update.get("callback_query") or update.get("message") or {}
+                        uid = event.get("from", {}).get("id", 0)
+                        groups.setdefault(uid, []).append(update)
+                    slots = asyncio.Semaphore(16)
+
+                    async def handle_user(batch):
+                        async with slots:
+                            for update in batch:
+                                try:
+                                    await self.handle_update(update)
+                                except (httpx.HTTPError, RuntimeError, ValueError, KeyError, TypeError) as exc:
+                                    log.warning("Update handler failed: %s", type(exc).__name__)
+
+                    async with asyncio.TaskGroup() as tasks:
+                        for batch in groups.values():
+                            tasks.create_task(handle_user(batch))
+                    if updates:
+                        self.offset = max(update["update_id"] for update in updates) + 1
                 except asyncio.CancelledError:
                     raise
                 except (httpx.HTTPError, RuntimeError, ValueError, KeyError, TypeError) as exc:
@@ -145,6 +173,9 @@ class TelegramPasswordGate(HistoryPanels):
             await self.close()
 
     async def close(self):
+        notices = getattr(self, "notification_queue", None)
+        if notices is not None:
+            await notices.close()
         panels = getattr(self, "live_panels", None)
         if panels is not None:
             await panels.close()
@@ -1542,12 +1573,20 @@ class TelegramPasswordGate(HistoryPanels):
 
         if number < 2:
             self.current_streak.append(value)
-            for user_id in list(self.authorized):
-                await self._update_streak_notice(user_id)
+            notices = getattr(self, "notification_queue", None)
+            if notices is not None:
+                await notices.submit(self.authorized, self.current_streak)
+            else:
+                for user_id in list(self.authorized):
+                    await self._update_streak_notice(user_id)
         else:
-            for user_id in list(self.active_messages):
-                if user_id in self.authorized:
-                    await self._update_streak_notice(user_id, ending=value)
+            notices = getattr(self, "notification_queue", None)
+            if notices is not None:
+                await notices.submit(self.authorized, self.current_streak, ending=value)
+            else:
+                for user_id in list(self.active_messages):
+                    if user_id in self.authorized:
+                        await self._update_streak_notice(user_id, ending=value)
             self.current_streak = []
 
     async def _schedule_delete(self, chat_id, message_id, delay):

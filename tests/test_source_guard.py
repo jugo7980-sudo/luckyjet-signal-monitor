@@ -121,13 +121,14 @@ def test_unrecoverable_id_gap_is_flagged_without_processing_newest_round(monkeyp
         {"id": "new-7", "coefficient": 7.70},
     ]
     sent = []
+    saved = []
 
     async def fake_send(config, message):
         sent.append(message)
         return True
 
     async def fake_save(config, state):
-        return None
+        saved.append((state.last_round_id, list(state.previous)))
 
     monkeypatch.setattr(monitor, "send", fake_send)
     monkeypatch.setattr(monitor, "save_state", fake_save)
@@ -139,3 +140,4 @@ def test_unrecoverable_id_gap_is_flagged_without_processing_newest_round(monkeyp
     assert state.history_gap is True
     assert state.last_round_id == "new-9"
     assert state.previous == [9.90, 8.80, 7.70]
+    assert saved == []

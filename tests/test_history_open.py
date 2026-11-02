@@ -141,6 +141,7 @@ def test_hidden_history_and_visible_menu_survive_restart():
 def test_selected_threshold_does_not_create_automatic_chat_messages():
     gate, request, _ = setup()
     gate.thresholds[42] = 3
+    gate.notifications_disabled.add(42)
     async def run():
         await gate.ensure_private_history(42)
         before = len([1 for m, _ in request.calls if m == "sendMessage"])
@@ -171,8 +172,9 @@ def test_explicit_start_reopens_hidden_panels_for_recovery():
     assert any(m == "sendMessage" and p.get("text") == "🎰 Lucky Jet — история" for m, p in request.calls)
 
 
-def test_hidden_history_and_rounds_never_create_new_messages():
+def test_hidden_history_and_disabled_notifications_never_create_new_messages():
     gate, request, cb = setup()
+    gate.notifications_disabled.add(42)
     gate.history_messages[42] = 101
     async def run():
         await gate.handle_callback(cb)

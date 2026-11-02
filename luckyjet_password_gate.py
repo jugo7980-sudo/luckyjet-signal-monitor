@@ -57,6 +57,7 @@ class TelegramPasswordGate:
 
         self.current_streak = []
         self.active_messages = {}
+        self.pending_deletions = {}
         self.last_round = None
         self.last_round_at = None
         self.started_at = time.monotonic()
@@ -174,6 +175,13 @@ class TelegramPasswordGate:
             int(k): int(v)
             for k, v in (await self.redis.hgetall("luckyjet:delete_seconds")).items()
         }
+        legacy_durations = [uid for uid, value in self.delete_seconds.items() if value in {10, 15}]
+        if legacy_durations:
+            pipe = self.redis.pipeline()
+            for uid in legacy_durations:
+                self.delete_seconds[uid] = 5
+                pipe.hset("luckyjet:delete_seconds", str(uid), "5")
+            await pipe.execute()
         self.history_sizes = {
             int(k): int(v)
             for k, v in (await self.redis.hgetall("luckyjet:history_sizes")).items()
@@ -248,10 +256,10 @@ class TelegramPasswordGate:
         return min(10, max(3, value))
 
     def user_delete_seconds(self, user_id):
-        value = int(self.delete_seconds.get(int(user_id), 30))
-        if value == 15:
-            return 10
-        return value if value in {0, 10, 30, 60} else 30
+        value = int(self.delete_seconds.get(int(user_id), 5))
+        if value in {10, 15}:
+            return 5
+        return value if value in {0, 5, 30, 60} else 5
 
     def user_history_size(self, user_id):
         value = int(self.history_sizes.get(int(user_id), 20))
@@ -278,7 +286,7 @@ class TelegramPasswordGate:
             return self._to_int(data.split(":", 1)[1]) in {20, 50, 100}
         if data.startswith("delete:"):
             raw = data.split(":", 1)[1]
-            return raw == "off" or self._to_int(raw) in {10, 30, 60}
+            return raw == "off" or self._to_int(raw) in {5, 10, 15, 30, 60}
         if data.startswith("demo_trigger:"):
             return self._to_int(data.split(":", 1)[1]) in TRIGGER_OPTIONS
         if self.is_admin(user_id) and data == "admin_users":
@@ -457,7 +465,7 @@ class TelegramPasswordGate:
             for value in (20, 50, 100)
         ]
         delete_row = []
-        for value, label in ((10, "10с"), (30, "30с"), (60, "60с"), (0, "Без удаления")):
+        for value, label in ((5, "5с"), (30, "30с"), (60, "60с"), (0, "Без удаления")):
             prefix = "✓ " if value == delete else ""
             callback_value = "off" if value == 0 else str(value)
             delete_row.append({"text": f"{prefix}{label}", "callback_data": f"delete:{callback_value}"})
@@ -886,6 +894,8 @@ class TelegramPasswordGate:
             else:
                 self.notifications_disabled.add(user_id)
                 answer = "🔕 Уведомления выключены."
+            if user_id in self.notifications_disabled:
+                await self._clear_streak_notice(user_id)
             await self._persist_user(user_id)
             markup = self.menu(user_id)
         elif data == "menu_settings":
@@ -959,6 +969,7 @@ class TelegramPasswordGate:
                 self.notifications_disabled.remove(user_id)
             else:
                 self.notifications_disabled.add(user_id)
+                await self._clear_streak_notice(user_id)
             await self._persist_user(user_id)
             answer = self._settings_text(user_id)
             markup = self.settings_menu(user_id)
@@ -985,7 +996,9 @@ class TelegramPasswordGate:
         elif data.startswith("delete:"):
             raw = data.split(":", 1)[1]
             value = 0 if raw == "off" else self._to_int(raw)
-            if value not in {0, 10, 30, 60}:
+            if value in {10, 15}:
+                value = 5
+            if value not in {0, 5, 30, 60}:
                 return
             self.delete_seconds[user_id] = value
             await self._persist_user(user_id)
@@ -1300,6 +1313,85 @@ class TelegramPasswordGate:
             ]
         }
 
+    async def _clear_streak_notice(self, user_id):
+        ids = {self.active_messages.pop(user_id, None)}
+        pending = self.pending_deletions.pop(user_id, None)
+        if pending:
+            ids.add(pending[0])
+        for message_id in ids:
+            if message_id not in {self.menu_messages.get(user_id), self.history_messages.get(user_id)}:
+                await self._safe_delete(self.chats.get(user_id), message_id)
+        await self._persist_user(user_id)
+
+    def _start_streak_deletion(self, user_id, message_id, deadline):
+        task = asyncio.create_task(self._resume_streak_delete(user_id, message_id, deadline))
+        self._deletion_tasks.add(task)
+        task.add_done_callback(self._deletion_tasks.discard)
+
+    async def _resume_streak_delete(self, user_id, message_id, deadline):
+        # Keep the persisted deadline on cancellation so a restart resumes it.
+        await asyncio.sleep(max(0, deadline - time.time()))
+        if self.pending_deletions.get(user_id) != (message_id, deadline):
+            return
+        try:
+            await self.request("deleteMessage", {
+                "chat_id": self.chats.get(user_id), "message_id": message_id,
+            })
+        except (httpx.HTTPError, RuntimeError):
+            # Retain the deadline for recovery rather than orphaning the notice.
+            log.warning("Streak deletion deferred: user_id=%s", user_id)
+            return
+        if self.pending_deletions.get(user_id) == (message_id, deadline):
+            self.pending_deletions.pop(user_id, None)
+            await self._persist_user(user_id)
+
+    async def _update_streak_notice(self, user_id, ending=None):
+        chat_id = self.chats.get(user_id)
+        if chat_id is None:
+            return
+        if user_id in self.notifications_disabled:
+            await self._clear_streak_notice(user_id)
+            return
+        message_id = self.active_messages.get(user_id)
+        if ending is None and len(self.current_streak) < self.user_threshold(user_id):
+            if message_id is not None:
+                await self._clear_streak_notice(user_id)
+            return
+        if message_id is None:
+            if ending is not None:
+                return
+            # Remove the previous completed notice before opening the next one.
+            await self._clear_streak_notice(user_id)
+            try:
+                result = await self.request("sendMessage", {
+                    "chat_id": chat_id, "text": "🎰 Lucky Jet | Серия <2x",
+                    "reply_markup": self._streak_markup(),
+                    "disable_notification": user_id in self.silent_users,
+                })
+                message_id = result.get("result", {}).get("message_id")
+                if message_id is not None:
+                    self.active_messages[user_id] = int(message_id)
+                    await self._persist_user(user_id)
+            except (httpx.HTTPError, RuntimeError):
+                log.warning("Streak notification create failed: user_id=%s", user_id)
+            return
+        try:
+            await self.request("editMessageReplyMarkup", {
+                "chat_id": chat_id, "message_id": message_id,
+                "reply_markup": self._streak_markup(ending=ending),
+            })
+        except (httpx.HTTPError, RuntimeError):
+            # Keep the known id on network failures; never send a duplicate.
+            log.info("Streak notification edit not applied: user_id=%s", user_id)
+        if ending is not None:
+            delay = self.user_delete_seconds(user_id)
+            deadline = time.time() + delay if delay else 0
+            self.active_messages.pop(user_id, None)
+            self.pending_deletions[user_id] = (message_id, deadline)
+            await self._persist_user(user_id)
+            if deadline:
+                self._start_streak_deletion(user_id, message_id, deadline)
+
     async def on_round(self, coefficient):
         value = self._format_coefficient(coefficient)
         if value is None:
@@ -1314,7 +1406,12 @@ class TelegramPasswordGate:
 
         if number < 2:
             self.current_streak.append(value)
+            for user_id in list(self.authorized):
+                await self._update_streak_notice(user_id)
         else:
+            for user_id in list(self.active_messages):
+                if user_id in self.authorized:
+                    await self._update_streak_notice(user_id, ending=value)
             self.current_streak = []
 
     async def _schedule_delete(self, chat_id, message_id, delay):

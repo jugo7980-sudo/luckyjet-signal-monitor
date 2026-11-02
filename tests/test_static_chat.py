@@ -34,6 +34,7 @@ def test_navigation_and_thirty_rounds_keep_exactly_two_messages():
     gate = ReliableTelegramPasswordGate(request, history_provider=lambda: ["1.20x"])
     gate.authorized.add(42)
     gate.chats[42] = 42
+    gate.notifications_disabled.add(42)
 
     async def run():
         await gate.ensure_private_history(42)

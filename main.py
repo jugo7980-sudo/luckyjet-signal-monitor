@@ -347,7 +347,7 @@ class TelegramStreakPanel:
 
     async def _delete_later(self, message_id):
         try:
-            await asyncio.sleep(30)
+            await asyncio.sleep(5)
             await self._request("deleteMessage", {
                 "chat_id": self.config.telegram_chat_id,
                 "message_id": message_id,

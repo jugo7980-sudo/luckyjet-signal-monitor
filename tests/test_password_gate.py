@@ -139,7 +139,7 @@ def test_settings_are_top_to_bottom_and_keep_navigation():
     assert callbacks[1] == ["threshold:3", "threshold:4", "threshold:5", "threshold:6"]
     assert callbacks[2] == ["threshold:7", "threshold:8", "threshold:9", "threshold:10"]
     assert callbacks[3] == ["history_size:20", "history_size:50", "history_size:100"]
-    assert callbacks[4] == ["delete:10", "delete:30", "delete:60", "delete:off"]
+    assert callbacks[4] == ["delete:5", "delete:30", "delete:60", "delete:off"]
     assert callbacks[5] == ["settings_sound"]
     assert callbacks[6] == ["settings_test"]
     assert callbacks[7] == ["settings_reset"]
@@ -162,7 +162,7 @@ def test_user_can_change_and_reset_settings():
     asyncio.run(run())
 
     assert gate.user_threshold(42) == 4
-    assert gate.user_delete_seconds(42) == 30
+    assert gate.user_delete_seconds(42) == 5
     assert 42 not in gate.notifications_disabled
     assert 42 not in gate.silent_users
     deleted = deleted_ids(request)
@@ -176,6 +176,7 @@ def test_private_streak_uses_user_threshold_updates_and_finishes():
     gate.authorized.add(42)
     gate.chats[42] = 42
     gate.silent_users.add(42)
+    gate.notifications_disabled.add(42)
     async def run():
         await gate.ensure_private_history(42)
         before = len(sent_messages(request))
@@ -196,6 +197,7 @@ def test_disabling_notifications_does_not_kill_existing_streak_message():
     gate.authorized.add(42)
     gate.chats[42] = 42
     gate.silent_users.add(42)
+    gate.notifications_disabled.add(42)
     async def run():
         await gate.ensure_private_history(42)
         before = len(sent_messages(request))
@@ -233,6 +235,7 @@ def test_silent_setting_marks_new_streak_notification_silent():
     gate.authorized.add(42)
     gate.chats[42] = 42
     gate.silent_users.add(42)
+    gate.notifications_disabled.add(42)
     async def run():
         await gate.ensure_private_history(42)
         before = len(sent_messages(request))

@@ -36,9 +36,9 @@ def test_restore_preserves_visible_menu_and_active_streak_message():
     edits = [p for m, p in request.calls if m == "editMessageReplyMarkup"]
     assert {"chat_id": 42, "message_id": 55} not in deletes
     assert gate.menu_messages[42] == 55
-    assert {"chat_id": 42, "message_id": 77} in deletes
-    assert not edits
-    assert 42 not in gate.active_messages
+    assert {"chat_id": 42, "message_id": 77} not in deletes
+    assert any(p["message_id"] == 77 for p in edits)
+    assert gate.active_messages[42] == 77
 
 
 def test_restore_creates_missing_active_streak_if_threshold_already_met():

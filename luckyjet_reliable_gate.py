@@ -94,7 +94,7 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         await self._persist_runtime_user(user_id)
 
     async def _revoke_user(self, user_id, *, block):
-        self.pending_deletions.pop(int(user_id), None)
+        await self._clear_streak_notice(int(user_id))
         await super()._revoke_user(user_id, block=block)
         await self._persist_runtime_user(user_id)
 
@@ -104,61 +104,21 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         for user_id in users:
             await self._persist_runtime_user(user_id)
 
-    async def _schedule_delete(self, chat_id, message_id, delay):
-        user_id = next(
-            (
-                uid
-                for uid, active_message_id in self.active_messages.items()
-                if active_message_id == message_id and self.chats.get(uid) == chat_id
-            ),
-            None,
-        )
-
-        if user_id is not None:
-            self.pending_deletions[user_id] = (
-                int(message_id),
-                time.time() + float(delay),
-            )
-            await self._persist_runtime_user(user_id)
-
-        try:
-            await asyncio.sleep(delay)
-            await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-        except asyncio.CancelledError:
-            raise
-        except (httpx.HTTPError, RuntimeError):
-            log.warning("Restart-safe streak deletion failed: chat_id=%s message_id=%s", chat_id, message_id)
-        finally:
-            if user_id is not None:
-                pending = self.pending_deletions.get(user_id)
-                if pending and pending[0] == message_id:
-                    self.pending_deletions.pop(user_id, None)
-                    await self._persist_runtime_user(user_id)
-
-    async def _resume_pending_delete(self, user_id, chat_id, message_id, delay):
-        try:
-            if delay > 0:
-                await asyncio.sleep(delay)
-            await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-        except asyncio.CancelledError:
-            raise
-        except (httpx.HTTPError, RuntimeError):
-            log.warning("Resumed streak deletion failed: user_id=%s", user_id)
-        finally:
-            pending = self.pending_deletions.get(user_id)
-            if pending and pending[0] == message_id:
+    async def restore_runtime_state(self, *, now=None):
+        """Resume known notices/deadlines without creating notifications on startup."""
+        now = time.time() if now is None else float(now)
+        for user_id, (message_id, deadline) in list(self.pending_deletions.items()):
+            if user_id not in self.authorized or user_id not in self.chats or user_id in self.notifications_disabled:
+                await self._clear_streak_notice(user_id)
+            elif deadline and deadline <= now:
+                await self._safe_delete(self.chats.get(user_id), message_id)
                 self.pending_deletions.pop(user_id, None)
                 await self._persist_runtime_user(user_id)
-
-    async def restore_runtime_state(self, *, now=None):
-        """Keep menu/history panels and remove tracked legacy notifications."""
-        tracked = {(uid, mid) for uid, mid in self.active_messages.items()}
-        tracked.update((uid, item[0]) for uid, item in self.pending_deletions.items())
-        for user_id, message_id in tracked:
-            if message_id not in {self.menu_messages.get(user_id), self.history_messages.get(user_id)}:
-                await self._safe_delete(self.chats.get(user_id), message_id)
-        users = set(self.active_messages) | set(self.pending_deletions)
-        self.active_messages.clear()
-        self.pending_deletions.clear()
-        for user_id in users:
-            await self._persist_runtime_user(user_id)
+            elif deadline:
+                self._start_streak_deletion(user_id, message_id, deadline)
+        for user_id in list(self.active_messages):
+            if (user_id not in self.authorized or user_id in self.notifications_disabled
+                    or len(self.current_streak) < self.user_threshold(user_id)):
+                await self._clear_streak_notice(user_id)
+            else:
+                await self._update_streak_notice(user_id)

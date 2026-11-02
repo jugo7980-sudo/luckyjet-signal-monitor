@@ -25,6 +25,7 @@ THAILAND_TIME = timezone(timedelta(hours=7), name="Asia/Bangkok")
 
 from history_panels import HistoryPanels
 from notification_queue import streak_view
+from telegram_delivery import interactive
 
 
 class TelegramPasswordGate(HistoryPanels):
@@ -153,6 +154,13 @@ class TelegramPasswordGate(HistoryPanels):
 
                     async def handle_user(batch):
                         async with slots:
+                            token = interactive.set(True)
+                            try:
+                                await handle_batch(batch)
+                            finally:
+                                interactive.reset(token)
+
+                    async def handle_batch(batch):
                             for update in batch:
                                 try:
                                     await self.handle_update(update)
@@ -1536,15 +1544,23 @@ class TelegramPasswordGate(HistoryPanels):
                     await self._persist_user(user_id)
             except (httpx.HTTPError, RuntimeError):
                 log.warning("Streak notification create failed: user_id=%s", user_id)
+                return False
             return
         try:
             await self.request("editMessageReplyMarkup", {
                 "chat_id": chat_id, "message_id": message_id,
                 "reply_markup": self._streak_markup(ending=ending),
             })
-        except (httpx.HTTPError, RuntimeError):
-            # Keep the known id on network failures; never send a duplicate.
-            log.info("Streak notification edit not applied: user_id=%s", user_id)
+        except (httpx.HTTPError, RuntimeError) as exc:
+            unchanged = False
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 400:
+                try:
+                    unchanged = "message is not modified" in str(exc.response.json().get("description", "")).lower()
+                except (ValueError, TypeError):
+                    pass
+            if not unchanged:
+                log.info("Streak notification edit not applied: user_id=%s", user_id)
+                return False
         if ending is not None:
             delay = self.user_delete_seconds(user_id)
             deadline = time.time() + delay if delay else 0

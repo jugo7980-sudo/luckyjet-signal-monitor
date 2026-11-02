@@ -63,6 +63,9 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
             }
 
         await self.restore_runtime_state()
+        notices = getattr(self, "notification_queue", None)
+        if notices is not None:
+            await notices.restore()
 
     async def _persist_runtime_user(self, user_id):
         if not self.redis:

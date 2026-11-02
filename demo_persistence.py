@@ -1,6 +1,7 @@
 """Atomic split storage for current demo state and completed cycles."""
 import json
 import asyncio
+import logging
 from contextlib import AsyncExitStack
 
 
@@ -36,8 +37,12 @@ class DemoPersistence:
         for uid, raw in histories.items():
             ledger = ledgers.get(int(uid))
             if ledger is not None:
-                history = json.loads(raw)
-                if not isinstance(history, list):
-                    raise ValueError('Invalid completed cycle history')
+                try:
+                    history = json.loads(raw)
+                    if not isinstance(history, list) or any(not isinstance(entry, dict) for entry in history):
+                        raise ValueError('Invalid completed cycle history')
+                except (ValueError, TypeError):
+                    logging.getLogger(__name__).error('Corrupt cycle history skipped: user_id=%s', uid)
+                    continue
                 ledger.history = history
                 self.saved_history[str(uid)] = raw

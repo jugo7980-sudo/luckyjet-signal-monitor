@@ -134,3 +134,14 @@ def test_user_stop_records_session_but_keeps_known_balance_and_is_distinct_from_
     assert entry["net_cents"] == confirmed_balance - entry["balance_before_cents"]
     assert entry["balance_after_cents"] == confirmed_balance
     assert ledger.active is False
+
+
+def test_demo_below_minimum_stake_stays_paused_and_does_not_build_trigger_streak():
+    ledger = DemoLedger(enabled=True, trigger_streak=2, balance_cents=MINIMUM_STAKE_CENTS - 1)
+
+    events = [ledger.process_round(value) for value in ("1.10", "1.20", "1.30", "1.40")]
+
+    assert events == [None, None, None, None]
+    assert ledger.active is False
+    assert ledger.low_streak == 0
+    assert ledger.history == []

@@ -560,7 +560,7 @@ class TelegramPasswordGate(HistoryPanels):
             net = int(entry.get("net_cents", 0))
             result = ("+" if net > 0 else "") + format_dollars(net)
             round_count = len(entry.get("rounds") or [])
-            rows.append([{"text": f"{round_count} цик. · {stamp} · {result}", "callback_data": f"demo_cycle:{token}:{index}"}])
+            rows.append([{"text": f"{round_count} шаг. · {stamp} · {result}", "callback_data": f"demo_cycle:{token}:{index}"}])
         pager = []
         if page:
             pager.append({"text": "⬅️ Назад", "callback_data": f"demo_list:{token}:{page - 1}"})

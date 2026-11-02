@@ -524,9 +524,7 @@ class TelegramPasswordGate(HistoryPanels):
         summary=await stats.summary(day)
         from datetime import datetime
         label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y')
-        text=f"📈 История Кэф · {label}\n⚠️ Неполные данные"
-        if summary.get('time_uncertain'):
-            text+="\nЧасть раундов — по времени получения"
+        text=f"📈 История Кэф · {label}\nЗафиксировано раундов: {summary.get('total', 0)}"
         text+=''.join(f"\n>{t}x: {summary.get(str(t),0)}" for t in (10,25,50,100,200,300,500,800))
         return text,{"inline_keyboard":self._navigation_rows("coef_days:0", "📈 История Кэф")}
 

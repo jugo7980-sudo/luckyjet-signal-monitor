@@ -507,22 +507,13 @@ class TelegramPasswordGate(HistoryPanels):
                 title+="\nДанных пока нет."
             return title, {"inline_keyboard":rows+self._navigation_rows("demo_menu", "🧪 Демо-режим")}
         _,day,threshold,page=parts
-        threshold=int(threshold);page=int(page)
         summary=await stats.summary(day)
-        rows,total=await stats.rounds(day,threshold,page)
-        text=f"📈 {day} · >{threshold}x · {page+1}/{max(1,(total+9)//10)}\nРаундов: {total}"
-        if page==0 and threshold==10:
-            text+=f"\nВсего: {summary.get('total',0)}"
-            text+=''.join(f"\n>{t}x: {summary.get(str(t),0)}" for t in (10,25,50,100,200,300,500,800))
         from datetime import datetime
-        from zoneinfo import ZoneInfo
-        for stamp,value in rows:
-            text+=f"\n{datetime.fromtimestamp(stamp,ZoneInfo('Asia/Bangkok')).strftime('%H:%M:%S')} · {value:.2f}x"
-        buttons=[[{"text":f">{t}x","callback_data":f"coef_day:{day}:{t}:0"} for t in (10,25,50,100)],[{"text":f">{t}x","callback_data":f"coef_day:{day}:{t}:0"} for t in (200,300,500,800)]]
-        pager=[]
-        if page: pager.append({"text":"⬅️","callback_data":f"coef_day:{day}:{threshold}:{page-1}"})
-        if (page+1)*10<total: pager.append({"text":"➡️","callback_data":f"coef_day:{day}:{threshold}:{page+1}"})
-        return text,{"inline_keyboard":buttons+([pager] if pager else [])+self._navigation_rows("coef_days:0", "📈 История Кэф")}
+        label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y')
+        text=f"📈 История Кэф · {label}"
+        text+=''.join(f"\n>{t}x: {summary.get(str(t),0)}" for t in (10,25,50,100,200,300,500,800))
+        return text,{"inline_keyboard":self._navigation_rows("coef_days:0", "📈 История Кэф")}
+
 
     def _demo_history_menu(self, user_id, page=0):
         count = len(self._demo_ledger(user_id).history)

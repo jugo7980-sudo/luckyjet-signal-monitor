@@ -30,3 +30,24 @@ def test_page_classification_does_not_treat_history_or_demo_button_as_active_dem
     assert classify_page('1.2x 3.4x') == 'unconfirmed'
     assert classify_page('The site is not available in your region. Play demo') == 'region_blocked'
     assert classify_page('Verify you are human') == 'verification'
+
+
+def test_probe_waits_until_monitor_releases_browser_memory():
+    from demo_probe import DemoProbe
+    async def run():
+        lock = asyncio.Lock()
+        await lock.acquire()
+        probe = DemoProbe(browser_lock=lock)
+        entered = asyncio.Event()
+        async def inspect():
+            entered.set()
+            return 'unconfirmed'
+        probe._inspect = inspect
+        task = probe.start()
+        await asyncio.sleep(0)
+        assert not entered.is_set()
+        lock.release()
+        await task
+        assert entered.is_set()
+        assert not lock.locked()
+    asyncio.run(run())

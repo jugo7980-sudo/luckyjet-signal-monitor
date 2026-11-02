@@ -68,13 +68,15 @@ async def run_monitor(monitor, config, *, state=None):
         context = None
         page = None
         capture = None
+        browser_lock = getattr(monitor, "browser_lock", None)
+        owns_browser_lock = False
         direct_only = False
         missing_since = None
         stale_since = None
         last_diagnostic = 0.0
 
         async def close_browser_stack():
-            nonlocal browser, context, page
+            nonlocal browser, context, page, owns_browser_lock
 
             if page is not None:
                 try:
@@ -98,9 +100,16 @@ async def run_monitor(monitor, config, *, state=None):
                     pass
                 browser = None
 
-        async def open_browser_stack():
-            nonlocal browser, context, page, capture
+            if owns_browser_lock:
+                browser_lock.release()
+                owns_browser_lock = False
 
+        async def open_browser_stack():
+            nonlocal browser, context, page, capture, owns_browser_lock
+
+            if browser_lock is not None:
+                await browser_lock.acquire()
+                owns_browser_lock = True
             browser = await p.chromium.launch(headless=config.headless)
             context = await browser.new_context(
                 viewport={"width": 430, "height": 932},

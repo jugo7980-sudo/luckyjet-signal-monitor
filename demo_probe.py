@@ -22,7 +22,8 @@ def classify_page(text):
 
 
 class DemoProbe:
-    def __init__(self):
+    def __init__(self, browser_lock=None):
+        self.browser_lock = browser_lock or asyncio.Lock()
         self.task = None
         self.result = 'not_checked'
         self.checked_at = None
@@ -74,7 +75,8 @@ class DemoProbe:
 
     async def _run(self):
         try:
-            self.result = await asyncio.wait_for(self._inspect(), timeout=45)
+            async with self.browser_lock:
+                self.result = await asyncio.wait_for(self._inspect(), timeout=45)
         except asyncio.TimeoutError:
             self.result = 'timeout'
         except asyncio.CancelledError:

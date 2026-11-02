@@ -174,7 +174,8 @@ async def main_async() -> None:
         history_refresher=refresh.request,
         admin_chat_id=config.telegram_chat_id,
     )
-    demo_probe = DemoProbe()
+    monitor.browser_lock = asyncio.Lock()
+    demo_probe = DemoProbe(browser_lock=monitor.browser_lock)
     password_gate.demo_probe = demo_probe
 
     async def initial_demo_check():

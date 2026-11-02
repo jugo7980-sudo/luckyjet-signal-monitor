@@ -526,6 +526,9 @@ class TelegramPasswordGate(HistoryPanels):
             lines.append(
                 f"Шаг {step}: {format_dollars(stake)} · {item.get('coefficient', '?')}x · {step_result}"
             )
+        if outcome == "recovered":
+            lines.append("")
+            lines.append("Потраченные средства возвращены.")
         lines += ["", f"Причина завершения: {reason}",
                   f"Всего поставлено: {format_dollars(entry.get('total_stake_cents', 0) or 0)}"]
         payout = entry.get("payout_cents")

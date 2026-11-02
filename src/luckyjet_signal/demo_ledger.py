@@ -208,6 +208,10 @@ class DemoLedger:
         if not multiplier.is_finite() or multiplier < 1:
             return None
 
+        if not self.active and self.balance_cents < MINIMUM_STAKE_CENTS:
+            self.low_streak = 0
+            return None
+
         if not self.active:
             if multiplier >= 2:
                 self.low_streak = 0

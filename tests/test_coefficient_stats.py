@@ -62,17 +62,25 @@ def test_day_page_uses_one_transaction_and_preserves_page_bounds():
 def test_less_than_two_counter_and_screen():
  from coefficient_stats import SCRIPT
  assert "tonumber(ARGV[1]) < 2" in SCRIPT
- assert "'lt2'" in SCRIPT
+ assert "lt2_tracking" in SCRIPT
+ assert "lt2_partial" in SCRIPT
 
  class Stats:
   redis=object()
-  async def summary(self, day):
-   return {'total': 100, 'lt2': 42, '10': 7}
+  def __init__(self, summary): self.value=summary
+  async def summary(self, day): return self.value
+
+ async def render(summary):
+  gate=ReliableTelegramPasswordGate(None)
+  gate.coefficient_stats=Stats(summary)
+  text,_=await gate._coefficient_screen('coef_day:2026-11-03:10:0')
+  return text
 
  async def run():
-  gate=ReliableTelegramPasswordGate(None)
-  gate.coefficient_stats=Stats()
-  text,_=await gate._coefficient_screen('coef_day:2026-11-03:10:0')
-  assert '<2x: 42' in text
-  assert text.index('Зафиксировано раундов') < text.index('<2x: 42') < text.index('>10x: 7')
+  partial=await render({'total':100,'lt2':42,'lt2_tracking':1,'lt2_partial':1,'10':7})
+  assert '<2x с обновления: 42' in partial
+  full=await render({'total':100,'lt2':42,'lt2_tracking':1,'10':7})
+  assert '<2x: 42' in full and 'с обновления' not in full
+  legacy=await render({'total':100,'10':7})
+  assert '<2x: нет данных' in legacy
  asyncio.run(run())

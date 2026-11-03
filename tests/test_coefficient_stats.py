@@ -77,13 +77,16 @@ def test_less_than_two_counter_and_screen():
   text,_=await gate._coefficient_screen('coef_day:2026-11-03:10:0')
   return text
 
+ def under2_lines(text):
+  return [line for line in text.splitlines() if line.startswith('<2x')]
+
  async def run():
   partial=await render({'total':100,'lt2':42,'lt2_tracking':1,'lt2_partial':1,'10':7})
-  assert '<2x с обновления: 42' in partial
+  assert under2_lines(partial) == ['<2x с обновления: 42']
   full=await render({'total':100,'lt2':42,'lt2_tracking':1,'10':7})
-  assert '<2x: 42' in full and 'с обновления' not in full
+  assert under2_lines(full) == ['<2x: 42']
   legacy=await render({'total':100,'10':7})
-  assert '<2x: нет данных' in legacy
+  assert under2_lines(legacy) == ['<2x: нет данных']
  asyncio.run(run())
 
 

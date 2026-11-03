@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo('Asia/Bangkok')
 THRESHOLDS = (10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000)
+UNDER2_FIX_DAY = '2026-11-03'
+UNDER2_FIX_MARKER = 'luckyjet:coef:lt2-single-count-fixed-v1'
 SCRIPT = """
 if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
 redis.call('SET', KEYS[1], '1', 'EX', 7948800)
@@ -23,6 +25,18 @@ for i=2,14 do
 end
 redis.call('EXPIRE', KEYS[2], 7948800)
 redis.call('ZADD', KEYS[3], ARGV[15], ARGV[16])
+return 1
+"""
+UNDER2_DOUBLE_FIX = """
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+local raw = redis.call('HGET', KEYS[2], 'lt2')
+if raw then
+ local count = tonumber(raw)
+ if count and count >= 0 then
+  redis.call('HSET', KEYS[2], 'lt2', math.floor(count / 2))
+ end
+end
+redis.call('SET', KEYS[1], '1', 'EX', 7948800)
 return 1
 """
 
@@ -92,6 +106,12 @@ class CoefficientStats:
     async def bootstrap(self):
         if self.redis is None:
             return
+        await self.redis.eval(
+            UNDER2_DOUBLE_FIX,
+            2,
+            UNDER2_FIX_MARKER,
+            f'luckyjet:coef:{UNDER2_FIX_DAY}',
+        )
         today=datetime.now(TZ).date()
         dates=[(today-timedelta(days=i)).isoformat() for i in range(11)]
         pipe=self.redis.pipeline()

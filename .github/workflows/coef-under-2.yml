@@ -1,0 +1,79 @@
+name: Add under-2 coefficient count
+
+on:
+  push:
+    branches:
+      - feature/coef-under-2
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/coef-under-2
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Add RED tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tests/test_coefficient_stats.py')
+          text = p.read_text()
+          marker = 'def test_less_than_two_counter_and_screen():'
+          if marker not in text:
+              text += '''\n\ndef test_less_than_two_counter_and_screen():\n from coefficient_stats import SCRIPT\n assert "tonumber(ARGV[1]) < 2" in SCRIPT\n assert "'lt2'" in SCRIPT\n\n class Stats:\n  redis=object()\n  async def summary(self, day):\n   return {'total': 100, 'lt2': 42, '10': 7}\n\n async def run():\n  gate=ReliableTelegramPasswordGate(None)\n  gate.coefficient_stats=Stats()\n  text,_=await gate._coefficient_screen('coef_day:2026-11-03:10:0')\n  assert '<2x: 42' in text\n  assert text.index('Зафиксировано раундов') < text.index('<2x: 42') < text.index('>10x: 7')\n asyncio.run(run())\n'''
+              p.write_text(text)
+          PY
+      - name: Confirm RED
+        run: |
+          set +e
+          pytest -q tests/test_coefficient_stats.py -k less_than_two
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo 'Expected RED test to fail before implementation'
+            exit 1
+          fi
+      - name: Implement counter and UI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('coefficient_stats.py')
+          text = p.read_text()
+          old = "redis.call('HSET', KEYS[2], 'partial', '1')\nif ARGV[17] == '1' then redis.call('HSET', KEYS[2], 'time_uncertain', '1') end"
+          new = "redis.call('HSET', KEYS[2], 'partial', '1')\nif tonumber(ARGV[1]) < 2 then redis.call('HINCRBY', KEYS[2], 'lt2', 1) end\nif ARGV[17] == '1' then redis.call('HSET', KEYS[2], 'time_uncertain', '1') end"
+          if old not in text:
+              raise SystemExit('coefficient_stats.py patch target not found')
+          p.write_text(text.replace(old, new, 1))
+
+          p = Path('luckyjet_password_gate.py')
+          text = p.read_text()
+          old = '''        text=f"📈 История Кэф · {label}\\nЗафиксировано раундов: {summary.get('total', 0)}"\n        text+=''.join(f"\\n>{t}x: {summary.get(str(t),0)}" for t in (10,25,50,100,200,300,500,800,1000,1500,2000,3000,5000))'''
+          new = '''        text=f"📈 История Кэф · {label}\\nЗафиксировано раундов: {summary.get('total', 0)}"\n        text+=f"\\n<2x: {summary.get('lt2', 0)}"\n        text+=''.join(f"\\n>{t}x: {summary.get(str(t),0)}" for t in (10,25,50,100,200,300,500,800,1000,1500,2000,3000,5000))'''
+          if old not in text:
+              raise SystemExit('luckyjet_password_gate.py patch target not found')
+          p.write_text(text.replace(old, new, 1))
+          PY
+      - name: Run full test suite
+        run: pytest -q
+      - name: Commit tested change
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add coefficient_stats.py luckyjet_password_gate.py tests/test_coefficient_stats.py
+          git commit -m 'feat: count coefficients below 2x'
+          git push origin HEAD:feature/coef-under-2

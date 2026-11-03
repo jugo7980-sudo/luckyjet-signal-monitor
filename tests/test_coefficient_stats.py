@@ -85,3 +85,24 @@ def test_less_than_two_counter_and_screen():
   legacy=await render({'total':100,'10':7})
   assert '<2x: нет данных' in legacy
  asyncio.run(run())
+
+
+def test_bootstrap_repairs_initial_double_count_once():
+ from coefficient_stats import UNDER2_DOUBLE_FIX, UNDER2_FIX_DAY, UNDER2_FIX_MARKER
+ assert "math.floor(count / 2)" in UNDER2_DOUBLE_FIX
+ assert "EXISTS', KEYS[1]" in UNDER2_DOUBLE_FIX
+
+ class Pipeline:
+  def hget(self,*args): pass
+  async def execute(self): return [None] * 11
+ class Store:
+  def __init__(self): self.eval_calls=[]
+  async def eval(self,script,n,*args):
+   self.eval_calls.append((script,n,args)); return 1
+  def pipeline(self): return Pipeline()
+  async def zadd(self,*args,**kwargs): raise AssertionError('zadd should not be called')
+ async def run():
+  store=Store()
+  await CoefficientStats(store).bootstrap()
+  assert store.eval_calls == [(UNDER2_DOUBLE_FIX, 2, (UNDER2_FIX_MARKER, f'luckyjet:coef:{UNDER2_FIX_DAY}'))]
+ asyncio.run(run())

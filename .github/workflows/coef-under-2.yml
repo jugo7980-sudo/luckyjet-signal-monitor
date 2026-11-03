@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/coef-under-2
+  workflow_dispatch:
 
 permissions:
   contents: write

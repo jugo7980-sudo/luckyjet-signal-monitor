@@ -12,6 +12,7 @@ redis.call('SET', KEYS[1], '1', 'EX', 7948800)
 redis.call('HINCRBY', KEYS[2], 'total', 1)
 redis.call('HSET', KEYS[2], 'partial', '1')
 if tonumber(ARGV[1]) < 2 then redis.call('HINCRBY', KEYS[2], 'lt2', 1) end
+if tonumber(ARGV[1]) < 2 then redis.call('HINCRBY', KEYS[2], 'lt2', 1) end
 if ARGV[17] == '1' then redis.call('HSET', KEYS[2], 'time_uncertain', '1') end
 for i=2,14 do
  if tonumber(ARGV[1]) > tonumber(ARGV[i]) then

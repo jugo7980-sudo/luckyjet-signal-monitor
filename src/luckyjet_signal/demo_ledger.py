@@ -123,16 +123,12 @@ class DemoLedger:
         return {"type": "trigger", "next_stake_cents": self.next_stake_cents}
 
     def reset(self):
-        if self.active:
-            self.finish_active("stopped_by_user")
         enabled = self.enabled
         trigger = self.trigger_streak
-        history = self.history[:]
         self.__init__(
             enabled=enabled,
             trigger_streak=trigger,
             base_stake_cents=MINIMUM_STAKE_CENTS,
-            history=history,
         )
 
     def _finish_cycle(

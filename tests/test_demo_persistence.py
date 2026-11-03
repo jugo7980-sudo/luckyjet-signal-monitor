@@ -52,3 +52,24 @@ def test_restore_bounds_legacy_completed_history_to_newest_one_hundred():
         assert len(ledgers[42].history) == MAX_HISTORY
         assert ledgers[42].history == history[:MAX_HISTORY]
     asyncio.run(run())
+
+
+def test_full_demo_reset_persists_empty_history_across_restart():
+    async def run():
+        redis = Redis()
+        store = DemoPersistence()
+        ledger = DemoLedger(enabled=True, trigger_streak=2)
+        for value in ['1.2', '1.3', '2.0', '1.1', '1.2', '1.4']:
+            ledger.process_round(value)
+        assert ledger.history and ledger.active
+        await store.save(redis, 42, ledger)
+        ledger.reset()
+        await store.save(redis, 42, ledger)
+        state = json.loads(redis.data['luckyjet:demo_sessions', '42'])
+        restored = {42: DemoLedger(**state)}
+        await DemoPersistence().restore(redis, restored)
+        assert restored[42].history == []
+        assert restored[42].balance_cents == 1_000_000
+        assert not restored[42].active
+        assert restored[42].cycle_rounds == []
+    asyncio.run(run())

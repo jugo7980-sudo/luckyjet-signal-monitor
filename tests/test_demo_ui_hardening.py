@@ -143,7 +143,7 @@ def test_history_gap_closes_only_active_demo_as_incomplete_and_warns():
                for method, payload in request.calls)
 
 
-def test_demo_reset_prompt_preserves_history_and_active_reset_records_user_stop():
+def test_confirmed_demo_reset_clears_active_cycle_history_and_statistics():
     gate, request = setup()
     ledger = gate._demo_ledger(42)
     ledger.history = [normal_entry(1)]
@@ -156,16 +156,22 @@ def test_demo_reset_prompt_preserves_history_and_active_reset_records_user_stop(
     async def run():
         await click(gate, "demo_reset")
         prompt = screen(request)["text"].lower()
-        assert "история" in prompt and "не удал" in prompt
+        assert "история циклов" in prompt and "обнулятся" in prompt
         assert "$10.00" in prompt
         await click(gate, "demo_reset_confirm")
     asyncio.run(run())
 
     assert ledger.balance_cents == 1_000_000
     assert ledger.base_stake_cents == 1_000
-    assert len(ledger.history) == 2
-    assert ledger.history[0]["outcome"] == "stopped_by_user"
-    assert ledger.history[1]["marker"] == 1
+    assert ledger.history == []
+    assert not ledger.active
+    assert ledger.cycle_rounds == []
+    stats = gate._demo_stats_text(42)
+    for label in ("Всего сессий", "Успешных", "Проигрышных", "Неполных", "Остановлено вручную"):
+        assert f"{label}: 0" in stats
+    assert "С последнего сброса: $0.00" in stats
+    assert "По истории (0 из 100): $0.00" in stats
+    assert "Среднее шагов: 0.0" in stats
 
 
 def test_demo_statistics_derive_from_history_and_exclude_technical_sessions_from_money():

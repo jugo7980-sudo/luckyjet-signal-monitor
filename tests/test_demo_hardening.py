@@ -85,7 +85,7 @@ def test_active_session_rejects_trigger_and_base_stake_changes():
     assert ledger.base_stake_cents == stake
 
 
-def test_reset_preserves_history_and_resets_balance_and_starting_stake_only():
+def test_reset_clears_history_and_resets_balance_and_starting_stake():
     history = [completed_entry(1)]
     ledger = DemoLedger(
         enabled=True,
@@ -101,7 +101,7 @@ def test_reset_preserves_history_and_resets_balance_and_starting_stake_only():
     assert ledger.trigger_streak == 3
     assert ledger.balance_cents == DEFAULT_BALANCE_CENTS
     assert ledger.base_stake_cents == MINIMUM_STAKE_CENTS
-    assert ledger.history == history
+    assert ledger.history == []
     assert ledger.active is False
 
 

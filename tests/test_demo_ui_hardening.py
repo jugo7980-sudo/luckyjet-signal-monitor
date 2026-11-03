@@ -183,7 +183,8 @@ def test_demo_statistics_derive_from_history_and_exclude_technical_sessions_from
     assert "Проигрышных: 1" in text
     assert "Неполных: 1" in text
     assert "Остановлено вручную: 1" in text
-    assert "Общий результат: -$20.00" in text
+    assert "С последнего сброса: $0.00" in text
+    assert "По истории (4 из 100): -$20.00" in text
     assert "Среднее шагов: 2.0" in text
 
 

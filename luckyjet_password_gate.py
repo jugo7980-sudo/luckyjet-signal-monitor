@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from release_reset import apply_release_reset
 from luckyjet_signal.demo_ledger import (
+    DEFAULT_BALANCE_CENTS,
     MAX_HISTORY,
     MINIMUM_STAKE_CENTS,
     TRIGGER_OPTIONS,
@@ -546,7 +547,11 @@ class TelegramPasswordGate(HistoryPanels):
 
 
     def _demo_stats_text(self, user_id):
-        history = list(self._demo_ledger(user_id).history)
+        ledger = self._demo_ledger(user_id)
+        history = list(ledger.history)
+        since_reset = ledger.balance_cents - DEFAULT_BALANCE_CENTS
+        period = (f"За последние {MAX_HISTORY} сессий" if len(history) == MAX_HISTORY
+                  else f"По истории ({len(history)} из {MAX_HISTORY})")
         successful = sum(entry.get("outcome") == "recovered" for entry in history)
         losses = sum(entry.get("outcome") == "insufficient_balance" for entry in history)
         incomplete = sum(entry.get("outcome") == "incomplete_data" for entry in history)
@@ -566,7 +571,8 @@ class TelegramPasswordGate(HistoryPanels):
             f"Проигрышных: {losses}\n"
             f"Неполных: {incomplete}\n"
             f"Остановлено вручную: {stopped}\n"
-            f"Общий результат: {'+' if total_net > 0 else ''}{format_dollars(total_net)}\n"
+            f"С последнего сброса: {'+' if since_reset > 0 else ''}{format_dollars(since_reset)}\n"
+            f"{period}: {'+' if total_net > 0 else ''}{format_dollars(total_net)}\n"
             f"Среднее шагов: {average_steps:.1f}"
         )
 

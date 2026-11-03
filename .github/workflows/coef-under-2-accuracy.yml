@@ -1,0 +1,67 @@
+name: Verify under-2 partial labeling
+
+on:
+  push:
+    branches:
+      - feature/coef-under-2
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: .:src
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/coef-under-2
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Patch accuracy handling and tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p=Path('coefficient_stats.py')
+          text=p.read_text()
+          anchor="redis.call('SET', KEYS[1], '1', 'EX', 7948800)\n"
+          block=anchor + "local day_existed = redis.call('EXISTS', KEYS[2]) == 1\nif day_existed and redis.call('HEXISTS', KEYS[2], 'lt2_tracking') == 0 then redis.call('HSET', KEYS[2], 'lt2_partial', '1') end\nredis.call('HSET', KEYS[2], 'lt2_tracking', '1')\n"
+          if 'lt2_tracking' not in text:
+              if anchor not in text: raise SystemExit('stats anchor missing')
+              text=text.replace(anchor,block,1)
+          p.write_text(text)
+
+          p=Path('luckyjet_password_gate.py')
+          text=p.read_text()
+          old='''        text+=f"\\n<2x: {summary.get('lt2', 0)}"\n'''
+          new='''        if summary.get('lt2_tracking'):\n            label_lt2 = "<2x с обновления" if summary.get('lt2_partial') else "<2x"\n            text+=f"\\n{label_lt2}: {summary.get('lt2', 0)}"\n        else:\n            text+="\\n<2x: нет данных"\n'''
+          if old in text:
+              text=text.replace(old,new,1)
+          p.write_text(text)
+
+          p=Path('tests/test_coefficient_stats.py')
+          text=p.read_text()
+          start=text.index('def test_less_than_two_counter_and_screen():')
+          text=text[:start] + '''def test_less_than_two_counter_and_screen():\n from coefficient_stats import SCRIPT\n assert "tonumber(ARGV[1]) < 2" in SCRIPT\n assert "lt2_tracking" in SCRIPT\n assert "lt2_partial" in SCRIPT\n\n class Stats:\n  redis=object()\n  def __init__(self, summary): self.value=summary\n  async def summary(self, day): return self.value\n\n async def render(summary):\n  gate=ReliableTelegramPasswordGate(None)\n  gate.coefficient_stats=Stats(summary)\n  text,_=await gate._coefficient_screen('coef_day:2026-11-03:10:0')\n  return text\n\n async def run():\n  partial=await render({'total':100,'lt2':42,'lt2_tracking':1,'lt2_partial':1,'10':7})\n  assert '<2x с обновления: 42' in partial\n  full=await render({'total':100,'lt2':42,'lt2_tracking':1,'10':7})\n  assert '<2x: 42' in full and 'с обновления' not in full\n  legacy=await render({'total':100,'10':7})\n  assert '<2x: нет данных' in legacy\n asyncio.run(run())\n'''
+          p.write_text(text)
+          PY
+      - name: Run full test suite
+        run: pytest -q
+      - name: Commit tested accuracy fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add coefficient_stats.py luckyjet_password_gate.py tests/test_coefficient_stats.py
+          git commit -m 'fix: label partial under-2 coefficient history'
+          git push origin HEAD:feature/coef-under-2

@@ -57,3 +57,22 @@ def test_day_page_uses_one_transaction_and_preserves_page_bounds():
   assert [name for name,_ in store.pipe.commands]==['trim','count','page']
   assert store.pipe.commands[-1][1]==('luckyjet:coef:days',10,19)
  asyncio.run(run())
+
+
+def test_less_than_two_counter_and_screen():
+ from coefficient_stats import SCRIPT
+ assert "tonumber(ARGV[1]) < 2" in SCRIPT
+ assert "'lt2'" in SCRIPT
+
+ class Stats:
+  redis=object()
+  async def summary(self, day):
+   return {'total': 100, 'lt2': 42, '10': 7}
+
+ async def run():
+  gate=ReliableTelegramPasswordGate(None)
+  gate.coefficient_stats=Stats()
+  text,_=await gate._coefficient_screen('coef_day:2026-11-03:10:0')
+  assert '<2x: 42' in text
+  assert text.index('Зафиксировано раундов') < text.index('<2x: 42') < text.index('>10x: 7')
+ asyncio.run(run())

@@ -61,7 +61,8 @@ def test_day_page_uses_one_transaction_and_preserves_page_bounds():
 
 def test_less_than_two_counter_and_screen():
  from coefficient_stats import SCRIPT
- assert "tonumber(ARGV[1]) < 2" in SCRIPT
+ increment="if tonumber(ARGV[1]) < 2 then redis.call('HINCRBY', KEYS[2], 'lt2', 1) end"
+ assert SCRIPT.count(increment) == 1
  assert "lt2_tracking" in SCRIPT
  assert "lt2_partial" in SCRIPT
 

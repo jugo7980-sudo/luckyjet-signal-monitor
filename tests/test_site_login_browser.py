@@ -27,8 +27,7 @@ def test_blocked_opening_click_reports_evidence_without_dom_text():
     html = '''<meta charset="utf-8"><button>Войти</button>
       <div style="position:fixed;inset:0;z-index:10">private-page-text</div>'''
     async def run():
-        async with SiteLoginBrowser('https://example.test/login', result_timeout=1) as driver:
-            driver.page.set_default_timeout(300)
+        async with SiteLoginBrowser('https://example.test/login') as driver:
             await driver.context.route('**/*', lambda route: route.fulfill(
                 status=200, content_type='text/html', body=html))
             with pytest.raises(LoginProblem) as error:

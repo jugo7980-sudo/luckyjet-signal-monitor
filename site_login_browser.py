@@ -120,7 +120,22 @@ class SiteLoginBrowser:
     async def _click(self, button, action):
         try:
             await button.click()
-        except BrowserTimeout:
+        except BrowserTimeout as exc:
+            # Classify Playwright actionability evidence without exposing its
+            # raw DOM excerpts, field values, URLs or credentials.
+            detail = str(exc).lower()
+            if 'intercepts pointer events' in detail:
+                reason = 'кнопку перекрывает другой элемент'
+            elif 'not enabled' in detail or 'element is disabled' in detail:
+                reason = 'кнопка отключена'
+            elif 'not stable' in detail:
+                reason = 'кнопка движется или страница перерисовывается'
+            elif 'not visible' in detail:
+                reason = 'кнопка скрыта'
+            elif 'detached' in detail or 'not attached' in detail:
+                reason = 'элемент удалён при обновлении страницы'
+            else:
+                reason = 'причина пока не определена'
             raise LoginProblem(f'Сайт не дал нажать кнопку {action}. Возможно, её перекрывает другое окно. '
                                'Передай это сообщение для проверки.') from None
 

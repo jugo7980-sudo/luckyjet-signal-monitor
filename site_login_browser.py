@@ -7,6 +7,7 @@ import os
 import re
 import time
 from urllib.parse import urlsplit
+from playwright.async_api import TimeoutError as BrowserTimeout
 
 from luckyjet_signal.browser_runtime import low_memory_async_playwright
 from site_account import LoginProblem
@@ -100,14 +101,28 @@ class SiteLoginBrowser:
         selector = self.code_submit_selector if code else self.submit_selector
         button = await self._visible(self.page.locator(selector)) if selector else None
         if button is None:
-            form = field.locator('xpath=ancestor::form[1]')
-            scope = form if await form.count() else self.page
             pattern = r'^\s*(Подтвердить|Продолжить|Confirm|Verify|Continue)\s*$' if code else r'^\s*(Войти|Вход|Log in|Login|Sign in)\s*$'
-            button = await self._visible(scope.get_by_role('button', name=re.compile(pattern, re.I)))
+            scope = field
+            # Search from the input outwards. Custom dialogs often use divs
+            # instead of form; a page-wide search picks the covered header button.
+            for _ in range(15):
+                scope = scope.locator('xpath=..')
+                if not await scope.count():
+                    break
+                button = await self._visible(scope.get_by_role('button', name=re.compile(pattern, re.I)))
+                if button is not None:
+                    break
         if button is not None:
-            await button.click()
+            await self._click(button, 'подтверждения кода' if code else 'отправки формы входа')
         else:
             await field.press('Enter')
+
+    async def _click(self, button, action):
+        try:
+            await button.click()
+        except BrowserTimeout:
+            raise LoginProblem(f'Сайт не дал нажать кнопку {action}. Возможно, её перекрывает другое окно. '
+                               'Передай это сообщение для проверки.') from None
 
     async def _open_form(self):
         end = time.monotonic() + min(15, self.result_timeout)
@@ -124,12 +139,12 @@ class SiteLoginBrowser:
             if not opened:
                 button = await self._text(r'^\s*(Войти|Вход|Log in|Login|Sign in)\s*$')
                 if button is not None:
-                    await button.click()
+                    await self._click(button, 'открытия входа')
                     opened = True
             if not email_tab:
                 tab = await self._text(r'^\s*(Почта|E-mail|Email)\s*$')
                 if tab is not None:
-                    await tab.click()
+                    await self._click(tab, 'выбора почты')
                     email_tab = True
             await asyncio.sleep(.2)
         raise LoginProblem('Не найдена форма входа по почте. Нужно проверить ссылку и поля сайта.')

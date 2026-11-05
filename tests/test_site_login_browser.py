@@ -3,6 +3,23 @@ from pathlib import Path
 import sys
 import pytest
 
+
+def test_custom_login_dialog_submits_its_own_button():
+    from site_login_browser import SiteLoginBrowser
+    html = '''<meta charset="utf-8"><button id="background">Войти</button>
+      <div style="position:fixed;inset:0;background:white;z-index:5">
+       <div><input type="email"><input type="password"></div>
+       <button onclick="this.parentNode.remove();document.querySelector('#logout').hidden=false">Войти</button>
+      </div><button id="logout" hidden>Выйти</button>'''
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=1) as driver:
+            driver.page.set_default_timeout(1000)
+            await driver.context.route('**/*', lambda route: route.fulfill(
+                status=200, content_type='text/html', body=html))
+            state = await driver.login('owner@example.test', 'fixture-password', None)
+            assert 'cookies' in state
+    asyncio.run(run())
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'src')]
 

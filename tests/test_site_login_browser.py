@@ -56,6 +56,7 @@ def test_blocked_opening_click_reports_evidence_without_dom_text():
             assert 'перекрывает другой элемент' in message
             assert 'private' not in message
             assert 'example.test' not in message
+            assert error.value.page_screenshot.startswith(b'\x89PNG\r\n\x1a\n')
     asyncio.run(run())
 
 

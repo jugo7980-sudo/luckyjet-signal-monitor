@@ -133,7 +133,14 @@ class TelegramHistoryPanel:
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(timeout=15)
 
-        response = await self._http_client.post(url, json=payload)
+        payload = dict(payload)
+        photo_file = payload.pop('photo_file', None)
+        if photo_file is not None:
+            response = await self._http_client.post(
+                url, data=payload, files={'photo': photo_file},
+            )
+        else:
+            response = await self._http_client.post(url, json=payload)
         response.raise_for_status()
         data = response.json()
 
@@ -522,3 +529,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

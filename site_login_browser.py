@@ -145,8 +145,14 @@ class SiteLoginBrowser:
                     covered = False
                 if covered:
                     reason = 'кнопку перекрывает другой элемент'
-            raise LoginProblem(f'Сайт не дал нажать кнопку {action}. Диагностика: {reason}. '
-                               'Передай это сообщение для проверки.') from None
+            problem = LoginProblem(f'Сайт не дал нажать кнопку {action}. Диагностика: {reason}. '
+                                   'Бот отправит снимок страницы для проверки.')
+            if action == 'открытия входа':
+                try:
+                    problem.page_screenshot = await self.page.screenshot(type='png')
+                except BrowserError:
+                    problem.page_screenshot = None
+            raise problem from None
 
     async def _open_form(self):
         end = time.monotonic() + min(15, self.result_timeout)

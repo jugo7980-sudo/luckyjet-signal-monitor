@@ -306,6 +306,14 @@ class SiteAccount:
         except LoginProblem as exc:
             self.status = 'error'
             await self._say(str(exc))
+            screenshot = getattr(exc, 'page_screenshot', None)
+            if screenshot:
+                await self.request('sendPhoto', {
+                    'chat_id': self.owner_id,
+                    'photo_file': ('login-page.png', screenshot, 'image/png'),
+                    'caption': 'Состояние страницы бота до ввода данных входа',
+                    'protect_content': True,
+                })
         except Exception as exc:
             self.status = 'error'
             kind = type(exc).__name__
@@ -323,3 +331,4 @@ class SiteAccount:
 
     async def close(self):
         await self.cancel(notify=False)
+

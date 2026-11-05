@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import traceback
 import os
 from pathlib import Path
 import re
@@ -280,13 +282,18 @@ class SiteAccount:
             self.field = None
 
     async def _login(self, email, password):
+        stage = 'notify'
         try:
             await self._say('⏳ Открываю сайт и выполняю вход…')
             async with asyncio.timeout(self.attempt_timeout):
+                stage = 'browser_lock'
                 async with self.browser_lock:
+                    stage = 'browser_start'
                     async with self.driver_factory() as driver:
+                        stage = 'login'
                         state = await driver.login(email, password, self._request_code)
                         password = None
+                        stage = 'session_save'
                         self.store.save(state)
                         self.generation += 1
                         self.status = 'connected'
@@ -299,10 +306,16 @@ class SiteAccount:
         except LoginProblem as exc:
             self.status = 'error'
             await self._say(str(exc))
-        except Exception:
+        except Exception as exc:
             self.status = 'error'
-            await self._say('Вход не выполнен: ошибка сайта, браузера или сохранения сессии. '
-                            'Нажми «Войти» для повторной попытки.')
+            kind = type(exc).__name__
+            frames = traceback.extract_tb(exc.__traceback__)
+            location = ' > '.join(f'{frame.name}:{frame.lineno}' for frame in frames[-5:])
+            logging.getLogger('luckyjet.site_account').error(
+                'Site login failed: type=%s stage=%s location=%s', kind, stage, location,
+            )
+            await self._say(f'Вход не выполнен. Ошибка {kind}, этап {stage}. '
+                            'Передай это сообщение для проверки. Пароль повторно пока не отправляй.')
         finally:
             password = None
             email = None

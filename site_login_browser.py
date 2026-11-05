@@ -121,8 +121,6 @@ class SiteLoginBrowser:
         try:
             await button.click()
         except BrowserTimeout as exc:
-            # Classify Playwright actionability evidence without exposing its
-            # raw DOM excerpts, field values, URLs or credentials.
             detail = str(exc).lower()
             if 'intercepts pointer events' in detail:
                 reason = 'кнопку перекрывает другой элемент'
@@ -136,6 +134,17 @@ class SiteLoginBrowser:
                 reason = 'элемент удалён при обновлении страницы'
             else:
                 reason = 'причина пока не определена'
+                try:
+                    covered = await button.evaluate("""el => {
+                        const rect = el.getBoundingClientRect();
+                        const top = document.elementFromPoint(
+                            rect.x + rect.width / 2, rect.y + rect.height / 2);
+                        return rect.width > 0 && rect.height > 0 && top && !el.contains(top);
+                    }""", timeout=1000)
+                except BrowserError:
+                    covered = False
+                if covered:
+                    reason = 'кнопку перекрывает другой элемент'
             raise LoginProblem(f'Сайт не дал нажать кнопку {action}. Диагностика: {reason}. '
                                'Передай это сообщение для проверки.') from None
 

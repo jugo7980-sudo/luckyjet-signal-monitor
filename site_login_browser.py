@@ -151,16 +151,17 @@ class SiteLoginBrowser:
             password = await self._field('password')
             if email is not None and password is not None:
                 return email, password
+            if not email_tab and (password is not None or opened):
+                tab = await self._text(r'^\s*(Почта|E-mail|Email)\s*$')
+                if tab is not None:
+                    await self._click(tab, 'выбора почты')
+                    opened = email_tab = True
+                    continue
             if not opened:
                 button = await self._text(r'^\s*(Войти|Вход|Log in|Login|Sign in)\s*$')
                 if button is not None:
                     await self._click(button, 'открытия входа')
                     opened = True
-            if not email_tab:
-                tab = await self._text(r'^\s*(Почта|E-mail|Email)\s*$')
-                if tab is not None:
-                    await self._click(tab, 'выбора почты')
-                    email_tab = True
             await asyncio.sleep(.2)
         raise LoginProblem('Не найдена форма входа по почте. Нужно проверить ссылку и поля сайта.')
 

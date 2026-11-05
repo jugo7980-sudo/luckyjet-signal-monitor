@@ -4,6 +4,42 @@ import sys
 import pytest
 
 
+def test_phone_dialog_switches_to_email_before_clicking_covered_header():
+    from site_login_browser import SiteLoginBrowser
+    html = '''<meta charset="utf-8"><button>Войти</button>
+      <div role="dialog" style="position:fixed;inset:0;background:white">
+        <h2>Вход</h2><button onclick="document.querySelector('input').hidden=false">Почта</button>
+        <input type="email" hidden><input type="password">
+      </div>'''
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=2) as driver:
+            driver.page.set_default_timeout(750)
+            await driver.context.route('**/*', lambda route: route.fulfill(content_type='text/html', body=html))
+            await driver.page.goto(driver.login_url)
+            email, password = await driver._open_form()
+            assert await email.is_visible() and await password.is_visible()
+    asyncio.run(run())
+
+
+def test_blocked_opening_click_reports_evidence_without_dom_text():
+    from site_account import LoginProblem
+    from site_login_browser import SiteLoginBrowser
+    html = '''<meta charset="utf-8"><button>Войти</button>
+      <div style="position:fixed;inset:0;z-index:10">private-page-text</div>'''
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=1) as driver:
+            driver.page.set_default_timeout(300)
+            await driver.context.route('**/*', lambda route: route.fulfill(
+                status=200, content_type='text/html', body=html))
+            with pytest.raises(LoginProblem) as error:
+                await driver.login('owner@example.test', 'private-password', None)
+            message = str(error.value)
+            assert 'перекрывает другой элемент' in message
+            assert 'private' not in message
+            assert 'example.test' not in message
+    asyncio.run(run())
+
+
 def test_custom_login_dialog_submits_its_own_button():
     from site_login_browser import SiteLoginBrowser
     html = '''<meta charset="utf-8"><button id="background">Войти</button>

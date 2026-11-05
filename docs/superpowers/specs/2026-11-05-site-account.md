@@ -1,0 +1,7 @@
+# Owner site account through Telegram
+
+The owner approved email, password and email-code entry through private Telegram messages. Add an owner-only account menu: sign in, status, cancel, reconnect, forget session. Use the existing Playwright stack and GAME_URL (optional SITE_LOGIN_URL for the login page). Password and code live only in memory during the attempt; delete incoming messages best effort, never log/persist credentials. Retain browser storage state in a protected file for reuse after restart, excluded from Git and container build context. Telegram messages are not end-to-end encrypted.
+
+Do not infer successful login from coefficients, cookies or a disappearing modal. Require an explicit account/logout element. Abort safely on CAPTCHA, unknown forms, unexpected host redirects or timeouts. Permit configurable CSS locators because the screenshot does not establish DOM selectors. No betting actions. Preserve monitoring and all existing user data; serialize browser access and reload monitoring with the new session after sign-in/logout. Local logout forgets the session; it does not revoke other site sessions.
+
+Live-site acceptance requires the deployed GAME_URL and an owner-led sign-in. Automated tests must cover Telegram routing, owner restriction, OTP, cancellation, credential handling, session persistence and browser integration using a local fixture; never use real credentials in tests.

@@ -35,6 +35,7 @@ class TelegramPasswordGate(HistoryPanels):
         self.request = request
         self.history_provider = history_provider
         self.demo_probe = None
+        self.site_account = None
         self.history_refresher = history_refresher
         self._refresh_tasks = set()
         self.password = password if password is not None else os.getenv("TELEGRAM_ACCESS_PASSWORD", "").strip()
@@ -394,6 +395,8 @@ class TelegramPasswordGate(HistoryPanels):
             [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"}],
             [{"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
         ]
+        if self.site_account is not None and user_id is not None and self.is_admin(user_id):
+            rows.append([{"text": "👤 Аккаунт сайта", "callback_data": "site_status"}])
         if user_id is not None:
             balance = format_dollars(self._demo_ledger(user_id).balance_cents)
             rows.append([{"text": f"🔄 💵 Баланс: {balance}", "callback_data": "demo_refresh_balance"}])
@@ -1035,6 +1038,8 @@ class TelegramPasswordGate(HistoryPanels):
             return
 
         if await self.is_authorized(user_id):
+            if self.site_account is not None and await self.site_account.handle_message(msg):
+                return
             if command in {"/start", "/menu", "/settings", "/status", "/help"}:
                 self.demo_pending_inputs.pop(user_id, None)
                 self.pending_confirmations.pop(user_id, None)
@@ -1123,6 +1128,10 @@ class TelegramPasswordGate(HistoryPanels):
         await self._replace_prompt(user_id, chat_id, answer)
 
     async def handle_callback(self, callback):
+        if self.site_account is not None:
+            user = self._to_int((callback.get("from") or {}).get("id"))
+            if user in self.authorized and await self.site_account.handle_callback(callback):
+                return
         user_id = self._to_int((callback.get("from") or {}).get("id"))
         chat_id = self._to_int(((callback.get("message") or {}).get("chat") or {}).get("id"))
         data = callback.get("data", "")
@@ -1871,3 +1880,4 @@ class TelegramPasswordGate(HistoryPanels):
             raise
         except (httpx.HTTPError, RuntimeError):
             log.warning("Private streak deletion failed: chat_id=%s message_id=%s", chat_id, message_id)
+

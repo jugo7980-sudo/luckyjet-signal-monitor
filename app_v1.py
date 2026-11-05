@@ -12,6 +12,8 @@ from live_panel_updates import LivePanelUpdates
 from notification_queue import NotificationQueue
 from coefficient_stats import CoefficientStats
 from demo_probe import DemoProbe
+from site_account import SiteAccount, SessionStore
+from site_login_browser import SiteLoginBrowser
 
 import main as base
 from luckyjet_fast_poll import install_fast_poll
@@ -200,6 +202,16 @@ async def _main_async() -> None:
     password_gate.notification_queue = NotificationQueue(password_gate)
     password_gate.coefficient_stats = CoefficientStats(password_gate.redis)
     monitor.browser_lock = asyncio.Lock()
+    login_url = os.getenv("SITE_LOGIN_URL", "").strip() or config.game_url
+    site_account = SiteAccount(
+        password_gate.admin_chat_id,
+        telegram_request,
+        SessionStore(os.getenv("SITE_SESSION_PATH", "data/site-auth/session.json"), login_url),
+        lambda: SiteLoginBrowser(login_url, headless=config.headless),
+        monitor.browser_lock,
+    )
+    password_gate.site_account = site_account
+    monitor.site_account = site_account
     demo_probe = DemoProbe()
     monitor.demo_probe = demo_probe
     password_gate.demo_probe = demo_probe
@@ -255,6 +267,8 @@ async def _main_async() -> None:
             tasks.create_task(polling_lease.run(run_owned()))
     finally:
         monitor.process_network_history = original_process_history
+        await site_account.close()
+        monitor.site_account = None
         await live_panels.close()
         await demo_probe.close()
         await password_gate.close()
@@ -275,3 +289,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

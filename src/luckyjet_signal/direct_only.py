@@ -93,6 +93,8 @@ async def run_monitor(monitor, config, *, state=None):
         stale_since = None
         last_diagnostic = 0.0
         poll_delay = max(0.01, float(config.poll_seconds))
+        account = getattr(monitor, "site_account", None)
+        account_generation = account.generation if account is not None else 0
 
         async def close_browser_stack():
             nonlocal browser, context, page, owns_browser_lock
@@ -130,10 +132,12 @@ async def run_monitor(monitor, config, *, state=None):
                 await browser_lock.acquire()
                 owns_browser_lock = True
             browser = await p.chromium.launch(headless=config.headless)
-            context = await browser.new_context(
-                viewport={"width": 430, "height": 932},
-                locale="ru-RU",
-            )
+            options = {"viewport": {"width": 430, "height": 932}, "locale": "ru-RU"}
+            if account is not None:
+                saved_session = account.storage_state()
+                if saved_session is not None:
+                    options["storage_state"] = saved_session
+            context = await browser.new_context(**options)
             capture = monitor.LiveCapture()
             page = await monitor.open_game(context, config, capture)
             probe = getattr(monitor, "demo_probe", None)
@@ -144,6 +148,18 @@ async def run_monitor(monitor, config, *, state=None):
             while True:
                 iteration_started = time.monotonic()
                 try:
+                    if account is not None and (account.busy or account.generation != account_generation):
+                        if monitor.history_refresh is not None:
+                            monitor.history_refresh.bind(None)
+                        await close_browser_stack()
+                        direct_only = False
+                        capture = None
+                        missing_since = None
+                        stale_since = None
+                        account_generation = account.generation
+                        if account.busy:
+                            await asyncio.sleep(.1)
+                            continue
                     probe = getattr(monitor, "demo_probe", None)
                     if direct_only and probe is not None and probe.requested:
                         direct_only = False
@@ -315,3 +331,4 @@ async def run_monitor(monitor, config, *, state=None):
             if monitor.history_refresh is not None:
                 monitor.history_refresh.bind(None)
             await close_browser_stack()
+

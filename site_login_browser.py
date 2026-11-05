@@ -7,7 +7,7 @@ import os
 import re
 import time
 from urllib.parse import urlsplit
-from playwright.async_api import TimeoutError as BrowserTimeout
+from playwright.async_api import Error as BrowserError, TimeoutError as BrowserTimeout
 
 from luckyjet_signal.browser_runtime import low_memory_async_playwright
 from site_account import LoginProblem
@@ -161,13 +161,18 @@ class SiteLoginBrowser:
             if email is not None and password is not None:
                 return email, password
             if not email_tab and (password is not None or opened):
-                tab = await self._text(r'^\s*(Почта|E-mail|Email)\s*$')
+                tab = await self._visible(self.page.get_by_role(
+                    'button', name=re.compile(r'^\s*(Почта|E-mail|Email)\s*$', re.I)))
                 if tab is not None:
                     await self._click(tab, 'выбора почты')
                     opened = email_tab = True
                     continue
             if not opened:
-                button = await self._text(r'^\s*(Войти|Вход|Log in|Login|Sign in)\s*$')
+                button = await self._visible(self.page.get_by_role(
+                    'button', name=re.compile(r'^\s*(Вход|Войти|Log in|Login|Sign in)\s*$', re.I)))
+                if button is None:
+                    button = await self._visible(self.page.get_by_role(
+                        'link', name=re.compile(r'^\s*(Вход|Войти|Log in|Login|Sign in)\s*$', re.I)))
                 if button is not None:
                     await self._click(button, 'открытия входа')
                     opened = True
@@ -232,3 +237,4 @@ class SiteLoginBrowser:
         if result == 'success':
             return await self.context.storage_state(indexed_db=True)
         raise LoginProblem('Код не принят после трёх попыток. Начни вход заново.')
+

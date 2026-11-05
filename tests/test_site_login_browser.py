@@ -21,6 +21,26 @@ def test_phone_dialog_switches_to_email_before_clicking_covered_header():
     asyncio.run(run())
 
 
+def test_site_login_uses_named_header_button_then_email_tab():
+    from site_login_browser import SiteLoginBrowser
+    html = '''<meta charset="utf-8">
+      <button id="open" onclick="document.querySelector('[role=dialog]').hidden=false">Вход</button>
+      <button>Войти</button>
+      <div role="dialog" hidden>
+        <button onclick="document.querySelector('#email').hidden=false">Почта</button>
+        <input id="email" type="email" hidden><input type="password">
+      </div>'''
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=2) as driver:
+            await driver.context.route('**/*', lambda route: route.fulfill(
+                content_type='text/html', body=html))
+            await driver.page.goto(driver.login_url)
+            email, password = await driver._open_form()
+            assert await email.is_visible()
+            assert await password.is_visible()
+    asyncio.run(run())
+
+
 def test_blocked_opening_click_reports_evidence_without_dom_text():
     from site_account import LoginProblem
     from site_login_browser import SiteLoginBrowser
@@ -143,3 +163,4 @@ def test_logged_out_profile_button_is_not_login_evidence():
             with pytest.raises(LoginProblem, match='подтверждён'):
                 await driver.login('owner@example.test', 'password', None)
     asyncio.run(run())
+

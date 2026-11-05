@@ -64,10 +64,12 @@ async def refresh_live_history(monitor, config, state, capture, page):
     else:
         worked = False
 
+    changed = before != (state.last_round_id, list(state.previous))
     return {
-        "ok": bool(received and worked),
+        "ok": bool(worked and (received or changed)),
+        "fresh_direct": bool(received and network_rounds),
         "worked": bool(worked),
-        "changed": before != (state.last_round_id, list(state.previous)),
+        "changed": changed,
     }
 
 
@@ -247,6 +249,7 @@ async def run_monitor(monitor, config, *, state=None):
                         if (
                             not direct_only
                             and page is not None
+                            and outcome.get("fresh_direct", False)
                             and should_release_browser_page(rounds, source)
                         ):
                             log.info(

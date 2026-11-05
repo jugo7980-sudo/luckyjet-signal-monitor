@@ -136,7 +136,7 @@ class SiteLoginBrowser:
                 reason = 'элемент удалён при обновлении страницы'
             else:
                 reason = 'причина пока не определена'
-            raise LoginProblem(f'Сайт не дал нажать кнопку {action}. Возможно, её перекрывает другое окно. '
+            raise LoginProblem(f'Сайт не дал нажать кнопку {action}. Диагностика: {reason}. '
                                'Передай это сообщение для проверки.') from None
 
     async def _open_form(self):

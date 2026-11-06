@@ -133,7 +133,7 @@ async def site(authorization, gate, token, method='GET', body=None):
                 return json_response('400 Bad Request', {'error': 'Неполные данные входа.'})
             email, password = data.get('email'), data.get('password')
             if (not isinstance(email, str) or len(email) > 254
-                    or not re.fullmatch(r'[^\\s@]+@[^\\s@]+\\.[^\\s@]+', email)
+                    or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email)
                     or not isinstance(password, str) or not 1 <= len(password) <= 512):
                 return json_response('400 Bad Request', {'error': 'Проверь адрес почты и пароль.'})
             if account.busy or account.field:

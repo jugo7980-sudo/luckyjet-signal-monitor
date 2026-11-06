@@ -6,6 +6,7 @@ import os
 import time
 
 import httpx
+from mini_app import response as mini_app_response
 
 from luckyjet_password_gate import TelegramPasswordGate
 from luckyjet_signal.settings import Config
@@ -436,16 +437,21 @@ async def health_server() -> None:
     port = int(os.getenv("PORT", "10000"))
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        request = b""
         try:
-            await asyncio.wait_for(reader.read(4096), timeout=2)
+            request = await asyncio.wait_for(reader.read(4096), timeout=2)
+            line = request.split(b'\r\n', 1)[0].decode('ascii').split()
+            if len(line) != 3 or line[0] not in {'GET', 'HEAD'}:
+                status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
+            else:
+                status, content_type, body = mini_app_response(line[1])
         except Exception:
-            pass
-        body = b'{"status":"ok"}'
+            status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
         writer.write(
-            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+            f"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Length: ".encode()
             + str(len(body)).encode()
             + b"\r\nConnection: close\r\n\r\n"
-            + body
+            + (b"" if request.startswith(b"HEAD ") else body)
         )
         await writer.drain()
         writer.close()

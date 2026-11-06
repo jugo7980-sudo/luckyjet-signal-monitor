@@ -26,7 +26,7 @@ def test_shell_tabs_mobile_browser():
                 if request.request.url.startswith('https://example.test/app'):
                     await request.fulfill(content_type='text/html',body=response('/app')[2])
                 else:
-                    await request.fulfill(content_type='application/javascript',body='')
+                    await request.fulfill(content_type='application/javascript',body="window.Telegram={WebApp:{initData:'',ready(){},expand(){},setHeaderColor(){},setBackgroundColor(){},close(){},BackButton:{onClick(){},hide(){},show(){}},HapticFeedback:{selectionChanged(){}}}}")
             await page.route('**/*',route)
             await page.goto('https://example.test/app')
             for tab in ['demo','history','settings','home']:
@@ -34,5 +34,6 @@ def test_shell_tabs_mobile_browser():
                 assert await page.locator('#page-'+tab).is_visible()
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert not errors
+            assert await page.evaluate("""() => {const e=new MouseEvent('click',{bubbles:true,cancelable:true}); document.getElementById('return-bot').dispatchEvent(e); return !e.defaultPrevented}""")
             await browser.close()
     asyncio.run(run())

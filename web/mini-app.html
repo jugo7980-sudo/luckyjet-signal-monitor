@@ -14,5 +14,5 @@
 const app=window.Telegram&&window.Telegram.WebApp;
 function showTab(name){if(!['home','demo','history','settings'].includes(name))return;document.querySelectorAll('.tab-page').forEach(p=>p.hidden=p.id!=='page-'+name);document.querySelectorAll('nav button').forEach(b=>{if(b.dataset.tab===name)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});if(app){try{if(name==='home')app.BackButton.hide();else app.BackButton.show();app.HapticFeedback.selectionChanged()}catch(e){}}window.scrollTo(0,0)}
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
-if(app){app.ready();app.expand();try{app.setHeaderColor('#10141e');app.setBackgroundColor('#10141e');app.BackButton.onClick(()=>showTab('home'))}catch(e){}document.getElementById('return-bot').addEventListener('click',e=>{e.preventDefault();app.close()})}
+if(app){app.ready();app.expand();try{app.setHeaderColor('#10141e');app.setBackgroundColor('#10141e');app.BackButton.onClick(()=>showTab('home'))}catch(e){}if(app.initData)document.getElementById('return-bot').addEventListener('click',e=>{e.preventDefault();app.close()})}
 </script></body></html>

@@ -66,6 +66,8 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
                 if uid in deletion_deadlines
             }
 
+        if self.site_account is not None and hasattr(self.site_account, "cleanup"):
+            await self.site_account.cleanup.restore()
         await self.restore_runtime_state()
         notices = getattr(self, "notification_queue", None)
         if notices is not None:

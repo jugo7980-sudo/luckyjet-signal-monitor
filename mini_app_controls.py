@@ -12,12 +12,21 @@ ACTIONS = {
     'demo_toggle', 'demo_trigger', 'demo_stake', 'demo_reset',
     'notifications_toggle', 'sound_toggle', 'notification_threshold',
     'history_size', 'delete_delay', 'settings_reset', 'test_notification',
+    'demo_probe_start',
 }
 
 
 def snapshot(gate, uid):
     ledger = gate.demo_ledgers.get(uid) or DemoLedger()
+    probe = getattr(gate, 'demo_probe', None)
     return {
+        'admin': gate.is_admin(uid),
+        'probe': {
+            'state': probe.result,
+            'requested': probe.requested,
+            'checked_at': probe.checked_at,
+            'source': probe.source,
+        } if probe else None,
         'demo': {
             'enabled': ledger.enabled,
             'active': ledger.active,
@@ -73,7 +82,19 @@ async def controls(authorization, gate, token, method='GET', body=None):
         ledger = gate._demo_ledger(uid)
         value = payload.get('value')
         message = 'Сохранено.'
-        if action == 'demo_toggle':
+        if action == 'demo_probe_start':
+            if not gate.is_admin(uid):
+                return json_response('403 Forbidden', {'error': 'Проверка доступна администратору.'})
+            probe = getattr(gate, 'demo_probe', None)
+            if probe is None:
+                return json_response('503 Service Unavailable', {'error': 'Диагностика не подключена.'})
+            if probe.task is not None and not probe.task.done():
+                return json_response('409 Conflict', {'error': 'Проверка уже выполняется.'})
+            if time.monotonic() - probe.started_at < 60:
+                return json_response('429 Too Many Requests', {'error': 'Повторная проверка через минуту.'})
+            probe.start()
+            message = 'Проверка запущена. Результат появится после чтения страницы мониторинга.'
+        elif action == 'demo_toggle':
             if ledger.active and ledger.enabled:
                 return json_response('409 Conflict', {'error': 'Активную DEMO-сессию нельзя выключить до завершения.'})
             was_enabled = ledger.enabled

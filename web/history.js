@@ -257,9 +257,13 @@
     if (!current || Date.now() - lastLoad > 30000) navigate(args.view, {...args});
   };
   window.historyBackInApp = goBack;
-  window.clearHistoryData = () => {
-    ++requestNo; current = null; stack = [];
+  window.resetHistoryCache = () => {
+    ++requestNo; current = null; stack = []; lastLoad = 0;
     root.replaceChildren(); pager.hidden = true; back.hidden = true;
+    status.textContent = '';
+  };
+  window.clearHistoryData = () => {
+    window.resetHistoryCache();
     status.textContent = 'Нет доступа';
   };
 })();

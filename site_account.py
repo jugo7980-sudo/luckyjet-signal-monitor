@@ -11,9 +11,11 @@ import traceback
 import os
 from pathlib import Path
 import re
+import secrets
 import tempfile
 import time
 from urllib.parse import urlsplit
+from site_message_cleanup import SiteMessageCleanup
 
 
 class LoginProblem(Exception):
@@ -77,6 +79,10 @@ class SiteAccount:
         self._timer = None
         self._code = None
         self._control = asyncio.Lock()
+        self.gate = None
+        self.visible = False
+        self._forget_confirmation = None
+        self.cleanup = SiteMessageCleanup(self)
 
     @property
     def busy(self):
@@ -96,14 +102,43 @@ class SiteAccount:
             [{'text': '🔄 Статус', 'callback_data': 'site_status'}],
             [{'text': '✖ Отменить ввод', 'callback_data': 'site_cancel'}],
             [{'text': '🚪 Забыть вход на сервере', 'callback_data': 'site_forget'}],
-            [{'text': '🏠 Главное меню', 'callback_data': 'menu_main'}],
+            [{'text': '⬅ Назад', 'callback_data': 'site_back' if self.field or self.busy else 'menu_main'}],
+            [{'text': '🏠 Главное меню', 'callback_data': 'menu_main'},
+             {'text': '✖ Закрыть', 'callback_data': 'menu_close'}],
         ]}
 
-    async def _say(self, text):
+    def _enter(self):
+        self.visible = True
+        self._forget_confirmation = None
+        if self.gate is not None:
+            self.gate.chats[self.owner_id] = self.owner_id
+            self.gate.demo_history_pages.pop(self.owner_id, None)
+            self.gate.demo_pending_inputs.pop(self.owner_id, None)
+            self.gate.pending_confirmations.pop(self.owner_id, None)
+            self.gate.admin_pending_actions.pop(self.owner_id, None)
+
+    async def leave(self, *, expected_deadline=None, now=None):
+        async with self._control:
+            if expected_deadline is not None and self.gate is not None:
+                instant = time.time() if now is None else now
+                if (self.gate.menu_deadlines.get(self.owner_id) != expected_deadline
+                        or instant < expected_deadline):
+                    return False
+            self.visible = False
+            self._forget_confirmation = None
+            await self.cancel(notify=False)
+            await self.cleanup.flush(force=True)
+            return True
+
+    async def _say(self, text, markup=None):
+        if self.gate is not None:
+            if self.visible:
+                await self.gate._send_transient(self.owner_id, self.owner_id, text, markup or self.menu())
+            return
         if self.owner_id is not None:
             await self.request('sendMessage', {
                 'chat_id': self.owner_id, 'text': text, 'protect_content': True,
-                'reply_markup': self.menu(),
+                'reply_markup': markup or self.menu(),
             })
 
     async def show_status(self):
@@ -119,13 +154,7 @@ class SiteAccount:
         await self._say('👤 Аккаунт сайта\n' + labels[self.status] + pending)
 
     async def _delete(self, msg):
-        try:
-            await self.request('deleteMessage', {
-                'chat_id': self.owner_id, 'message_id': msg['message_id'],
-            })
-        except Exception:
-            # Never include a Telegram update or exception payload in diagnostics.
-            pass
+        await self.cleanup.add(msg.get('message_id'))
 
     def _clear_input(self):
         self.field = None
@@ -139,14 +168,15 @@ class SiteAccount:
         if self._timer is not None:
             self._timer.cancel()
         self.field = field
-        self.deadline = time.monotonic() + self.input_timeout
-        if field != 'code':
+        timeout = 60 if self.gate is not None else self.input_timeout
+        self.deadline = time.monotonic() + timeout
+        if field != 'code' and self.gate is None:
             self._timer = asyncio.create_task(self._expire_input(self.deadline))
         await self._say(text)
 
     async def _expire_input(self, deadline):
         try:
-            await asyncio.sleep(self.input_timeout)
+            await asyncio.sleep(max(0, deadline - time.monotonic()))
             if self.deadline == deadline and self.field in {'email', 'password'}:
                 self.field = None
                 self.email = None
@@ -157,6 +187,7 @@ class SiteAccount:
 
     async def start_login(self):
         await self.cancel(notify=False)
+        self.visible = True
         await self._prompt('email', '🔐 Вход на сайт\nПришли почту аккаунта.\n'
                            'Почта, пароль и код будут удаляться из чата по возможности. '
                            'Telegram-боты не используют сквозное шифрование. '
@@ -184,8 +215,9 @@ class SiteAccount:
         await self._say('Сохранённый вход удалён с сервера. Другие сеансы на сайте не отозваны.')
 
     async def handle_callback(self, callback):
-        action = callback.get('data', '')
-        if action not in {'site_login', 'site_status', 'site_cancel', 'site_forget', 'site_forget_confirm'}:
+        raw_action = callback.get('data', '')
+        action = raw_action.split(':', 1)[0]
+        if action not in {'site_login', 'site_status', 'site_cancel', 'site_forget', 'site_forget_confirm', 'site_back'}:
             return False
         allowed = self._owner(callback.get('from') or {},
                               (callback.get('message') or {}).get('chat') or {})
@@ -200,17 +232,36 @@ class SiteAccount:
         if not allowed:
             return True
         async with self._control:
+            if action == 'site_forget_confirm':
+                message_id = (callback.get('message') or {}).get('message_id')
+                if self._forget_confirmation != (message_id, raw_action) or message_id is None:
+                    return True
+            self._enter()
+            if self.gate is not None:
+                source_id = (callback.get('message') or {}).get('message_id')
+                tracked = {self.gate.menu_messages.get(self.owner_id),
+                           self.gate.history_messages.get(self.owner_id),
+                           self.gate.active_messages.get(self.owner_id)}
+                if source_id is not None and source_id not in tracked:
+                    await self.cleanup.add(source_id)
             if action == 'site_login':
                 await self.start_login()
             elif action == 'site_cancel':
                 await self.cancel()
+            elif action == 'site_back':
+                await self.cancel(notify=False)
+                await self.show_status()
             elif action == 'site_forget':
-                await self.request('sendMessage', {'chat_id': self.owner_id,
-                    'text': 'Удалить сохранённую сессию с сервера?',
-                    'reply_markup': {'inline_keyboard': [[
-                        {'text': 'Да, удалить', 'callback_data': 'site_forget_confirm'},
+                await self.cancel(notify=False)
+                confirmation = 'site_forget_confirm:' + secrets.token_hex(8)
+                await self._say('Удалить сохранённую сессию с сервера?', {
+                    'inline_keyboard': [[
+                        {'text': 'Да, удалить', 'callback_data': confirmation},
                         {'text': 'Отмена', 'callback_data': 'site_status'},
-                    ]]}})
+                    ], *self.menu()['inline_keyboard'][-2:]]})
+                message_id = (self.gate.menu_messages.get(self.owner_id)
+                    if self.gate is not None else (callback.get('message') or {}).get('message_id'))
+                self._forget_confirmation = (message_id, confirmation)
             elif action == 'site_forget_confirm':
                 await self.forget()
             else:
@@ -226,6 +277,7 @@ class SiteAccount:
         command = value.strip().split(' ', 1)[0].split('@', 1)[0].lower()
         async with self._control:
             if command in {'/site', '/account'}:
+                self._enter()
                 await self._delete(msg)
                 await self.show_status()
                 return True
@@ -233,15 +285,24 @@ class SiteAccount:
                 await self._delete(msg)
                 await self.cancel()
                 return True
+            if command in {'/start', '/menu', '/settings', '/status', '/help'}:
+                self.visible = False
+                self._forget_confirmation = None
+                await self.cancel(notify=False)
+                await self.cleanup.flush(force=True)
+                return False
             if self.field is None:
                 return False
-            if command in {'/start', '/menu', '/settings', '/status', '/help'}:
-                await self.cancel(notify=False)
-                return False
             await self._delete(msg)
-            if time.monotonic() >= self.deadline:
+            expired = (time.time() >= self.gate.menu_deadlines.get(self.owner_id, 0)
+                       if self.gate is not None else time.monotonic() >= self.deadline)
+            if expired:
                 await self.cancel(notify=False)
-                await self._say('Время ввода истекло. Нажми «Войти» снова.')
+                if self.gate is not None:
+                    self.visible = False
+                    self._forget_confirmation = None
+                else:
+                    await self._say('Время ввода истекло. Нажми «Войти» снова.')
                 return True
             if self.field == 'email':
                 email = value.strip()
@@ -272,7 +333,7 @@ class SiteAccount:
         self._code = asyncio.get_running_loop().create_future()
         self.status = 'code'
         await self._prompt('code', ('Код не принят. ' if retry else '') +
-                           '📩 Сайт запросил код из почты. Пришли его сюда в течение 3 минут.')
+                           '📩 Сайт запросил код из почты. Пришли его сюда; меню закрывается после минуты без действий.')
         try:
             code = await asyncio.wait_for(self._code, self.input_timeout)
             self.status = 'connecting'
@@ -308,12 +369,13 @@ class SiteAccount:
             await self._say(str(exc))
             screenshot = getattr(exc, 'page_screenshot', None)
             if screenshot:
-                await self.request('sendPhoto', {
+                result = await self.request('sendPhoto', {
                     'chat_id': self.owner_id,
                     'photo_file': ('login-page.png', screenshot, 'image/png'),
                     'caption': 'Состояние страницы бота до ввода данных входа',
                     'protect_content': True,
                 })
+                await self.cleanup.add(result.get('result', {}).get('message_id'), delay=60)
         except Exception as exc:
             self.status = 'error'
             kind = type(exc).__name__
@@ -330,5 +392,6 @@ class SiteAccount:
             self._clear_input()
 
     async def close(self):
-        await self.cancel(notify=False)
+        await self.leave()
+        await self.cleanup.close()
 

@@ -81,6 +81,22 @@ class TelegramPasswordGate(HistoryPanels):
         self._deletion_tasks = set()
 
     @property
+    def site_account(self):
+        return self._site_account
+
+    @site_account.setter
+    def site_account(self, account):
+        self._site_account = account
+        if account is not None:
+            account.gate = self
+
+    async def _leave_site_account(self, user_id, **kwargs):
+        account = self.site_account
+        if account is not None and user_id == self.admin_chat_id and hasattr(account, 'leave'):
+            return await account.leave(**kwargs)
+        return True
+
+    @property
     def current_streak(self):
         view = streak_view.get()
         return view[1] if view is not None and view[0] is self else self._current_streak
@@ -838,6 +854,12 @@ class TelegramPasswordGate(HistoryPanels):
                 await asyncio.sleep(5)
 
     async def _close_menu(self, user_id, *, expected_deadline=None, now=None):
+        instant = time.time() if now is None else now
+        if expected_deadline is not None and (
+                self.menu_deadlines.get(user_id) != expected_deadline or instant < expected_deadline):
+            return False
+        if not await self._leave_site_account(user_id, expected_deadline=expected_deadline, now=now):
+            return False
         lock = self._menu_locks.setdefault(user_id, asyncio.Lock())
         async with lock:
             if expected_deadline is not None:
@@ -1163,6 +1185,8 @@ class TelegramPasswordGate(HistoryPanels):
             return
 
         self.chats[user_id] = chat_id
+        if data not in {"noop", "history_refresh", "demo_warning_close"}:
+            await self._leave_site_account(user_id)
         if data == "demo_warning_close":
             await self._safe_delete(chat_id, message_id)
             return

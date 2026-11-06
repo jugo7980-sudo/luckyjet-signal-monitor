@@ -87,7 +87,7 @@
     button.type = 'button';
     button.addEventListener('click', () => {
       if (!input.value || input.value > input.max) { status.textContent = 'Выбери корректную дату.'; return; }
-      navigate(view === 'days' ? 'day' : 'high_day', {day: input.value}, true);
+      navigate(view === 'days' ? 'day' : view === 'max_steps' ? 'max_step_day' : 'high_day', {day: input.value}, true);
     });
     wrap.append(input, button);
     root.appendChild(wrap);
@@ -197,8 +197,15 @@
       }
       case 'max_steps':
         heading('Максимальный шаг', 'По дням · Таиланд, UTC+7');
+        datePicker('max_steps');
         if (!data.days.length) note('Данных пока нет.');
-        for (const d of data.days) item(formatDay(d.day), '', null, d.steps + ' шаг.');
+        for (const d of data.days) item(formatDay(d.day), 'Показать максимум', 
+          () => navigate('max_step_day', {day: d.day}, true), d.steps + ' шаг.');
+        break;
+      case 'max_step_day':
+        heading(formatDay(data.day), 'Максимальный шаг · Таиланд, UTC+7');
+        if (data.steps == null) note('Нет сохранённых данных за этот день.');
+        else info('Максимальный шаг', data.steps);
         break;
     }
   }

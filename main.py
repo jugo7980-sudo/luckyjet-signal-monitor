@@ -433,18 +433,28 @@ async def _run_monitor_with_state(config, state=None):
 monitor.run_monitor = _run_monitor_with_state
 
 
-async def health_server() -> None:
+async def health_server(gate=None, bot_token=None) -> None:
     port = int(os.getenv("PORT", "10000"))
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         request = b""
         try:
-            request = await asyncio.wait_for(reader.read(4096), timeout=2)
+            request = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=3)
+            if len(request) > 16384:
+                raise ValueError('Headers too large')
             line = request.split(b'\r\n', 1)[0].decode('ascii').split()
             if len(line) != 3 or line[0] not in {'GET', 'HEAD'}:
                 status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
             else:
-                status, content_type, body = mini_app_response(line[1])
+                if line[1].split('?', 1)[0] == '/api/overview':
+                    from mini_app_api import overview
+                    pairs = [header.split(':', 1) for header in request.decode('ascii').split('\r\n')[1:] if ':' in header]
+                    auth = [value.strip() for key, value in pairs if key.lower() == 'authorization']
+                    if len(auth) > 1:
+                        raise ValueError('Duplicate authorization')
+                    status, content_type, body = await overview(auth[0] if auth else '', gate, bot_token)
+                else:
+                    status, content_type, body = mini_app_response(line[1])
         except Exception:
             status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
         writer.write(

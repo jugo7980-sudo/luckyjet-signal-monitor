@@ -262,7 +262,7 @@ async def _main_async() -> None:
 
     try:
         async with asyncio.TaskGroup() as tasks:
-            tasks.create_task(base.health_server())
+            tasks.create_task(base.health_server(password_gate, config.telegram_bot_token))
             tasks.create_task(render_self_keepalive())
             tasks.create_task(polling_lease.run(run_owned()))
     finally:

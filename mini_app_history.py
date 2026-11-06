@@ -44,6 +44,12 @@ def _entry(raw):
     if raw is None:
         return None
     value = json.loads(_string(raw))
+    previous = value.get('previous')
+    if isinstance(previous, str):
+        try:
+            previous = json.loads(previous)
+        except (ValueError, TypeError):
+            previous = None
     return {
         'id': value.get('id'),
         'day': value.get('day'),
@@ -51,7 +57,7 @@ def _entry(raw):
         'value': value.get('value'),
         'rounds': value.get('rounds'),
         'uncertain': bool(value.get('uncertain')),
-        'previous': value.get('previous'),
+        'previous': previous,
     }
 
 

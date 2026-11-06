@@ -1,6 +1,7 @@
 """Private Telegram bot access, settings, alerts, and admin controls."""
 import asyncio
 import hmac
+from mini_app import app_url
 import re
 from history_ui import footer, pager, button, high_screen
 import json
@@ -149,6 +150,9 @@ class TelegramPasswordGate(HistoryPanels):
                     ]
                 },
             )
+            await self.request("setChatMenuButton", {
+                "menu_button": {"type": "web_app", "text": "Приложение", "web_app": {"url": app_url()}}
+            })
         except (httpx.HTTPError, RuntimeError):
             log.warning("Telegram command registration failed")
 

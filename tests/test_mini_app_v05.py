@@ -51,8 +51,17 @@ def test_v05_compact_refresh_summary_and_throttled_polling():
                         await req.fulfill(content_type='application/json', body=json.dumps(data))
                     finally:
                         counter['active'] -= 1
-                elif '/api/site' in url or '/api/controls' in url or '/api/admin' in url:
-                    await req.fulfill(content_type='application/json', body='{}')
+                elif '/api/controls' in url:
+                    await req.fulfill(content_type='application/json', body=json.dumps({
+                        'admin': False,
+                        'demo': {'enabled': False, 'active': False, 'balance_cents': 1000000,
+                            'base_stake_cents': 1000, 'trigger': 4, 'low_streak': 0},
+                        'settings': {'notifications': True, 'sound': True, 'threshold': 4,
+                            'history_size': 20, 'delete_delay': 10}}))
+                elif '/api/admin' in url:
+                    await req.fulfill(status=403, content_type='application/json', body='{"error":"Forbidden"}')
+                elif '/api/site' in url:
+                    await req.fulfill(status=403, content_type='application/json', body='{"error":"Forbidden"}')
                 else:
                     await req.fulfill(content_type='application/javascript',
                         body="window.Telegram={WebApp:{initData:'fixture',ready(){},expand(){},setHeaderColor(){},setBackgroundColor(){},close(){},BackButton:{onClick(){},hide(){},show(){}},HapticFeedback:{selectionChanged(){}}}}")

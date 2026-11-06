@@ -53,3 +53,39 @@ def test_launcher_in_main_menu_and_private_chat_menu():
         assert calls[0][1]['menu_button']['web_app']['url']==app_url()
         await gate.close()
     asyncio.run(run())
+
+
+def test_live_read_view_and_access_denied_clear_private_data():
+    import json
+    from playwright.async_api import async_playwright
+    async def run():
+        async with async_playwright() as p:
+            browser=await p.chromium.launch(headless=True)
+            page=await browser.new_page(viewport={'width':390,'height':844})
+            denied=[False]
+            async def route(request):
+                url=request.request.url
+                if '/api/overview' in url:
+                    assert request.request.headers['authorization']=='tma fixture'
+                    data={'error':'Нет доступа'} if denied[0] else {'coefficients':['1.20x','3.00x','125.00x'],'last_round_at':None,'demo':{'balance_cents':123450,'enabled':True,'active':True,'step':4,'base_stake_cents':1000,'trigger':3}}
+                    await request.fulfill(status=403 if denied[0] else 200,content_type='application/json',body=json.dumps(data))
+                elif url.startswith('https://example.test/app'):
+                    await request.fulfill(content_type='text/html',body=response('/app')[2])
+                else:
+                    await request.fulfill(content_type='application/javascript',body="window.Telegram={WebApp:{initData:'fixture',ready(){},expand(){},setHeaderColor(){},setBackgroundColor(){},close(){},BackButton:{onClick(){},hide(){},show(){}},HapticFeedback:{selectionChanged(){}}}}")
+            await page.route('**/*',route)
+            await page.goto('https://example.test/app')
+            await page.locator('#live-home').wait_for(state='visible')
+            assert await page.locator('.coef').count()==3
+            assert not await page.locator('.art').is_visible()
+            await page.locator('nav [data-tab=demo]').click()
+            assert await page.locator('#demo-step').inner_text()=='Шаг 4'
+            assert not await page.locator('#demo-placeholder').is_visible()
+            denied[0]=True
+            await page.locator('nav [data-tab=home]').click()
+            await page.locator('#refresh-data').click()
+            await page.locator('#live-home').wait_for(state='hidden')
+            assert not await page.locator('#live-demo').is_visible()
+            assert await page.locator('#live-status').inner_text()=='Нет доступа'
+            await browser.close()
+    asyncio.run(run())

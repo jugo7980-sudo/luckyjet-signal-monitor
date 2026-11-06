@@ -443,11 +443,13 @@ async def health_server(gate=None, bot_token=None) -> None:
             if len(request) > 16384:
                 raise ValueError('Headers too large')
             line = request.split(b'\r\n', 1)[0].decode('ascii').split()
-            if len(line) != 3 or line[0] not in {'GET', 'HEAD'}:
+            if len(line) != 3 or line[0] not in {'GET', 'HEAD', 'POST'}:
                 status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
             else:
-                if line[1].split('?', 1)[0] in {'/api/overview', '/api/history'}:
-                    path, _, query = line[1].partition('?')
+                path, _, query = line[1].partition('?')
+                if line[0] == 'POST' and path != '/api/controls':
+                    status, content_type, body = '405 Method Not Allowed', 'text/plain', b'Method not allowed'
+                elif path in {'/api/overview', '/api/history', '/api/controls'}:
                     pairs = [header.split(':', 1) for header in request.decode('ascii').split('\r\n')[1:] if ':' in header]
                     auth = [value.strip() for key, value in pairs if key.lower() == 'authorization']
                     if len(auth) > 1:
@@ -455,6 +457,20 @@ async def health_server(gate=None, bot_token=None) -> None:
                     if path == '/api/history':
                         from mini_app_history import history
                         status, content_type, body = await history(auth[0] if auth else '', gate, bot_token, query)
+                    elif path == '/api/controls':
+                        from mini_app_controls import controls
+                        payload = None
+                        if line[0] == 'POST':
+                            contents = [value.strip() for key, value in pairs if key.lower() == 'content-length']
+                            types = [value.strip().lower() for key, value in pairs if key.lower() == 'content-type']
+                            if len(contents) != 1 or not contents[0].isdigit() or len(types) != 1 or types[0] != 'application/json':
+                                raise ValueError('Invalid request headers')
+                            size = int(contents[0])
+                            if size < 2 or size > 2048 or any(key.lower() == 'transfer-encoding' for key, _ in pairs):
+                                raise ValueError('Invalid request body length')
+                            payload = await asyncio.wait_for(reader.readexactly(size), timeout=3)
+                        status, content_type, body = await controls(auth[0] if auth else '', gate, bot_token,
+                            'GET' if line[0] == 'HEAD' else line[0], payload)
                     else:
                         from mini_app_api import overview
                         status, content_type, body = await overview(auth[0] if auth else '', gate, bot_token)

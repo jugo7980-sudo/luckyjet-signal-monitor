@@ -202,7 +202,7 @@ def test_demo_history_is_persistent_but_leaving_it_restores_sixty_second_menu_ti
 
     async def run():
         await click(gate, "demo_history")
-        assert 42 not in gate.menu_deadlines
+        assert gate.menu_deadlines[42] == 0
         await click(gate, "demo_menu")
         assert gate.menu_deadlines[42] == 1060
         await gate.close()

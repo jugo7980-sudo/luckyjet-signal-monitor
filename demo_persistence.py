@@ -46,8 +46,9 @@ class DemoPersistence:
                 except (ValueError, TypeError):
                     logging.getLogger(__name__).error('Corrupt cycle history skipped: user_id=%s', uid)
                     continue
-                ledger.history = history[:MAX_HISTORY]
+                ledger.history = history
                 ledger.backfill_daily_steps()
+                ledger.history = ledger.history[:MAX_HISTORY]
                 # Keep the persisted raw snapshot as the comparison baseline so
                 # the next normal save compacts any oversized legacy history.
                 self.saved_history[str(uid)] = raw

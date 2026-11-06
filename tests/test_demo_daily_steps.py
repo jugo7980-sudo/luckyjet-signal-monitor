@@ -51,3 +51,17 @@ def test_navigation_date_input_reset_and_persistence():
         assert ledger.daily_max_steps == {}
         await redis.aclose(); await gate.close()
     asyncio.run(run())
+
+
+def test_legacy_active_and_stopped_cycles_keep_reached_step():
+    now=datetime.now(timezone.utc).isoformat()
+    ledger=DemoLedger(active=True,cycle_started_at=now,cycle_rounds=[{},{}])
+    assert max(ledger.daily_max_steps.values()) == 3
+    stopped=DemoLedger(history=[{'started_at':now,'ended_at':now,'rounds':[{},{}],'outcome':'stopped_by_user'}])
+    assert max(stopped.daily_max_steps.values()) == 3
+
+
+def test_legacy_backfill_reads_all_available_history_before_truncation():
+    entry={'started_at':'2026-01-01T01:00:00+00:00','ended_at':'2026-01-01T02:00:00+00:00','rounds':[{}]}
+    ledger=DemoLedger(history=[{}]*100+[entry])
+    assert ledger.daily_max_steps['2026-01-01']==1

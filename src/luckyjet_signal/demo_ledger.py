@@ -49,9 +49,10 @@ class DemoLedger:
         self.cycle_start_balance_cents = max(0, self._int(state.get("cycle_start_balance_cents", self.balance_cents), self.balance_cents))
         self.cycle_started_at = state.get("cycle_started_at")
         self.cycle_rounds = list(state.get("cycle_rounds", []))[-100:]
-        self.history = list(state.get("history", []))[:MAX_HISTORY]
+        self.history = list(state.get("history", []))
         self.daily_max_steps = dict(state.get("daily_max_steps", {}))
         self.backfill_daily_steps()
+        self.history = self.history[:MAX_HISTORY]
 
     def backfill_daily_steps(self):
         # Only same-day sessions have an unambiguous daily attribution.
@@ -63,9 +64,22 @@ class DemoLedger:
                     continue
                 day = start.astimezone(timezone(timedelta(hours=7))).date().isoformat()
                 if day == end.astimezone(timezone(timedelta(hours=7))).date().isoformat():
-                    self.daily_max_steps[day] = max(self.daily_max_steps.get(day, 0), len(entry.get('rounds', [])))
+                    steps = len(entry.get('rounds', []))
+                    if entry.get('outcome') in {'stopped_by_user', 'incomplete_data'}:
+                        steps += 1
+                    if steps:
+                        self.daily_max_steps[day] = max(self.daily_max_steps.get(day, 0), steps)
             except (KeyError, TypeError, ValueError):
                 continue
+
+        if self.active and self.cycle_started_at:
+            try:
+                started = datetime.fromisoformat(self.cycle_started_at)
+                today = datetime.now(timezone(timedelta(hours=7))).date()
+                if started.tzinfo is not None and started.astimezone(timezone(timedelta(hours=7))).date() == today:
+                    self._record_step(len(self.cycle_rounds) + 1)
+            except (TypeError, ValueError):
+                pass
 
     def _record_step(self, step, now=None):
         day = (now or datetime.now(timezone.utc)).astimezone(timezone(timedelta(hours=7))).date().isoformat()

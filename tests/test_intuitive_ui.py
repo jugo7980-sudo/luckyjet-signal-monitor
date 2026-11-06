@@ -166,6 +166,10 @@ def test_buttons_are_named_and_fit_callback_limits():
     for markup in menus:
         for row in markup["inline_keyboard"]:
             for button in row:
+                if "web_app" in button:
+                    assert button["web_app"]["url"].startswith("https://")
+                    assert "callback_data" not in button
+                    continue
                 assert button["callback_data"] not in {"menu_help", "admin_users"}
                 assert not re.fullmatch(r"[✓\s]*\d+", button["text"])
                 assert 1 <= len(button["callback_data"].encode()) <= 64

@@ -158,6 +158,7 @@ class TelegramPasswordGate(HistoryPanels):
 
         for user_id in list(self.authorized):
             if user_id in self.chats:
+                await self._register_app_button(self.chats[user_id])
                 await self.ensure_private_history(user_id)
 
         try:
@@ -418,6 +419,7 @@ class TelegramPasswordGate(HistoryPanels):
     def menu(self, user_id=None):
         hidden = user_id in self.history_hidden
         rows = [
+            [{"text": "📱 Открыть приложение", "web_app": {"url": app_url()}, "style": "primary"}],
             [{"text": "📊 Показать историю" if hidden else "📊 Скрыть историю", "callback_data": "menu_history"}],
             [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"}],
             [{"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
@@ -1089,6 +1091,15 @@ class TelegramPasswordGate(HistoryPanels):
             {"inline_keyboard": self._navigation_rows()},
         )
 
+    async def _register_app_button(self, chat_id):
+        try:
+            await self.request("setChatMenuButton", {
+                "chat_id": chat_id,
+                "menu_button": {"type": "web_app", "text": "Приложение", "web_app": {"url": app_url()}}
+            })
+        except (httpx.HTTPError, RuntimeError):
+            log.warning("Private Mini App menu registration failed")
+
     async def _prepare_start(self, user_id, chat_id):
         """Explicit /start recovers panels even after a locally cleared chat."""
         history_lock = self._history_locks.setdefault(user_id, asyncio.Lock())
@@ -1146,6 +1157,8 @@ class TelegramPasswordGate(HistoryPanels):
                 self.pending_confirmations.pop(user_id, None)
                 self.admin_pending_actions.pop(user_id, None)
             self.chats[user_id] = chat_id
+            if command in {"/start", "/menu"}:
+                await self._register_app_button(chat_id)
             if command == "/start":
                 log.info("Telegram start: user_id=%s authorized=True", user_id)
                 await self._prepare_start(user_id, chat_id)
@@ -1324,6 +1337,7 @@ class TelegramPasswordGate(HistoryPanels):
             return
 
         if data == "menu_open":
+            await self._register_app_button(chat_id)
             await self._send_transient(
                 user_id,
                 chat_id,

@@ -46,6 +46,6 @@ def test_authorized_start_always_shows_visible_main_menu():
     callbacks = {
         button["callback_data"]
         for row in sends[-1]["reply_markup"]["inline_keyboard"]
-        for button in row
+        for button in row if "callback_data" in button
     }
     assert {"menu_history", "demo_menu", "menu_settings"} <= callbacks

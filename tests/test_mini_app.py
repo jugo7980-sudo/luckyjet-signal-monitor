@@ -37,3 +37,19 @@ def test_shell_tabs_mobile_browser():
             assert await page.evaluate("""() => {const e=new MouseEvent('click',{bubbles:true,cancelable:true}); document.getElementById('return-bot').dispatchEvent(e); return !e.defaultPrevented}""")
             await browser.close()
     asyncio.run(run())
+
+
+def test_launcher_in_main_menu_and_private_chat_menu():
+    from luckyjet_password_gate import TelegramPasswordGate
+    async def run():
+        calls=[]
+        async def request(method,payload):calls.append((method,payload));return {'ok':True}
+        gate=TelegramPasswordGate(request)
+        launch=gate.menu(42)['inline_keyboard'][0][0]
+        assert launch['web_app']['url']==app_url() and 'callback_data' not in launch
+        await gate._register_app_button(42)
+        assert calls[0][0]=='setChatMenuButton'
+        assert calls[0][1]['chat_id']==42
+        assert calls[0][1]['menu_button']['web_app']['url']==app_url()
+        await gate.close()
+    asyncio.run(run())

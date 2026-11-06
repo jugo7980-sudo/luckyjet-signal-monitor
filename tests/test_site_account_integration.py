@@ -34,7 +34,7 @@ def test_gate_routes_secret_before_other_handlers_and_owner_menu_only():
         assert len(gate.site_account.messages) == 1
         assert len(gate.site_account.callbacks) == 1
         assert not request.calls
-        buttons = lambda uid: [b['callback_data'] for row in gate.menu(uid)['inline_keyboard'] for b in row]
+        buttons = lambda uid: [b['callback_data'] for row in gate.menu(uid)['inline_keyboard'] for b in row if 'callback_data' in b]
         assert 'site_status' in buttons(42)
         assert 'site_status' not in buttons(43)
         await gate.close()

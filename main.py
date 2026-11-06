@@ -447,9 +447,9 @@ async def health_server(gate=None, bot_token=None) -> None:
                 status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
             else:
                 path, _, query = line[1].partition('?')
-                if line[0] == 'POST' and path != '/api/controls':
+                if line[0] == 'POST' and path not in {'/api/controls', '/api/admin'}:
                     status, content_type, body = '405 Method Not Allowed', 'text/plain', b'Method not allowed'
-                elif path in {'/api/overview', '/api/history', '/api/controls'}:
+                elif path in {'/api/overview', '/api/history', '/api/controls', '/api/admin'}:
                     pairs = [header.split(':', 1) for header in request.decode('ascii').split('\r\n')[1:] if ':' in header]
                     auth = [value.strip() for key, value in pairs if key.lower() == 'authorization']
                     if len(auth) > 1:
@@ -457,8 +457,7 @@ async def health_server(gate=None, bot_token=None) -> None:
                     if path == '/api/history':
                         from mini_app_history import history
                         status, content_type, body = await history(auth[0] if auth else '', gate, bot_token, query)
-                    elif path == '/api/controls':
-                        from mini_app_controls import controls
+                    elif path in {'/api/controls', '/api/admin'}:
                         payload = None
                         if line[0] == 'POST':
                             contents = [value.strip() for key, value in pairs if key.lower() == 'content-length']
@@ -469,8 +468,14 @@ async def health_server(gate=None, bot_token=None) -> None:
                             if size < 2 or size > 2048 or any(key.lower() == 'transfer-encoding' for key, _ in pairs):
                                 raise ValueError('Invalid request body length')
                             payload = await asyncio.wait_for(reader.readexactly(size), timeout=3)
-                        status, content_type, body = await controls(auth[0] if auth else '', gate, bot_token,
-                            'GET' if line[0] == 'HEAD' else line[0], payload)
+                        auth_header = auth[0] if auth else ''
+                        method = 'GET' if line[0] == 'HEAD' else line[0]
+                        if path == '/api/admin':
+                            from mini_app_admin import admin
+                            status, content_type, body = await admin(auth_header, gate, bot_token, method, payload, query)
+                        else:
+                            from mini_app_controls import controls
+                            status, content_type, body = await controls(auth_header, gate, bot_token, method, payload)
                     else:
                         from mini_app_api import overview
                         status, content_type, body = await overview(auth[0] if auth else '', gate, bot_token)

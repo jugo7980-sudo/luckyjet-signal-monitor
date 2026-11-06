@@ -446,13 +446,18 @@ async def health_server(gate=None, bot_token=None) -> None:
             if len(line) != 3 or line[0] not in {'GET', 'HEAD'}:
                 status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
             else:
-                if line[1].split('?', 1)[0] == '/api/overview':
-                    from mini_app_api import overview
+                if line[1].split('?', 1)[0] in {'/api/overview', '/api/history'}:
+                    path, _, query = line[1].partition('?')
                     pairs = [header.split(':', 1) for header in request.decode('ascii').split('\r\n')[1:] if ':' in header]
                     auth = [value.strip() for key, value in pairs if key.lower() == 'authorization']
                     if len(auth) > 1:
                         raise ValueError('Duplicate authorization')
-                    status, content_type, body = await overview(auth[0] if auth else '', gate, bot_token)
+                    if path == '/api/history':
+                        from mini_app_history import history
+                        status, content_type, body = await history(auth[0] if auth else '', gate, bot_token, query)
+                    else:
+                        from mini_app_api import overview
+                        status, content_type, body = await overview(auth[0] if auth else '', gate, bot_token)
                 else:
                     status, content_type, body = mini_app_response(line[1])
         except Exception:

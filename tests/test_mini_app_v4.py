@@ -237,7 +237,7 @@ def test_home_colors_removed_quick_access_and_site_web_form():
             await page.locator('#site-forget').click()
             await page.locator('#site-forget').wait_for(state='hidden')
             assert logins == ['login','code','forget']
-            assert limits == [20, 50]
+            assert limits[0] == 20 and 50 in limits  # Live view now polls every >=100ms.
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert not errors, errors
             await browser.close()

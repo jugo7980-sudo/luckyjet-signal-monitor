@@ -448,14 +448,16 @@ class TelegramPasswordGate(HistoryPanels):
         return f"🧪 Демо · {state}\n{progress}"
 
     @staticmethod
-    def _setting_row(label, value, action):
-        return [{"text": label, "callback_data": action},
-                {"text": value, "callback_data": action}]
+    def _setting_row(label, value, action, style=None):
+        value_button = {"text": value, "callback_data": action}
+        if style:
+            value_button["style"] = style
+        return [{"text": label, "callback_data": action}, value_button]
 
     def demo_menu(self, user_id):
         ledger = self._demo_ledger(user_id)
         return {"inline_keyboard": [
-            self._setting_row("🧪 Демо", "⏸ Выключить" if ledger.enabled else "▶️ Включить", "demo_toggle"),
+            self._setting_row("🧪 Демо", "⏸ Выключить" if ledger.enabled else "▶️ Включить", "demo_toggle", style="danger" if ledger.enabled else "success"),
             self._setting_row("🎯 Старт: серия <2x", f"{ledger.trigger_streak} подряд", "demo_trigger_menu"),
             self._setting_row("🔄 Демо-баланс", format_dollars(ledger.balance_cents), "demo_refresh_balance"),
             self._setting_row("💰 Первая ставка", format_dollars(ledger.base_stake_cents), "demo_set_stake"),
@@ -1599,7 +1601,7 @@ class TelegramPasswordGate(HistoryPanels):
             }[action]
             answer = f"🛡 {verb} · ID {target}?\n{effect}"
             markup = {"inline_keyboard": [
-                [{"text": "✅ Подтвердить действие", "callback_data": "admin_confirm"}],
+                [{"text": "✅ Подтвердить действие", "callback_data": "admin_confirm", "style": "success" if data.startswith("admin_unblock:") else "danger"}],
                 [{"text": "⬅️ Отмена", "callback_data": f"admin_user:{target}"}],
             ]}
         elif data == "admin_confirm" and self.is_admin(user_id):

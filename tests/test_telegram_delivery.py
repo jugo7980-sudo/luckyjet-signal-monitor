@@ -71,3 +71,29 @@ def test_delete_invalidates_only_target_message():
         assert [method for method, _ in calls] == [
             'editMessageText', 'editMessageText', 'deleteMessage', 'editMessageText']
     asyncio.run(run())
+
+
+def test_semantic_button_colors_preserve_neutral_history_and_payload():
+    import copy
+    async def run():
+        calls=[]
+        async def request(method,payload): calls.append(payload); return {'ok':True}
+        send=TelegramDelivery(request,interval=0)
+        actions=['menu_main','site_login','demo_reset_confirm','site_forget_confirm:abc','settings_reset_confirm','hi_days:0','menu_close','menu_settings','admin_confirm']
+        payload={'chat_id':1,'reply_markup':{'inline_keyboard':[[{'text':a,'callback_data':a}] for a in actions]}}
+        original=copy.deepcopy(payload)
+        await send('sendMessage',payload)
+        rows=calls[0]['reply_markup']['inline_keyboard']
+        assert [row[0].get('style') for row in rows]==['primary','success','danger','danger','danger',None,None,None,'danger']
+        assert payload==original
+    asyncio.run(run())
+
+
+def test_demo_enable_disable_colors_follow_state():
+    from test_intuitive_ui import setup
+    gate,_=setup()
+    enable=gate.demo_menu(42)['inline_keyboard'][0]
+    assert enable[1]['style']=='success'
+    assert 'style' not in enable[0]
+    gate._demo_ledger(42).enabled=True
+    assert gate.demo_menu(42)['inline_keyboard'][0][1]['style']=='danger'

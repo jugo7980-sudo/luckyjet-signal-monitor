@@ -9,6 +9,23 @@ from collections import OrderedDict
 interactive = ContextVar("interactive_delivery", default=False)
 
 
+def color_buttons(payload):
+    markup = payload.get('reply_markup')
+    if not isinstance(markup, dict) or 'inline_keyboard' not in markup:
+        return payload
+    result = dict(payload)
+    result['reply_markup'] = copy.deepcopy(markup)
+    for row in result['reply_markup']['inline_keyboard']:
+        for button in row:
+            action = button.get('callback_data', '').split(':', 1)[0]
+            style = {'menu_main': 'primary', 'site_login': 'success',
+                     'demo_reset_confirm': 'danger', 'settings_reset_confirm': 'danger',
+                     'site_forget_confirm': 'danger', 'admin_confirm': 'danger'}.get(action)
+            if style:
+                button.setdefault('style', style)
+    return result
+
+
 class TelegramDelivery:
     def __init__(self, request, *, interval=0.05, cache_seconds=30):
         self.request = request
@@ -21,6 +38,7 @@ class TelegramDelivery:
         self._locks = [asyncio.Lock() for _ in range(64)]
 
     async def __call__(self, method, payload):
+        payload = color_buttons(payload)
         if not (method.startswith('editMessage') or method in {'sendMessage', 'deleteMessage'}):
             return await self.request(method, payload)
         key = (payload.get('chat_id'), payload.get('message_id'))

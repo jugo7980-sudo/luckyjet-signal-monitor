@@ -164,7 +164,7 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             await page.locator('#demo-stake-input').fill('25.50')
             await page.locator('#demo-stake-save').click()
             await page.locator('#demo-reset').click()
-            assert await page.locator('#demo-stake-input').input_value() == '10.00'
+            await page.wait_for_function("document.getElementById('demo-stake-input').value === '10.00'")
 
             await page.locator('nav [data-tab=account]').click()
             await page.locator('#open-settings').click()
@@ -175,7 +175,7 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             await page.locator('#settings-history-size').select_option('50')
             await page.locator('#settings-delete-delay').select_option('60')
             await page.locator('#settings-reset').click()
-            assert await page.locator('#settings-notifications').inner_text() == 'ВКЛ'
+            await page.wait_for_function("document.getElementById('settings-notifications').textContent === 'ВКЛ'")
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert actions == [
                 'demo_toggle', 'demo_trigger', 'demo_stake', 'demo_reset',

@@ -1,7 +1,7 @@
 """Virtual-only demo progression and balance ledger for Lucky Jet rounds."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 
 
@@ -50,6 +50,26 @@ class DemoLedger:
         self.cycle_started_at = state.get("cycle_started_at")
         self.cycle_rounds = list(state.get("cycle_rounds", []))[-100:]
         self.history = list(state.get("history", []))[:MAX_HISTORY]
+        self.daily_max_steps = dict(state.get("daily_max_steps", {}))
+        self.backfill_daily_steps()
+
+    def backfill_daily_steps(self):
+        # Only same-day sessions have an unambiguous daily attribution.
+        for entry in self.history:
+            try:
+                start = datetime.fromisoformat(entry['started_at'])
+                end = datetime.fromisoformat(entry['ended_at'])
+                if start.tzinfo is None or end.tzinfo is None:
+                    continue
+                day = start.astimezone(timezone(timedelta(hours=7))).date().isoformat()
+                if day == end.astimezone(timezone(timedelta(hours=7))).date().isoformat():
+                    self.daily_max_steps[day] = max(self.daily_max_steps.get(day, 0), len(entry.get('rounds', [])))
+            except (KeyError, TypeError, ValueError):
+                continue
+
+    def _record_step(self, step, now=None):
+        day = (now or datetime.now(timezone.utc)).astimezone(timezone(timedelta(hours=7))).date().isoformat()
+        self.daily_max_steps[day] = max(self.daily_max_steps.get(day, 0), step)
 
     @staticmethod
     def _int(value, default):
@@ -72,6 +92,7 @@ class DemoLedger:
             "cycle_started_at": self.cycle_started_at,
             "cycle_rounds": self.cycle_rounds,
             "history": self.history,
+            "daily_max_steps": self.daily_max_steps,
         }
 
     def set_trigger(self, count: int) -> bool:
@@ -120,6 +141,7 @@ class DemoLedger:
         self.cycle_stake_cents = 0
         self.cycle_rounds = []
         self.cycle_start_balance_cents = self.balance_cents
+        self._record_step(1)
         return {"type": "trigger", "next_stake_cents": self.next_stake_cents}
 
     def reset(self):
@@ -194,7 +216,7 @@ class DemoLedger:
             event["lost_stake_cents"] = lost_stake_cents
         return event
 
-    def process_round(self, coefficient):
+    def process_round(self, coefficient, *, now=None):
         if not self.enabled:
             return None
         try:
@@ -224,12 +246,14 @@ class DemoLedger:
             self.cycle_stake_cents = 0
             self.cycle_rounds = []
             self.cycle_start_balance_cents = self.balance_cents
+            self._record_step(1, now)
             return {"type": "trigger", "next_stake_cents": self.next_stake_cents}
 
         stake = self.next_stake_cents
         if self.balance_cents < stake:
             return self._finish_insufficient(stake)
 
+        self._record_step(len(self.cycle_rounds) + 1, now)
         self.balance_cents -= stake
         self.cycle_stake_cents += stake
         round_entry = {
@@ -248,6 +272,7 @@ class DemoLedger:
                     lost_stake_cents=stake,
                 )
             self.next_stake_cents = next_stake
+            self._record_step(len(self.cycle_rounds) + 1, now)
             return {
                 "type": "loss",
                 "coefficient": float(multiplier),

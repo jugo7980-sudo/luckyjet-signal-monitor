@@ -111,6 +111,7 @@ class SiteAccount:
         self.visible = True
         self._forget_confirmation = None
         if self.gate is not None:
+            self.gate.history_open.discard(self.owner_id)
             self.gate.chats[self.owner_id] = self.owner_id
             self.gate.demo_history_pages.pop(self.owner_id, None)
             self.gate.demo_pending_inputs.pop(self.owner_id, None)

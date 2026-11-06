@@ -1,6 +1,8 @@
 """Private Telegram bot access, settings, alerts, and admin controls."""
 import asyncio
 import hmac
+import re
+from history_ui import footer, pager, button, high_screen
 import json
 import logging
 import os
@@ -63,6 +65,7 @@ class TelegramPasswordGate(HistoryPanels):
         self.demo_ledgers = {}
         self._demo_history_views = {}
         self.demo_history_pages = {}
+        self.history_open = set()
         self.demo_pending_inputs = {}
         self.admin_pending_actions = {}
         self.pending_confirmations = {}
@@ -345,11 +348,7 @@ class TelegramPasswordGate(HistoryPanels):
         return value if value in {20, 30, 50, 100} else 20
 
     def _navigation_rows(self, back=None, back_label="⬅️ Назад"):
-        main = {"text": "🏠 Главное меню", "callback_data": "menu_main"}
-        close = {"text": "✖ Закрыть", "callback_data": "menu_close"}
-        if back:
-            return [[main], [{"text": back_label, "callback_data": back}, close]]
-        return [[main, close]]
+        return footer(back) if back else footer("menu_main")[1:]
 
     @staticmethod
     def _main_text():
@@ -361,7 +360,7 @@ class TelegramPasswordGate(HistoryPanels):
             "menu_notifications", "menu_settings", "settings_notifications",
             "settings_sound", "settings_test", "settings_reset", "demo_menu",
             "demo_toggle", "demo_refresh_balance", "demo_set_balance", "demo_set_stake", "demo_input_cancel",
-            "demo_daily", "demo_daily_date", "demo_history", "demo_stats", "demo_reset", "demo_reset_confirm", "demo_trigger_menu",
+            "demo_daily", "demo_daily_date", "coef_date", "hi_date", "demo_history", "demo_stats", "demo_reset", "demo_reset_confirm", "demo_trigger_menu",
             "settings_threshold", "settings_history", "settings_delete", "settings_reset_confirm", "menu_help",
         }:
             return True
@@ -370,11 +369,14 @@ class TelegramPasswordGate(HistoryPanels):
                 return datetime.strptime(data.split(":", 1)[1], "%Y-%m-%d").date() <= datetime.now(THAILAND_TIME).date()
             except ValueError:
                 return False
+        if data.startswith(("hi_", "demo_daily_days:")):
+            return bool(re.fullmatch(r"(?:hi_days|demo_daily_days):[0-9]{1,6}|hi_day:[0-9]{4}-[0-9]{2}-[0-9]{2}:[0-9]{1,6}|hi_case:[a-f0-9]{16}:[0-9]{1,6}", data)) and (
+                not data.startswith('hi_day:') or self._valid_history_date(data.split(':')[1]))
         if data.startswith("coef_days:"):
             return len(data.split(":")) == 2 and data.split(":")[1].isdigit() and int(data.split(":")[1]) < 10000
         if data.startswith("coef_day:"):
             parts = data.split(":")
-            if len(parts) != 4 or parts[2:] != ["10", "0"]:
+            if len(parts) != 4 or (parts[2] != "10" or not parts[3].isdigit() or len(parts[3]) > 6):
                 return False
             try:
                 datetime.strptime(parts[1], "%Y-%m-%d")
@@ -421,7 +423,7 @@ class TelegramPasswordGate(HistoryPanels):
         if user_id is not None:
             balance = format_dollars(self._demo_ledger(user_id).balance_cents)
             rows.append([{"text": f"🔄 💵 Баланс: {balance}", "callback_data": "demo_refresh_balance"}])
-        rows.append([{"text": "✖ Закрыть меню", "callback_data": "menu_close"}])
+        rows.append([{"text": "✖ Закрыть", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
 
     def _demo_text(self, user_id):
@@ -458,7 +460,7 @@ class TelegramPasswordGate(HistoryPanels):
             self._setting_row("🔄 Демо-баланс", format_dollars(ledger.balance_cents), "demo_refresh_balance"),
             self._setting_row("💰 Первая ставка", format_dollars(ledger.base_stake_cents), "demo_set_stake"),
             [{"text": "📜 История циклов", "callback_data": "demo_history"}],
-            [{"text": "Максимальный шаг", "callback_data": "demo_daily"}],
+            [{"text": "Максимальный шаг", "callback_data": "demo_daily_days:0"}],
             [{"text": "📊 Статистика DEMO", "callback_data": "demo_stats"}],
             [{"text": "📈 История Кэф", "callback_data": "coef_days:0"}],
             [{"text": "♻️ Сбросить демо", "callback_data": "demo_reset"}],
@@ -620,16 +622,16 @@ class TelegramPasswordGate(HistoryPanels):
                 dates,total=await stats.days(page)
             for day in dates:
                 label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y')
-                rows.append([{"text":label,"callback_data":f"coef_day:{day}:10:0"}])
+                rows.append([{"text":label,"callback_data":f"coef_day:{day}:10:{page}"}])
             title=f"📈 История Кэф · {page+1}/{pages}\nТаиланд, UTC+7 · новые сначала"
             if not rows:
                 title+="\nДанных пока нет."
             pager=[]
             if page:
-                pager.append({"text":"⬅️ Назад","callback_data":f"coef_days:{page-1}"})
+                pager.append({"text":"◀","callback_data":f"coef_days:{page-1}"})
             if page+1<pages:
-                pager.append({"text":"Вперёд ➡️","callback_data":f"coef_days:{page+1}"})
-            return title, {"inline_keyboard":rows+([pager] if pager else [])+self._navigation_rows("demo_menu", "🧪 Демо-режим")}
+                pager.append({"text":"▶","callback_data":f"coef_days:{page+1}"})
+            return title, {"inline_keyboard":rows+([pager] if pager else [])+[[button("📅 Дата", "coef_date"),button("Интервалы >100x", "hi_days:0")]]+self._navigation_rows("demo_menu")}
         _,day,threshold,page=parts
         summary=await stats.summary(day)
         from datetime import datetime
@@ -640,8 +642,12 @@ class TelegramPasswordGate(HistoryPanels):
             text+=f"\n{label_lt2}: {summary.get('lt2', 0)}"
         else:
             text+="\n<2x: нет данных"
+        for t in (2,5):
+            value = summary.get(str(t),0) if summary.get('new_threshold_tracking') else 'нет данных'
+            suffix = ' с обновления' if summary.get('new_threshold_partial') else ''
+            text += f"\n>{t}x{suffix}: {value}"
         text+=''.join(f"\n>{t}x: {summary.get(str(t),0)}" for t in (10,25,50,100,200,300,500,800,1000,1500,2000,3000,5000))
-        return text,{"inline_keyboard":self._navigation_rows("coef_days:0", "📈 История Кэф")}
+        return text,{"inline_keyboard":self._navigation_rows(f"coef_days:{page}")}
 
 
     def _demo_history_menu(self, user_id, page=0):
@@ -656,7 +662,7 @@ class TelegramPasswordGate(HistoryPanels):
 
     def _set_demo_history_page(self, user_id, page):
         self.demo_history_pages[user_id] = max(0, int(page))
-        self.menu_deadlines.pop(user_id, None)
+        self.menu_deadlines[user_id] = 0
         task = self._menu_tasks.pop(user_id, None)
         if task is not None and task is not asyncio.current_task():
             task.cancel()
@@ -690,9 +696,9 @@ class TelegramPasswordGate(HistoryPanels):
             rows.append([{"text": f"{round_count} шаг. · {stamp} · {result}", "callback_data": f"demo_cycle:{token}:{index}"}])
         pager = []
         if page:
-            pager.append({"text": "⬅️ Назад", "callback_data": f"demo_list:{token}:{page - 1}"})
+            pager.append({"text": "◀", "callback_data": f"demo_list:{token}:{page - 1}"})
         if page + 1 < pages:
-            pager.append({"text": "Вперёд ➡️", "callback_data": f"demo_list:{token}:{page + 1}"})
+            pager.append({"text": "▶", "callback_data": f"demo_list:{token}:{page + 1}"})
         return text, {"inline_keyboard": [*rows, *([pager] if pager else []), *self._navigation_rows("demo_menu", "🧪 Демо-режим")]}
 
     def _demo_cycle_screen(self, user_id, token, index):
@@ -702,6 +708,23 @@ class TelegramPasswordGate(HistoryPanels):
         text = self._demo_history_text(user_id, index, history=view[1])
         return text, {"inline_keyboard": self._navigation_rows(
             f"demo_list:{token}:{index // 10}", "⬅️ К списку циклов")}
+
+    @staticmethod
+    def _valid_history_date(day):
+        try:
+            return datetime.strptime(day, '%Y-%m-%d').date() <= datetime.now(THAILAND_TIME).date()
+        except ValueError:
+            return False
+
+    def _daily_days_screen(self, user_id, page):
+        values=self._demo_ledger(user_id).daily_max_steps
+        dates=sorted(values,reverse=True); pages=max(1,(len(dates)+9)//10); page=min(page,pages-1)
+        rows=[[button(f"{datetime.strptime(day,'%Y-%m-%d'):%d.%m.%Y} · {values[day]} шаг.",f"demo_daily:{day}")] for day in dates[page*10:page*10+10]]
+        rows+=pager(page,pages,lambda p:f'demo_daily_days:{p}')
+        rows+=[[button('📅 Дата','demo_daily_date'),button('Сегодня','demo_daily')]]+footer('demo_menu')
+        text=f'Максимальный шаг · {page+1}/{pages}\nТаиланд, UTC+7'
+        if not dates:text+='\nЗаписей пока нет.'
+        return text,{'inline_keyboard':rows}
 
     def _demo_daily_screen(self, user_id, day=None):
         today = datetime.now(THAILAND_TIME).date()
@@ -715,23 +738,28 @@ class TelegramPasswordGate(HistoryPanels):
             pager.append({"text": "◀ Предыдущий день", "callback_data": f"demo_daily:{selected - timedelta(days=1)}"})
         if selected < today:
             pager.append({"text": "Следующий день ▶", "callback_data": f"demo_daily:{selected + timedelta(days=1)}"})
-        rows = [pager, [{"text": "📅 Выбрать дату", "callback_data": "demo_daily_date"}],
+        rows = ([pager] if pager else []) + [[{"text": "📅 Выбрать дату", "callback_data": "demo_daily_date"}],
                 [{"text": "Сегодня", "callback_data": "demo_daily"}]]
-        return text, {"inline_keyboard": [*rows, *self._navigation_rows("demo_menu")]}
+        return text, {"inline_keyboard": [*rows, *self._navigation_rows("demo_daily_days:0")]}
 
     async def _demo_input(self, user_id, chat_id, raw, message_id=None):
         field = self.demo_pending_inputs.pop(user_id, None)
-        if field == "daily_date":
+        if field in {"daily_date", "coef_date", "hi_date"}:
             await self._safe_delete(chat_id, message_id)
             try:
                 selected = datetime.strptime(raw.strip(), "%d.%m.%Y").date()
                 if selected > datetime.now(THAILAND_TIME).date():
                     raise ValueError("Future date")
-                answer, markup = self._demo_daily_screen(user_id, selected.isoformat())
+                self.history_open.add(user_id)
+                if field == "daily_date":
+                    answer, markup = self._demo_daily_screen(user_id, selected.isoformat())
+                else:
+                    target = f"hi_day:{selected}:0" if field == "hi_date" else f"coef_day:{selected}:10:0"
+                    answer, markup = await (high_screen(self.coefficient_stats,target) if field == "hi_date" else self._coefficient_screen(target))
             except ValueError:
                 self.demo_pending_inputs[user_id] = field
                 answer = "Введите существующую дату в формате ДД.ММ.ГГГГ, не позднее сегодняшней."
-                markup = {"inline_keyboard": self._navigation_rows("demo_daily")}
+                markup = {"inline_keyboard": self._navigation_rows({"daily_date":"demo_daily_days:0","coef_date":"coef_days:0","hi_date":"hi_days:0"}[field])}
             await self._send_transient(user_id, chat_id, answer, markup)
             return True
         cents = parse_dollars(raw)
@@ -764,7 +792,7 @@ class TelegramPasswordGate(HistoryPanels):
             self.demo_pending_inputs[user_id] = field
         await self._safe_delete(chat_id, message_id)
         markup = self.demo_menu(user_id) if updated else {
-            "inline_keyboard": [[{"text": "⬅️ Отмена", "callback_data": "demo_input_cancel"}]]
+            "inline_keyboard": self._navigation_rows("demo_input_cancel")
         }
         await self._send_transient(user_id, chat_id, answer, markup)
         return True
@@ -870,6 +898,14 @@ class TelegramPasswordGate(HistoryPanels):
 
     def _touch_menu(self, user_id):
         if user_id in self.demo_history_pages:
+            self.menu_deadlines[user_id] = 0
+            return
+        if user_id in self.history_open:
+            self.menu_deadlines[user_id] = 0
+            task=self._menu_tasks.pop(user_id,None)
+            if task is not None and task is not asyncio.current_task(): task.cancel()
+            return
+        if user_id in self.demo_history_pages:
             return
         if user_id in self.menu_messages:
             self.menu_deadlines[user_id] = time.time() + MENU_IDLE_SECONDS
@@ -878,7 +914,7 @@ class TelegramPasswordGate(HistoryPanels):
     async def _menu_timeout(self, user_id):
         while user_id in self.menu_messages:
             deadline = self.menu_deadlines.get(user_id)
-            if deadline is None:
+            if deadline is None or deadline == 0:
                 return
             await asyncio.sleep(max(0, deadline - time.time()))
             try:
@@ -917,6 +953,7 @@ class TelegramPasswordGate(HistoryPanels):
                     ):
                         raise
             self.menu_messages.pop(user_id, None)
+            self.history_open.discard(user_id)
             self.menu_deadlines.pop(user_id, None)
             task = self._menu_tasks.pop(user_id, None)
             if task is not None and task is not asyncio.current_task():
@@ -1098,6 +1135,7 @@ class TelegramPasswordGate(HistoryPanels):
             if self.site_account is not None and await self.site_account.handle_message(msg):
                 return
             if command in {"/start", "/menu", "/settings", "/status", "/help"}:
+                self.history_open.discard(user_id)
                 self.demo_pending_inputs.pop(user_id, None)
                 self.pending_confirmations.pop(user_id, None)
                 self.admin_pending_actions.pop(user_id, None)
@@ -1226,6 +1264,11 @@ class TelegramPasswordGate(HistoryPanels):
             await self._safe_delete(chat_id, message_id)
             return
 
+        if data not in {"noop", "history_refresh", "demo_warning_close"}:
+            if data.startswith(('coef_days:', 'coef_day:', 'hi_days:', 'hi_day:', 'hi_case:', 'demo_daily_days:', 'demo_daily:')) or data in {'demo_daily', 'demo_history', 'demo_stats'} or data.startswith(('demo_list:', 'demo_cycle:')):
+                self.history_open.add(user_id)
+            else:
+                self.history_open.discard(user_id)
         history_page = None
         if data == "demo_history":
             history_page = 0
@@ -1385,11 +1428,23 @@ class TelegramPasswordGate(HistoryPanels):
             else:
                 self.demo_pending_inputs[user_id] = "stake"
                 answer = "💰 Изменить стартовую ставку\nВведите сумму в долларах, например 10 или 25.50. Минимум $10; сумма не должна превышать виртуальный баланс."
-                markup = {"inline_keyboard": [[{"text": "⬅️ Отменить ввод", "callback_data": "demo_input_cancel"}]]}
+                markup = {"inline_keyboard": self._navigation_rows("demo_menu")}
         elif data == "demo_input_cancel":
             self.demo_pending_inputs.pop(user_id, None)
             answer = self._demo_text(user_id)
             markup = self.demo_menu(user_id)
+        elif data in {"coef_date", "hi_date"}:
+            self.demo_pending_inputs[user_id] = data
+            answer = "📅 Дата: ДД.ММ.ГГГГ"
+            markup = {"inline_keyboard": footer('hi_days:0' if data == 'hi_date' else 'coef_days:0')}
+        elif data.startswith("hi_"):
+            stats=getattr(self,'coefficient_stats',None)
+            if stats is None or stats.redis is None:
+                answer, markup = 'Хранилище недоступно.', {'inline_keyboard':footer('coef_days:0')}
+            else:
+                answer, markup = await high_screen(stats,data)
+        elif data.startswith("demo_daily_days:"):
+            answer, markup = self._daily_days_screen(user_id,int(data.split(':')[1]))
         elif data.startswith("coef_"):
             answer, markup = await self._coefficient_screen(data)
         elif data == "demo_daily_date":
@@ -1425,6 +1480,7 @@ class TelegramPasswordGate(HistoryPanels):
                 [{"text": "✅ Да, сбросить", "callback_data": "demo_reset_confirm"}],
                 [{"text": "Отмена", "callback_data": "demo_menu"}],
             ]}
+            markup["inline_keyboard"] += self._navigation_rows()
         elif data == "demo_reset_confirm":
             if self.pending_confirmations.pop(user_id, None) != "demo":
                 await self._send_transient(user_id, chat_id,
@@ -1509,6 +1565,7 @@ class TelegramPasswordGate(HistoryPanels):
                 [{"text": "✅ Да, вернуть настройки", "callback_data": "settings_reset_confirm"}],
                 [{"text": "⬅️ Отмена", "callback_data": "menu_settings"}],
             ]}
+            markup["inline_keyboard"] += self._navigation_rows()
         elif data == "settings_reset_confirm":
             if self.pending_confirmations.pop(user_id, None) != "settings":
                 await self._send_transient(user_id, chat_id,

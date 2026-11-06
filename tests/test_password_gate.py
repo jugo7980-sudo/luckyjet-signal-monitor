@@ -102,7 +102,7 @@ def test_main_menu_keeps_existing_buttons_and_can_close():
     assert "🧪 Демо: проверка" not in labels
     assert "❓ Справка" not in labels
     assert "⚙️ Настройки" in labels
-    assert "✖ Закрыть меню" in labels
+    assert "✖ Закрыть" in labels
     assert 101 not in deleted_ids(request)
     assert 102 in deleted_ids(request)
 

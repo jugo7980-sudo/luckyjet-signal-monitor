@@ -1,11 +1,12 @@
 """Atomic, deduplicated daily counters with explicitly partial coverage."""
 from collections import OrderedDict
+import hashlib
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo('Asia/Bangkok')
-THRESHOLDS = (10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000)
+THRESHOLDS = (2, 5, 10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000)
 UNDER2_FIX_DAY = '2026-11-03'
 UNDER2_FIX_MARKER = 'luckyjet:coef:lt2-single-count-fixed-v1'
 SCRIPT = """
@@ -14,17 +15,36 @@ redis.call('SET', KEYS[1], '1', 'EX', 7948800)
 local day_existed = redis.call('EXISTS', KEYS[2]) == 1
 if day_existed and redis.call('HEXISTS', KEYS[2], 'lt2_tracking') == 0 then redis.call('HSET', KEYS[2], 'lt2_partial', '1') end
 redis.call('HSET', KEYS[2], 'lt2_tracking', '1')
+if day_existed and redis.call('HEXISTS', KEYS[2], 'new_threshold_tracking') == 0 then redis.call('HSET', KEYS[2], 'new_threshold_partial', '1') end
+redis.call('HSET', KEYS[2], 'new_threshold_tracking', '1')
 redis.call('HINCRBY', KEYS[2], 'total', 1)
 redis.call('HSET', KEYS[2], 'partial', '1')
 if tonumber(ARGV[1]) < 2 then redis.call('HINCRBY', KEYS[2], 'lt2', 1) end
-if ARGV[17] == '1' then redis.call('HSET', KEYS[2], 'time_uncertain', '1') end
-for i=2,14 do
+if ARGV[19] == '1' then redis.call('HSET', KEYS[2], 'time_uncertain', '1') end
+for i=2,16 do
  if tonumber(ARGV[1]) > tonumber(ARGV[i]) then
   redis.call('HINCRBY', KEYS[2], ARGV[i], 1)
  end
 end
 redis.call('EXPIRE', KEYS[2], 7948800)
-redis.call('ZADD', KEYS[3], ARGV[15], ARGV[16])
+redis.call('ZADD', KEYS[3], ARGV[17], ARGV[18])
+local last = tonumber(redis.call('HGET', KEYS[4], 'stamp') or '-1')
+local stamp = tonumber(ARGV[17])
+if stamp > last or ARGV[23] == '1' then
+ local since = tonumber(redis.call('HGET', KEYS[4], 'since') or '0') + 1
+ local previous = redis.call('HGET', KEYS[4], 'last_high')
+ local gap = redis.call('HGET', KEYS[4], 'gap') == '1' or ARGV[21] == '1'
+ if tonumber(ARGV[1]) > 100 then
+  local entry = {id=ARGV[22], value=ARGV[1], stamp=stamp, day=ARGV[18], previous=previous or cjson.null, rounds=cjson.null, uncertain=ARGV[19]=='1'}
+  if previous and not gap then entry.rounds=since end
+  redis.call('HSET', 'luckyjet:coef:high:entries', ARGV[22], cjson.encode(entry))
+  redis.call('LPUSH', KEYS[5], ARGV[22])
+  redis.call('ZADD', KEYS[6], stamp, ARGV[18])
+  redis.call('HSET', KEYS[4], 'last_high', cjson.encode({value=ARGV[1], stamp=stamp, id=ARGV[22]}), 'gap', '0')
+  since=0
+ elseif gap then redis.call('HSET', KEYS[4], 'gap', '1') end
+ redis.call('HSET', KEYS[4], 'since', since, 'stamp', math.max(stamp, last), 'last_id', ARGV[20])
+end
 return 1
 """
 UNDER2_DOUBLE_FIX = """
@@ -72,6 +92,12 @@ class CoefficientStats:
     async def ingest(self, rounds):
         if self.redis is None:
             return
+        last_id = await self.redis.hget('luckyjet:coef:high:state', 'last_id')
+        if isinstance(last_id, bytes): last_id = last_id.decode()
+        ids = [str(item.get('id')) for item in rounds]
+        anchor = ids.index(last_id) if last_id in ids else -1
+        gap = bool(last_id and anchor == -1)
+        last_stamp = float(await self.redis.hget('luckyjet:coef:high:state', 'stamp') or -1)
         for item in reversed(rounds):
             rid = item.get('id')
             if rid is None or not str(rid) or str(rid) in self.seen:
@@ -81,11 +107,17 @@ class CoefficientStats:
             uncertain = stamp is None
             if stamp is None:
                 if item is not rounds[0]:
+                    if anchor >= 0 and ids.index(str(rid)) < anchor:
+                        gap = True
                     continue
                 stamp = datetime.now(TZ)
-            await self.record(item.get('coefficient'), round_id=str(rid), timestamp=stamp.timestamp(), uncertain=uncertain)
+            ordered = anchor >= 0 and ids.index(str(rid)) < anchor
+            changed = await self.record(item.get('coefficient'), round_id=str(rid), timestamp=stamp.timestamp(), uncertain=uncertain, gap=gap, ordered=ordered)
+            if changed and (ordered or stamp.timestamp() > last_stamp):
+                gap = False
+                last_stamp = stamp.timestamp()
 
-    async def record(self, coefficient, *, round_id=None, timestamp=None, uncertain=False):
+    async def record(self, coefficient, *, round_id=None, timestamp=None, uncertain=False, gap=False, ordered=False):
         if self.redis is None or not round_id or timestamp is None:
             return False
         try:
@@ -95,9 +127,10 @@ class CoefficientStats:
         if not value.is_finite() or value < 1:
             return False
         day = self.day(timestamp)
-        result = await self.redis.eval(SCRIPT, 3, f'luckyjet:coef:seen:{round_id}',
-            f'luckyjet:coef:{day}', 'luckyjet:coef:days', str(value),
-            *(str(t) for t in THRESHOLDS), str(timestamp), day, '1' if uncertain else '0')
+        result = await self.redis.eval(SCRIPT, 6, f'luckyjet:coef:seen:{round_id}',
+            f'luckyjet:coef:{day}', 'luckyjet:coef:days', 'luckyjet:coef:high:state',
+            f'luckyjet:coef:high:{day}', 'luckyjet:coef:high:days', str(value),
+            *(str(t) for t in THRESHOLDS), str(timestamp), day, '1' if uncertain else '0', str(round_id), '1' if gap else '0', hashlib.sha256(str(round_id).encode()).hexdigest()[:16], '1' if ordered else '0')
         self.seen[str(round_id)] = None
         while len(self.seen) > 1000:
             self.seen.popitem(last=False)

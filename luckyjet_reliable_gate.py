@@ -170,6 +170,9 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
                 self._touch_menu(user_id)
                 await self._persist_runtime_user(user_id)
             deadline = self.menu_deadlines[user_id]
+            if deadline == 0:
+                self.history_open.add(user_id)
+                continue
             if deadline <= now:
                 await self._close_menu(user_id, expected_deadline=deadline, now=now)
             else:

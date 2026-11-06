@@ -29,10 +29,15 @@ def test_shell_tabs_mobile_browser():
                     await request.fulfill(content_type='application/javascript',body="window.Telegram={WebApp:{initData:'',ready(){},expand(){},setHeaderColor(){},setBackgroundColor(){},close(){},BackButton:{onClick(){},hide(){},show(){}},HapticFeedback:{selectionChanged(){}}}}")
             await page.route('**/*',route)
             await page.goto('https://example.test/app')
-            for tab in ['demo','history','settings','home']:
+            for tab in ['demo','history','account','home']:
                 await page.locator('nav button[data-tab="'+tab+'"]').click()
                 assert await page.locator('#page-'+tab).is_visible()
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            await page.locator('nav [data-tab=account]').click()
+            await page.locator('#open-settings').click()
+            assert await page.locator('#settings-panel').is_visible()
+            await page.locator('#open-settings').click()
+            assert not await page.locator('#settings-panel').is_visible()
             assert not errors
             assert await page.evaluate("""() => {const e=new MouseEvent('click',{bubbles:true,cancelable:true}); document.getElementById('return-bot').dispatchEvent(e); return !e.defaultPrevented}""")
             await browser.close()

@@ -195,6 +195,10 @@ class SiteAccount:
                            'Пароль и код не сохраняются на сервере.')
 
     async def cancel(self, *, notify=True):
+        # Bot and Mini App must not keep two competing login attempts alive.
+        web = getattr(self, '_mini_app_web_login', None)
+        if web is not None and web.running:
+            await web.cancel()
         task = self._task
         if task is not None and not task.done():
             task.cancel()

@@ -15,11 +15,32 @@
     target.textContent = String(text || '');
     target.classList.toggle('control-error', error);
   }
+  const probeArea = document.getElementById('demo-probe-area');
+  const probeResult = document.getElementById('demo-probe-result');
+  function showProbe(probe) {
+    const labels = {
+      not_checked: 'Проверка ещё не выполнена.',
+      region_blocked: 'Сайт недоступен из региона сервера.',
+      verification: 'Сайт запросил проверку браузера.',
+      demo_available: 'Демо-кнопка найдена. Баланс не подтверждён.',
+      game_loaded: 'Интерфейс игры загружен. Баланс не подтверждён.',
+      unconfirmed: 'Деморежим не подтверждён.',
+      timeout: 'Нет результата за 3 минуты.',
+      error: 'Ошибка чтения страницы игры.'
+    };
+    if (!probe) { probeResult.textContent = 'Не проверено.'; return; }
+    probeResult.textContent = probe.running ? 'Проверка выполняется. Ожидание страницы мониторинга.'
+      : (labels[probe.state] || 'Статус неизвестен.');
+    if (probe.checked_at) probeResult.textContent += ' · ' + probe.checked_at + ' UTC';
+  }
+  window.showDemoProbe = showProbe;
   function paint(data) {
     latest = data;
     const demo = data.demo, settings = data.settings;
     demoPanel.hidden = false;
     settingsPanel.hidden = false;
+    probeArea.hidden = !data.admin;
+    if (data.probe) showProbe(data.probe);
     const toggle = document.getElementById('demo-toggle');
     toggle.textContent = demo.enabled ? 'Выключить DEMO' : 'Включить DEMO';
     document.getElementById('demo-trigger-select').value = String(demo.trigger);
@@ -115,7 +136,8 @@
   selectAction('demo-trigger-select', 'demo_trigger');
   document.getElementById('demo-stake-save').addEventListener('click', () =>
     action('demo_stake', document.getElementById('demo-stake-input').value));
-  document.getElementById('demo-reset').addEventListener('click', () =>
+  document.getElementById('demo-probe-start').addEventListener('click', () => action('demo_probe_start'));
+    document.getElementById('demo-reset').addEventListener('click', () =>
     confirmAction('Сбросить DEMO? Баланс станет $10,000.00. История циклов, максимальные шаги и статистика DEMO будут удалены.', 'demo_reset'));
   document.getElementById('settings-notifications').addEventListener('click', () => action('notifications_toggle'));
   document.getElementById('settings-sound').addEventListener('click', () => action('sound_toggle'));
@@ -130,6 +152,7 @@
   window.clearControlsData = () => {
     latest = null; loadedAt = 0;
     demoPanel.hidden = true; settingsPanel.hidden = true;
+    probeArea.hidden = true;
     demoStatus.textContent = 'Нет доступа';
     settingsStatus.textContent = 'Нет доступа';
   };

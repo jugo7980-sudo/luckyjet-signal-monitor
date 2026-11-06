@@ -460,7 +460,7 @@ class TelegramPasswordGate(HistoryPanels):
             self._setting_row("🔄 Демо-баланс", format_dollars(ledger.balance_cents), "demo_refresh_balance"),
             self._setting_row("💰 Первая ставка", format_dollars(ledger.base_stake_cents), "demo_set_stake"),
             [{"text": "📜 История циклов", "callback_data": "demo_history"}],
-            [{"text": "Максимальный шаг", "callback_data": "demo_daily_days:0"}],
+            [{"text": "📶 Максимальный шаг", "callback_data": "demo_daily_days:0"}],
             [{"text": "📊 Статистика DEMO", "callback_data": "demo_stats"}],
             [{"text": "📈 История Кэф", "callback_data": "coef_days:0"}],
             [{"text": "♻️ Сбросить демо", "callback_data": "demo_reset"}],

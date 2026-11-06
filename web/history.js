@@ -82,7 +82,7 @@
     const input = el('input');
     input.type = 'date';
     input.id = 'history-date';
-    input.max = new Date(Date.now() + 12 * 3600000).toLocaleDateString('en-CA', {timeZone: 'Asia/Bangkok'});
+    input.max = new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
     const button = el('button', 'history-date-button', 'Показать');
     button.type = 'button';
     button.addEventListener('click', () => {
@@ -257,4 +257,9 @@
     if (!current || Date.now() - lastLoad > 30000) navigate(args.view, {...args});
   };
   window.historyBackInApp = goBack;
+  window.clearHistoryData = () => {
+    ++requestNo; current = null; stack = [];
+    root.replaceChildren(); pager.hidden = true; back.hidden = true;
+    status.textContent = 'Нет доступа';
+  };
 })();

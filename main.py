@@ -447,9 +447,9 @@ async def health_server(gate=None, bot_token=None) -> None:
                 status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
             else:
                 path, _, query = line[1].partition('?')
-                if line[0] == 'POST' and path not in {'/api/controls', '/api/admin'}:
+                if line[0] == 'POST' and path not in {'/api/controls', '/api/admin', '/api/site'}:
                     status, content_type, body = '405 Method Not Allowed', 'text/plain', b'Method not allowed'
-                elif path in {'/api/overview', '/api/history', '/api/controls', '/api/admin'}:
+                elif path in {'/api/overview', '/api/history', '/api/controls', '/api/admin', '/api/site'}:
                     pairs = [header.split(':', 1) for header in request.decode('ascii').split('\r\n')[1:] if ':' in header]
                     auth = [value.strip() for key, value in pairs if key.lower() == 'authorization']
                     if len(auth) > 1:
@@ -457,7 +457,7 @@ async def health_server(gate=None, bot_token=None) -> None:
                     if path == '/api/history':
                         from mini_app_history import history
                         status, content_type, body = await history(auth[0] if auth else '', gate, bot_token, query)
-                    elif path in {'/api/controls', '/api/admin'}:
+                    elif path in {'/api/controls', '/api/admin', '/api/site'}:
                         payload = None
                         if line[0] == 'POST':
                             contents = [value.strip() for key, value in pairs if key.lower() == 'content-length']
@@ -473,6 +473,9 @@ async def health_server(gate=None, bot_token=None) -> None:
                         if path == '/api/admin':
                             from mini_app_admin import admin
                             status, content_type, body = await admin(auth_header, gate, bot_token, method, payload, query)
+                        elif path == '/api/site':
+                            from mini_app_site import site
+                            status, content_type, body = await site(auth_header, gate, bot_token, method, payload)
                         else:
                             from mini_app_controls import controls
                             status, content_type, body = await controls(auth_header, gate, bot_token, method, payload)

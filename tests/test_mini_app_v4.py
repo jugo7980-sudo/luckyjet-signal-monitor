@@ -235,7 +235,7 @@ def test_home_colors_removed_quick_access_and_site_web_form():
             await page.locator('#site-code-form button[type=submit]').click()
             await page.locator('#site-forget').wait_for(state='visible')
             await page.locator('#site-forget').click()
-            await page.wait_for_function("!document.getElementById('site-forget').hidden")
+            await page.locator('#site-forget').wait_for(state='hidden')
             assert logins == ['login','code','forget']
             assert limits == [20, 50]
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')

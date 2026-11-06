@@ -95,10 +95,11 @@ async def overview(authorization, gate, token, query=''):
     probe = {
         'state': raw_probe.result,
         'requested': bool(raw_probe.requested),
+        'running': bool(raw_probe.task and not raw_probe.task.done()),
         'checked_at': raw_probe.checked_at,
         'source': raw_probe.source,
     } if raw_probe else {
-        'state': 'not_checked', 'requested': False, 'checked_at': None, 'source': None,
+        'state': 'not_checked', 'requested': False, 'running': False, 'checked_at': None, 'source': None,
     }
     return json_response('200 OK', {
         'coefficients': history,

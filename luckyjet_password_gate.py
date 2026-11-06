@@ -361,10 +361,15 @@ class TelegramPasswordGate(HistoryPanels):
             "menu_notifications", "menu_settings", "settings_notifications",
             "settings_sound", "settings_test", "settings_reset", "demo_menu",
             "demo_toggle", "demo_refresh_balance", "demo_set_balance", "demo_set_stake", "demo_input_cancel",
-            "demo_history", "demo_stats", "demo_reset", "demo_reset_confirm", "demo_trigger_menu",
+            "demo_daily", "demo_daily_date", "demo_history", "demo_stats", "demo_reset", "demo_reset_confirm", "demo_trigger_menu",
             "settings_threshold", "settings_history", "settings_delete", "settings_reset_confirm", "menu_help",
         }:
             return True
+        if data.startswith("demo_daily:"):
+            try:
+                return datetime.strptime(data.split(":", 1)[1], "%Y-%m-%d").date() <= datetime.now(THAILAND_TIME).date()
+            except ValueError:
+                return False
         if data.startswith("coef_days:"):
             return len(data.split(":")) == 2 and data.split(":")[1].isdigit() and int(data.split(":")[1]) < 10000
         if data.startswith("coef_day:"):
@@ -453,6 +458,7 @@ class TelegramPasswordGate(HistoryPanels):
             self._setting_row("🔄 Демо-баланс", format_dollars(ledger.balance_cents), "demo_refresh_balance"),
             self._setting_row("💰 Первая ставка", format_dollars(ledger.base_stake_cents), "demo_set_stake"),
             [{"text": "📜 История циклов", "callback_data": "demo_history"}],
+            [{"text": "📊 Максимальный шаг по дням", "callback_data": "demo_daily"}],
             [{"text": "📊 Статистика DEMO", "callback_data": "demo_stats"}],
             [{"text": "📈 История Кэф", "callback_data": "coef_days:0"}],
             [{"text": "♻️ Сбросить демо", "callback_data": "demo_reset"}],
@@ -697,8 +703,37 @@ class TelegramPasswordGate(HistoryPanels):
         return text, {"inline_keyboard": self._navigation_rows(
             f"demo_list:{token}:{index // 10}", "⬅️ К списку циклов")}
 
+    def _demo_daily_screen(self, user_id, day=None):
+        today = datetime.now(THAILAND_TIME).date()
+        selected = datetime.strptime(day, "%Y-%m-%d").date() if day else today
+        value = self._demo_ledger(user_id).daily_max_steps.get(selected.isoformat())
+        text = (f"📊 Максимальный шаг за сутки\n{selected:%d.%m.%Y}\n"
+                + (f"Максимальный шаг: {value}" if value else "Нет сохранённых данных за этот день.")
+                + "\nВремя Таиланда, UTC+7")
+        pager = []
+        if selected > datetime.min.date():
+            pager.append({"text": "◀ Предыдущий день", "callback_data": f"demo_daily:{selected - timedelta(days=1)}"})
+        if selected < today:
+            pager.append({"text": "Следующий день ▶", "callback_data": f"demo_daily:{selected + timedelta(days=1)}"})
+        rows = [pager, [{"text": "📅 Выбрать дату", "callback_data": "demo_daily_date"}],
+                [{"text": "Сегодня", "callback_data": "demo_daily"}]]
+        return text, {"inline_keyboard": [*rows, *self._navigation_rows("demo_menu")]}
+
     async def _demo_input(self, user_id, chat_id, raw, message_id=None):
         field = self.demo_pending_inputs.pop(user_id, None)
+        if field == "daily_date":
+            await self._safe_delete(chat_id, message_id)
+            try:
+                selected = datetime.strptime(raw.strip(), "%d.%m.%Y").date()
+                if selected > datetime.now(THAILAND_TIME).date():
+                    raise ValueError("Future date")
+                answer, markup = self._demo_daily_screen(user_id, selected.isoformat())
+            except ValueError:
+                self.demo_pending_inputs[user_id] = field
+                answer = "Введите существующую дату в формате ДД.ММ.ГГГГ, не позднее сегодняшней."
+                markup = {"inline_keyboard": self._navigation_rows("demo_daily")}
+            await self._send_transient(user_id, chat_id, answer, markup)
+            return True
         cents = parse_dollars(raw)
         if field is None:
             return False
@@ -1357,6 +1392,13 @@ class TelegramPasswordGate(HistoryPanels):
             markup = self.demo_menu(user_id)
         elif data.startswith("coef_"):
             answer, markup = await self._coefficient_screen(data)
+        elif data == "demo_daily_date":
+            self.demo_pending_inputs[user_id] = "daily_date"
+            answer = "📅 Введите дату в формате ДД.ММ.ГГГГ, например 07.11.2026."
+            markup = {"inline_keyboard": self._navigation_rows("demo_daily")}
+        elif data == "demo_daily" or data.startswith("demo_daily:"):
+            day = data.split(":", 1)[1] if ":" in data else None
+            answer, markup = self._demo_daily_screen(user_id, day)
         elif data == "demo_history":
             answer, markup = self._demo_history_list(user_id)
         elif data == "demo_stats":
@@ -1377,7 +1419,7 @@ class TelegramPasswordGate(HistoryPanels):
             state = "включённым" if self._demo_ledger(user_id).enabled else "выключенным"
             answer = ("♻️ Сбросить DEMO?\n"
                       "Баланс станет $10,000.00, стартовая ставка — $10.00. "
-                      "Активная сессия прекратится. История циклов и вся статистика DEMO обнулятся. "
+                      "Активная сессия прекратится. История циклов, максимальные шаги по дням и вся статистика DEMO обнулятся. "
                       f"Условие запуска сохраняется. Демо останется {state}.")
             markup = {"inline_keyboard": [
                 [{"text": "✅ Да, сбросить", "callback_data": "demo_reset_confirm"}],

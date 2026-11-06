@@ -24,6 +24,7 @@ def snapshot(gate, uid):
         'probe': {
             'state': probe.result,
             'requested': probe.requested,
+            'running': bool(probe.task and not probe.task.done()),
             'checked_at': probe.checked_at,
             'source': probe.source,
         } if probe else None,

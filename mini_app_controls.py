@@ -1,6 +1,9 @@
 """User-scoped Mini App controls for virtual DEMO and Telegram notification settings."""
 import asyncio
 import json
+import time
+
+import httpx
 
 from mini_app_api import json_response, telegram_user
 from luckyjet_signal.demo_ledger import DemoLedger, TRIGGER_OPTIONS, parse_dollars
@@ -8,7 +11,7 @@ from luckyjet_signal.demo_ledger import DemoLedger, TRIGGER_OPTIONS, parse_dolla
 ACTIONS = {
     'demo_toggle', 'demo_trigger', 'demo_stake', 'demo_reset',
     'notifications_toggle', 'sound_toggle', 'notification_threshold',
-    'history_size', 'delete_delay', 'settings_reset',
+    'history_size', 'delete_delay', 'settings_reset', 'test_notification',
 }
 
 
@@ -127,6 +130,30 @@ async def controls(authorization, gate, token, method='GET', body=None):
                 return json_response('400 Bad Request', {'error': 'Допустимые значения: 0, 10, 30, 60 секунд.'})
             gate.delete_seconds[uid] = value
             await gate._persist_user(uid)
+        elif action == 'test_notification':
+            # Never send a test to another chat or let a user spam Telegram.
+            if gate.chats.get(uid) != uid or not callable(gate.request):
+                return json_response('409 Conflict', {'error': 'Открой личный чат бота через /start.'})
+            last = getattr(gate, '_mini_app_test_sent_at', None)
+            if last is None:
+                gate._mini_app_test_sent_at = last = {}
+            now = time.monotonic()
+            if now - last.get(uid, float('-inf')) < 30:
+                return json_response('429 Too Many Requests', {'error': 'Тест доступен не чаще одного раза в 30 секунд.'})
+            try:
+                result = await gate.request('sendMessage', {
+                    'chat_id': uid, 'text': '🧪 Тест уведомления Lucky Jet',
+                    'disable_notification': uid in gate.silent_users,
+                })
+                message_id = result.get('result', {}).get('message_id')
+            except (httpx.HTTPError, RuntimeError, KeyError, TypeError):
+                return json_response('502 Bad Gateway', {'error': 'Telegram не принял тестовое сообщение.'})
+            last[uid] = now
+            if message_id is not None:
+                task = asyncio.create_task(gate._schedule_delete(uid, int(message_id), 5))
+                gate._deletion_tasks.add(task)
+                task.add_done_callback(gate._deletion_tasks.discard)
+            message = 'Тест отправлен в личный чат Telegram.'
         elif action == 'settings_reset':
             if payload.get('confirm') is not True:
                 return json_response('400 Bad Request', {'error': 'Требуется подтверждение сброса.'})

@@ -124,6 +124,8 @@
   selectAction('settings-delete-delay', 'delete_delay');
   document.getElementById('settings-reset').addEventListener('click', () =>
     confirmAction('Вернуть настройки по умолчанию? DEMO сохранится.', 'settings_reset'));
+  document.getElementById('settings-test-notification').addEventListener('click', () =>
+    action('test_notification'));
   window.openControlsTab = () => load();
   window.clearControlsData = () => {
     latest = null; loadedAt = 0;

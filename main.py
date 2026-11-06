@@ -478,7 +478,7 @@ async def health_server(gate=None, bot_token=None) -> None:
                             status, content_type, body = await controls(auth_header, gate, bot_token, method, payload)
                     else:
                         from mini_app_api import overview
-                        status, content_type, body = await overview(auth[0] if auth else '', gate, bot_token)
+                        status, content_type, body = await overview(auth[0] if auth else '', gate, bot_token, query)
                 else:
                     status, content_type, body = mini_app_response(line[1])
         except Exception:

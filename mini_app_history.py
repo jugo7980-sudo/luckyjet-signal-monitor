@@ -13,7 +13,7 @@ from luckyjet_signal.demo_ledger import DemoLedger, DEFAULT_BALANCE_CENTS, MAX_H
 
 TZ = ZoneInfo('Asia/Bangkok')
 VIEWS = {'days', 'day', 'high_days', 'high_day', 'high_item',
-         'cycles', 'cycle', 'demo_stats', 'max_steps'}
+         'cycles', 'cycle', 'demo_stats', 'max_steps', 'max_step_day'}
 DAY_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 ITEM_PATTERN = re.compile(r'^[0-9a-f]{16}$')
 
@@ -123,17 +123,21 @@ async def history(authorization, gate, token, query=''):
         item_id = args.get('id', [None])[0]
         if item_id is not None and not ITEM_PATTERN.fullmatch(item_id):
             raise ValueError('Invalid item')
-        if (view in {'day', 'high_day'} and day is None or
+        if (view in {'day', 'high_day', 'max_step_day'} and day is None or
             view == 'high_item' and item_id is None or
             view == 'cycle' and index is None):
             raise ValueError('Required parameter missing')
     except (ValueError, KeyError, TypeError):
         return json_response('400 Bad Request', {'error': 'Некорректные параметры истории.'})
 
-    if view in {'cycles', 'cycle', 'demo_stats', 'max_steps'}:
+    if view in {'cycles', 'cycle', 'demo_stats', 'max_steps', 'max_step_day'}:
         ledger = gate.demo_ledgers.get(uid) or DemoLedger()
         if view == 'demo_stats':
             return json_response('200 OK', {'view': view, 'stats': _demo_stats(ledger)})
+        if view == 'max_step_day':
+            return json_response('200 OK', {
+                'view': view, 'day': day, 'steps': ledger.daily_max_steps.get(day),
+            })
         if view == 'max_steps':
             days = sorted(ledger.daily_max_steps, reverse=True)
             return json_response('200 OK', {

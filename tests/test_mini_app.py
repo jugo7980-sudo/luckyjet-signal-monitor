@@ -41,7 +41,7 @@ def test_shell_tabs_mobile_browser():
     asyncio.run(run())
 
 
-def test_telegram_commands_button_is_separate_from_mini_app_launcher():
+def test_telegram_commands_and_app_launcher_without_pin():
     from luckyjet_password_gate import TelegramPasswordGate
     async def run():
         calls=[]
@@ -54,10 +54,10 @@ def test_telegram_commands_button_is_separate_from_mini_app_launcher():
         await gate._register_commands_button(42)
         assert calls[0]==('setChatMenuButton', {
             'chat_id':42,'menu_button':{'type':'commands'}})
-        await gate._ensure_app_pin(42)
+        await gate._show_app_launcher(42)
         launch=[payload for method,payload in calls if method=='sendMessage'][0]
         assert launch['reply_markup']['inline_keyboard'][0][0]['web_app']['url']==app_url()
-        assert [method for method,payload in calls if method=='pinChatMessage']==['pinChatMessage']
+        assert not [method for method,payload in calls if method=='pinChatMessage']
         await gate.close()
     asyncio.run(run())
 

@@ -142,6 +142,23 @@
   remoteLaunch.textContent = 'Открыть удалённый браузер · Япония';
   remoteLaunch.style.cssText = 'width:100%;min-height:46px;margin-top:13px';
   section.appendChild(remoteLaunch);
+  const proxyCheck = document.createElement('button');
+  proxyCheck.type = 'button';
+  proxyCheck.className = 'history-outline';
+  proxyCheck.textContent = 'Проверить японский IP сервера';
+  proxyCheck.style.cssText = 'width:100%;min-height:46px;margin-top:8px';
+  section.appendChild(proxyCheck);
+  const proxyResult = document.createElement('div');
+  proxyResult.setAttribute('role', 'status');
+  proxyResult.style.cssText = 'font-size:13px;line-height:1.5;overflow-wrap:anywhere;padding:8px 2px';
+  section.appendChild(proxyResult);
+  const phoneIPLink = document.createElement('a');
+  phoneIPLink.textContent = 'Проверить IP на POCO для сравнения';
+  phoneIPLink.href = 'https://api.ipify.org';
+  phoneIPLink.target = '_blank';
+  phoneIPLink.rel = 'noopener noreferrer';
+  phoneIPLink.style.cssText = 'display:block;font-size:13px;margin:2px 0 12px;color:#92bcff';
+  section.appendChild(phoneIPLink);
   const remoteCSS = document.createElement('style');
   remoteCSS.textContent = [
     '#remote-browser-overlay{position:fixed;inset:0;z-index:130;overflow-y:auto;background:#100e18;color:#fff;padding:9px 9px 30px}',
@@ -209,6 +226,25 @@
       return result;
     } finally { clearTimeout(timer); }
   }
+  proxyCheck.addEventListener('click', async () => {
+    if (proxyCheck.disabled) return;
+    proxyCheck.disabled = true;
+    proxyResult.textContent = 'Проверяем выходной IP через Xray…';
+    try {
+      const data = await remoteAPI('POST', {action:'check_ip'}, 19000);
+      const country = data.country === 'JP' ? 'Япония' : data.country;
+      proxyResult.textContent = 'Сервер: ' + data.ip + ' · Страна: ' + country
+        + (data.japan_verified
+          ? '. Сравни этот адрес с IP на POCO.'
+          : '. Внимание: японский IP не подтверждён. Вход не выполняй.');
+    } catch (err) {
+      proxyResult.textContent = err.name === 'AbortError'
+        ? 'Проверка IP не завершилась.'
+        : err.message;
+    } finally {
+      proxyCheck.disabled = false;
+    }
+  });
   async function remoteFrame() {
     if (remoteFrameBusy || !remoteActive || overlay.hidden) return;
     remoteFrameBusy = true;

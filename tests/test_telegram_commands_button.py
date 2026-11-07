@@ -41,54 +41,43 @@ def test_global_and_existing_private_menu_overrides_reset_on_boot(monkeypatch):
         assert buttons[0] == {"menu_button": {"type": "commands"}}
         assert {p["chat_id"] for p in buttons[1:]} == {42, 99, 101}
         assert all(p["menu_button"] == {"type": "commands"} for p in buttons)
-        assert len([x for x in calls if x[0] == "pinChatMessage"]) == 3
-        assert all(
-            p["reply_markup"]["inline_keyboard"][0][0]["web_app"]["url"] == app_url()
-            for m,p in calls if m == "sendMessage"
-        )
+        assert not [x for x in calls if x[0] == "pinChatMessage"]
+        assert not [x for x in calls if x[0] == "sendMessage"]
         cmd_list = [p["commands"] for m,p in calls if m == "setMyCommands"][0]
-        assert [x["command"] for x in cmd_list] == ["start", "menu", "status", "settings", "restart"]
+        assert [x["command"] for x in cmd_list] == ["start", "app", "menu", "status", "settings", "restart"]
         assert any(m == "getChatMenuButton" and p == {"chat_id":42} for m,p in calls)
     asyncio.run(run())
 
 
-def test_pinned_app_message_is_reused_after_restart_not_sent_twice():
+def test_app_command_is_public_and_does_not_create_any_pin():
     from fakeredis.aioredis import FakeRedis
+    from luckyjet_password_gate import APP_LAUNCH_TTL_SECONDS
 
     async def run():
         database = FakeRedis(decode_responses=True)
         calls = []
-        pinned = {"id": None}
         async def request(method, payload):
             calls.append((method, payload))
-            if method == "getChat":
-                return {"ok": True, "result": {
-                    "id": 42, "type": "private",
-                    **({"pinned_message": {"message_id": pinned["id"]}}
-                       if pinned["id"] else {}),
-                }}
-            if method == "pinChatMessage":
-                pinned["id"] = payload["message_id"]
-                return {"ok": True, "result": True}
-            if method == "sendMessage":
-                return {"ok": True, "result": {"message_id": 456}}
-            return {"ok": True, "result": True}
+            return {"ok": True, "result": {"message_id": 456}}
         gate = TelegramPasswordGate(request, password="test")
         gate.redis = database
-        await gate._ensure_app_pin(42)
-        await gate._ensure_app_pin(42)
-        assert len([x for x in calls if x[0] == "sendMessage"]) == 1
-        assert await database.hget("luckyjet:pinned_app_messages", "42") == "456"
-        assert len([x for x in calls if x[0] == "pinChatMessage"]) == 1
-        await gate._register_commands_button(42)
-        await gate._register_commands_button(42)
-        assert len([x for x in calls if x[0] == "setChatMenuButton"]) == 1
-        assert gate.menu(42)["inline_keyboard"][0][0]["callback_data"] == "menu_history"
+        await gate.handle_update({"message": {
+            "message_id": 21, "chat": {"id": 42, "type": "private"},
+            "from": {"id": 42}, "text": "/app",
+        }})
+        assert any(method == "setChatMenuButton" for method, _ in calls)
+        assert ("deleteMessage", {"chat_id": 42, "message_id": 21}) in calls
+        launch = [payload for method, payload in calls if method == "sendMessage"]
+        assert len(launch) == 1
+        assert launch[0]["reply_markup"]["inline_keyboard"][0][0]["web_app"]["url"] == app_url()
+        assert not [method for method, _ in calls if "pinChatMessage" in method]
+        assert not await database.hgetall("luckyjet:pinned_app_messages")
+        assert APP_LAUNCH_TTL_SECONDS <= 60
         await gate.close()
     asyncio.run(run())
 
 
-def test_start_for_new_unregistered_user_repairs_legacy_menu_and_creates_pin():
+def test_start_for_new_unregistered_user_repairs_menu_without_pin():
     from fakeredis.aioredis import FakeRedis
 
     async def run():
@@ -100,7 +89,7 @@ def test_start_for_new_unregistered_user_repairs_legacy_menu_and_creates_pin():
         gate.redis = FakeRedis(decode_responses=True)
         await gate._prepare_start(101, 101)
         assert ("setChatMenuButton", {"chat_id":101, "menu_button":{"type":"commands"}}) in calls
-        assert any(m == "pinChatMessage" and p["chat_id"] == 101 for m,p in calls)
-        assert await gate.redis.hget("luckyjet:pinned_app_messages", "101") == "345"
+        assert not any(m in {"pinChatMessage", "sendMessage"} for m,p in calls)
+        assert not await gate.redis.hgetall("luckyjet:pinned_app_messages")
         await gate.close()
     asyncio.run(run())

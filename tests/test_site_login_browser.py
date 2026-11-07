@@ -358,3 +358,28 @@ def test_login_button_below_fold_scrolls_into_view_without_force_click():
             email, password = await driver._open_form()
             assert await email.is_visible() and await password.is_visible()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('role_tag', ['button', 'link'])
+def test_1win_authentication_by_email_second_step(role_tag):
+    from site_login_browser import SiteLoginBrowser
+    element = ('<button type="button"' if role_tag == 'button' else '<a href="#"')
+    html = (
+        '<meta charset="utf-8"><button id="header" '
+        'onclick="document.querySelector(\"#choices\").hidden=false">Вход</button>'
+        '<div id="choices" hidden>'
+        + element
+        + ' id="email-option" onclick="document.querySelector(\"#form\").hidden=false">'
+        + 'Авторизация по почте'
+        + ('</button>' if role_tag == 'button' else '</a>')
+        + '</div><div id="form" hidden><input type="email"><input type="password"></div>'
+    )
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=3) as driver:
+            await driver.context.route('**/*', lambda route: route.fulfill(
+                status=200, content_type='text/html', body=html))
+            await driver.page.goto(driver.login_url)
+            email, password = await driver._open_form()
+            assert await email.is_visible()
+            assert await password.is_visible()
+    asyncio.run(run())

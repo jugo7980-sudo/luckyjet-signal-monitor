@@ -52,17 +52,27 @@ def test_home_screen_shortcut_in_telegram():
 
             await page.route("**/*", route)
             await page.goto("https://example.test/app")
+            home_button = page.locator("#install-shortcut-home")
+            assert await home_button.is_visible()  # No Account navigation or Premium required.
+            assert await home_button.is_enabled()
+            assert await page.locator("#install-shortcut-home-label").inner_text() == "Добавить ярлык"
+            assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            await home_button.click()
+            assert await page.evaluate("window.__shortcut.calls") == 1
+            assert "Подтвердите" in await page.locator("#install-shortcut-home-status").inner_text()
             await page.locator("nav [data-tab=account]").click()
             button = page.locator("#install-shortcut")
             assert await button.is_visible()
             assert await button.is_enabled()
             assert await page.locator("#install-shortcut-label").inner_text() == "На главный экран"
             await button.click()
-            assert await page.evaluate("window.__shortcut.calls") == 1
+            assert await page.evaluate("window.__shortcut.calls") == 2
             assert "Подтвердите" in await page.locator("#install-shortcut-status").inner_text()
             await page.evaluate("window.__shortcut.handlers.homeScreenAdded()")
             assert await button.is_disabled()
+            assert await home_button.is_disabled()
             assert "уже добавлен" in await page.locator("#install-shortcut-label").inner_text()
+            assert await page.locator("#install-shortcut-home-label").inner_text() == "Ярлык установлен"
             assert not errors, errors
             await browser.close()
 
@@ -107,6 +117,9 @@ def test_shortcut_not_offered_when_telegram_unsupported():
 
             await page.route("**/*", route)
             await page.goto("https://example.test/app")
+            assert await page.locator("#install-shortcut-home").is_visible()
+            assert await page.locator("#install-shortcut-home").is_disabled()
+            assert "Telegram 8.0+" in await page.locator("#install-shortcut-home-status").inner_text()
             await page.locator("nav [data-tab=account]").click()
             assert await page.locator("#install-shortcut").is_visible()
             assert await page.locator("#install-shortcut").is_disabled()

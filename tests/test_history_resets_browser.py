@@ -35,6 +35,20 @@ def test_mobile_archive_and_reset_controls():
                                 'items': [{'type': 'round', 'round_id': 'round-1', 'coefficient': '2.5',
                                            'observed_at': '1794000000000', 'source_time': ''}],
                                 'next_cursor': '1794000000000-0' if more else None}
+                        if more:
+                            data['integrity'] = {
+                                'status': 'unverified', 'archived_rounds': 5,
+                                'gaps': 0, 'reasons': ['тестовый пропуск'],
+                                'poll_coverage': {
+                                    'status': 'poll_gaps', 'expected_minutes': 5,
+                                    'observed_minutes': 3, 'primary_minutes': 2,
+                                    'backup_minutes': 2, 'missing_minutes': 2,
+                                    'longest_missing_minutes': 2,
+                                    'missing_intervals': [{
+                                        'start': '00:02', 'end': '00:04', 'minutes': 2,
+                                    }],
+                                },
+                            }
                     else:
                         data = {'view': view, 'days': ['2026-11-08'] if view != 'max_steps' else [],
                                 'page': 0, 'total': 1, 'items': []}
@@ -64,6 +78,8 @@ def test_mobile_archive_and_reset_controls():
             assert writes[1]['value'] == 'high_days'
             await page.locator('#history-archive').click()
             await page.get_by_text('Фактический архив', exact=True).wait_for()
+            await page.get_by_text('Минуты успешных опросов').wait_for()
+            await page.get_by_text('00:02–00:04', exact=False).wait_for()
             assert await page.locator('#history-reset-scope').is_hidden()
             await page.get_by_text('Показать более ранние записи').click()
             assert reads.count('archive') >= 2

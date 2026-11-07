@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from mini_app import response
 from mini_app_controls import controls
+from fakeredis.aioredis import FakeRedis
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
 
 
@@ -26,7 +27,7 @@ def test_user_scoped_controls_writes_and_invariants():
     async def run():
         gate = ReliableTelegramPasswordGate(None, history_provider=lambda: ['1.20x', '1.50x'])
         gate.authorized.update({42, 43})
-        gate.redis = object()
+        gate.redis = FakeRedis(decode_responses=True)
         saved_demo, saved_settings, refreshed, cleared = [], [], [], []
 
         async def persist_demo(uid): saved_demo.append(uid)
@@ -60,7 +61,7 @@ def test_user_scoped_controls_writes_and_invariants():
         assert (await request('demo_trigger', value=3))[0] == '409 Conflict'
         assert (await request('demo_stake', value='30'))[0] == '409 Conflict'
         assert (await request('demo_reset'))[0] == '400 Bad Request'
-        assert (await request('demo_reset', confirm=True))[1]['demo']['balance_cents'] == 1_000_000
+        assert (await request('demo_reset', confirm=True, value={'currency':'USD','balance':'10000','stake':'10','revision':'legacy'}))[1]['demo']['balance_cents'] == 1_000_000
 
         assert (await request('notifications_toggle'))[1]['settings']['notifications'] is False
         assert cleared == [42]
@@ -75,7 +76,7 @@ def test_user_scoped_controls_writes_and_invariants():
             'notifications': True, 'sound': True,
             'threshold': 4, 'history_size': 20, 'delete_delay': 10,
         }
-        assert saved_demo == [42, 42, 42, 42]
+        assert saved_demo == [42, 42, 42]
         assert len(saved_settings) == 6
 
         for action, value in [('demo_trigger', 99), ('notification_threshold', 1),
@@ -101,7 +102,7 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             page = await browser.new_page(viewport={'width': 390, 'height': 844})
             errors, actions = [], []
             state = {
-                'demo': {'enabled': False, 'active': False, 'balance_cents': 1_000_000,
+                'demo': {'currency':'USD', 'reset_revision':'legacy', 'enabled': False, 'active': False, 'balance_cents': 1_000_000,
                          'base_stake_cents': 1000, 'trigger': 4, 'low_streak': 1,
                          'step': None, 'next_stake_cents': None},
                 'settings': {'notifications': True, 'sound': True, 'threshold': 4,
@@ -133,7 +134,8 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
                             state['demo']['base_stake_cents'] = int(float(payload['value']) * 100)
                         elif action == 'demo_reset':
                             assert payload['confirm'] is True
-                            state['demo'].update(balance_cents=1000000, base_stake_cents=1000)
+                            assert payload['value'] == {'currency':'RUB','balance':'50000','stake':'25.50','revision':'legacy'}
+                            state['demo'].update(currency='RUB',reset_revision='new',balance_cents=5000000, base_stake_cents=2550)
                         elif action == 'notifications_toggle':
                             state['settings']['notifications'] = not state['settings']['notifications']
                         elif action == 'sound_toggle':
@@ -170,7 +172,16 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             await page.locator('#demo-stake-input').fill('25.50')
             await page.locator('#demo-stake-save').click()
             await page.locator('#demo-reset').click()
-            await page.wait_for_function("document.getElementById('demo-stake-input').value === '10.00'")
+            await page.locator('#demo-reset-currency').select_option('RUB')
+            await page.locator('#demo-reset-balance').fill('50000')
+            await page.locator('#demo-reset-stake').fill('25.50')
+            await page.locator('#demo-reset-submit').click()
+            await page.wait_for_function("document.getElementById('header-balance').textContent.includes('RUB')")
+            assert '₽' in await page.locator('#header-balance').inner_text()
+            assert await page.locator('#demo-stake-input').input_value() == '25.50'
+            await page.locator('#demo-reset').click()
+            await page.locator('#demo-reset-cancel').click()
+            assert actions.count('demo_reset') == 1
 
             await page.locator('nav [data-tab=account]').click()
             await page.locator('#open-settings').click()

@@ -148,6 +148,8 @@ async def _status(gate, profile, *, registered=False):
             'premium': premium, 'username': profile.get('username') if member else None,
             'first_name': profile.get('first_name') if member else None,
             'balance_cents': ledger.balance_cents if ledger else (1000000 if premium else None),
+            'currency': ledger.currency if ledger else 'USD',
+            'balance_verified': ledger.balance_verified if ledger else True,
             'bot_username': 'jugo_luckyjet_signal_bot'}
 
 

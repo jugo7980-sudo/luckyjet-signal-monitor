@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import ContextVar
+from contextlib import AsyncExitStack
 import logging
 import time
 
@@ -154,7 +155,14 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         finally:
             _demo_batch.reset(token)
             if self.redis and batch:
-                await self._demo_storage.save_many(self.redis, batch)
+                # Reset may replace a ledger while this round is awaiting I/O.
+                # Serialize final persistence with controls and save the CURRENT
+                # objects, never stale pre-reset references from the batch.
+                async with AsyncExitStack() as locks:
+                    for uid in sorted(map(int, batch)):
+                        await locks.enter_async_context(self._mini_app_control_locks.setdefault(uid, asyncio.Lock()))
+                    current = {uid: self._demo_ledger(int(uid)) for uid in batch}
+                    await self._demo_storage.save_many(self.redis, current)
         users = set(self.chats) | set(self.active_messages) | set(self.pending_deletions)
         for user_id in users:
             await self._persist_runtime_user(user_id)

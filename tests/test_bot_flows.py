@@ -249,7 +249,7 @@ def test_demo_stake_input_minimum_and_reset_confirmation_buttons():
     async def run():
         await gate.handle_callback(callback(42, "demo_menu", 600))
         await gate.handle_callback(callback(42, "demo_set_stake", gate.menu_messages[42]))
-        await gate.handle_update(message(42, "9", 78))
+        await gate.handle_update(message(42, "0", 78))
         assert gate.demo_ledgers[42].base_stake_cents == 1_000
         invalid_prompt = [
             p for method, p in request.calls if method in {"sendMessage", "editMessageText"}

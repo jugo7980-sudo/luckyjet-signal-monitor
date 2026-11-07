@@ -112,7 +112,8 @@ def test_insufficient_balance_emits_one_closable_ten_minute_warning_and_resets_s
                 if method == "sendMessage" and "недостаточно баланса" in payload.get("text", "").lower()]
     assert len(warnings) == 1
     assert "Шагов: 2" in warnings[0]["text"]
-    assert "Новая ставка: $10.00" in warnings[0]["text"]
+    assert "Стартовая ставка сохранена: $10.00" in warnings[0]["text"]
+    assert "DEMO остановлено" in warnings[0]["text"]
     assert warnings[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "demo_warning_close"
     assert scheduled and scheduled[-1][2] == 600
     assert ledger.base_stake_cents == MINIMUM_STAKE_CENTS
@@ -143,35 +144,17 @@ def test_history_gap_closes_only_active_demo_as_incomplete_and_warns():
                for method, payload in request.calls)
 
 
-def test_confirmed_demo_reset_clears_active_cycle_history_and_statistics():
+def test_old_telegram_reset_buttons_open_manual_configuration_without_reset():
     gate, request = setup()
     ledger = gate._demo_ledger(42)
     ledger.history = [normal_entry(1)]
-    ledger.enabled = True
-    ledger.trigger_streak = 2
-    ledger.process_round("1.10")
-    ledger.process_round("1.20")
-    ledger.process_round("1.30")
-
+    old = ledger.dump()
     async def run():
         await click(gate, "demo_reset")
-        prompt = screen(request)["text"].lower()
-        assert "история циклов" in prompt and "обнулятся" in prompt
-        assert "$10.00" in prompt
+        assert "валюту" in screen(request)["text"]
         await click(gate, "demo_reset_confirm")
     asyncio.run(run())
-
-    assert ledger.balance_cents == 1_000_000
-    assert ledger.base_stake_cents == 1_000
-    assert ledger.history == []
-    assert not ledger.active
-    assert ledger.cycle_rounds == []
-    stats = gate._demo_stats_text(42)
-    for label in ("Всего сессий", "Успешных", "Проигрышных", "Неполных", "Остановлено вручную"):
-        assert f"{label}: 0" in stats
-    assert "С последнего сброса: $0.00" in stats
-    assert "По истории (0 из 100): $0.00" in stats
-    assert "Среднее шагов: 0.0" in stats
+    assert ledger.dump() == old
 
 
 def test_demo_statistics_derive_from_history_and_exclude_technical_sessions_from_money():

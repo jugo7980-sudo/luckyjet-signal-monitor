@@ -117,7 +117,7 @@ async def overview(authorization, gate, token, query=''):
             'threshold': gate.user_threshold(uid),
             'probe': probe,
         },
-        'demo': {'enabled': ledger.enabled, 'balance_cents': ledger.balance_cents, 'balance_verified': ledger.balance_verified,
+        'demo': {'currency': ledger.currency, 'reset_revision': ledger.reset_revision, 'enabled': ledger.enabled, 'balance_cents': ledger.balance_cents, 'balance_verified': ledger.balance_verified,
                  'base_stake_cents': ledger.base_stake_cents, 'active': ledger.active,
                  'step': len(ledger.cycle_rounds) + 1 if ledger.active else None,
                  'trigger': ledger.trigger_streak},

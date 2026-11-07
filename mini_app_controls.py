@@ -2,6 +2,10 @@
 import asyncio
 import json
 import time
+import secrets
+from redis.exceptions import RedisError
+from luckyjet_signal.demo_money import parse_money
+from round_archive import STREAM_KEY
 
 import httpx
 
@@ -29,6 +33,9 @@ def snapshot(gate, uid):
             'source': probe.source,
         } if probe else None,
         'demo': {
+            'currency': ledger.currency,
+            'reset_revision': ledger.reset_revision,
+            'initial_balance_cents': ledger.initial_balance_cents,
             'enabled': ledger.enabled,
             'active': ledger.active,
             'balance_cents': ledger.balance_cents, 'balance_verified': ledger.balance_verified,
@@ -112,16 +119,35 @@ async def controls(authorization, gate, token, method='GET', body=None):
                 ledger.sync_history(gate.history_provider() if gate.history_provider else [])
             await gate._persist_demo(uid)
         elif action == 'demo_stake':
-            amount = parse_dollars(value)
+            amount = parse_money(value, ledger.currency)
             if amount is None or not ledger.set_base_stake(amount):
-                return json_response('409 Conflict', {'error': 'Ставка от $10, не выше баланса и только между циклами.'})
+                return json_response('409 Conflict', {'error': 'Ставка должна соответствовать валюте, быть не выше баланса и меняться только между циклами.'})
             await gate._persist_demo(uid)
         elif action == 'demo_reset':
             if payload.get('confirm') is not True:
                 return json_response('400 Bad Request', {'error': 'Требуется подтверждение сброса.'})
-            ledger.reset()
+            if not isinstance(value, dict) or set(value) != {'currency', 'balance', 'stake', 'revision'}:
+                return json_response('400 Bad Request', {'error': 'Выбери валюту и введи баланс и ставку.'})
+            currency = value['currency']
+            if not isinstance(currency, str):
+                return json_response('400 Bad Request', {'error': 'Недопустимая валюта.'})
+            balance = parse_money(value['balance'], currency)
+            stake = parse_money(value['stake'], currency)
+            if balance is None or stake is None or stake > balance:
+                return json_response('400 Bad Request', {'error': 'Проверь суммы: баланс и ставка должны быть положительными, ставка не выше баланса; воны — целые.'})
+            if value['revision'] != ledger.reset_revision:
+                return json_response('409 Conflict', {'error': 'Счёт уже сброшен. Обнови страницу перед новым сбросом.'})
+            replacement = DemoLedger(**ledger.dump())
+            replacement.reset(currency=currency, balance_cents=balance,
+                              base_stake_cents=stake, reset_revision=secrets.token_hex(16))
+            try:
+                head = await gate.redis.xrevrange(STREAM_KEY, count=1)
+                replacement.demo_after_stream_id = head[0][0] if head else ledger.last_archived_stream_id
+                await gate._demo_storage.save(gate.redis, uid, replacement)
+            except (RedisError, OSError):
+                return json_response('503 Service Unavailable', {'error': 'Не удалось сохранить сброс. Обнови страницу и проверь состояние счёта.'})
+            gate.demo_ledgers[uid] = replacement
             gate._demo_history_views.pop(uid, None)
-            await gate._persist_demo(uid)
             message = 'DEMO сброшено вместе с историей и статистикой.'
         elif action == 'notifications_toggle':
             if uid in gate.notifications_disabled:

@@ -22,8 +22,9 @@
     node.textContent = String(text);
     return node;
   };
-  const money = cents => Number.isFinite(Number(cents))
-    ? new Intl.NumberFormat('ru-RU', {style: 'currency', currency: 'USD'}).format(Number(cents) / 100) : 'Нет данных';
+  let currency = 'USD';
+  const money = cents => cents != null && Number.isFinite(Number(cents))
+    ? window.formatDemoMoney(cents, currency) : 'Нет данных';
   const signedMoney = cents => cents == null ? 'Нет данных' : (Number(cents) > 0 ? '+' : '') + money(cents);
   const formatDay = day => /^\d{4}-\d{2}-\d{2}$/.test(String(day))
     ? String(day).slice(8, 10) + '.' + String(day).slice(5, 7) + '.' + String(day).slice(0, 4) : 'Дата неизвестна';
@@ -169,6 +170,7 @@
           () => navigate('demo_stats', {}, true));
         if (!data.items.length) note('Завершённых циклов пока нет.');
         for (const c of data.items) {
+          currency = c.currency || 'USD';
           const result = c.outcome === 'incomplete_data' || c.net_cents == null
             ? 'Нет полных данных' : signedMoney(c.net_cents);
           item(c.steps + ' шаг. · ' + formatTime(c.ended_at || c.started_at),
@@ -177,9 +179,11 @@
         break;
       case 'cycle': {
         const c = data.item;
+        currency = c.currency || 'USD';
         const reasons = {recovered: 'Цель 2x достигнута', insufficient_balance: 'Недостаточно баланса',
           incomplete_data: 'Неполные данные', stopped_by_user: 'Остановлена пользователем'};
         heading('Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
+        info('Валюта', currency);
         info('Начало', formatTime(c.started_at));
         info('Завершение', formatTime(c.ended_at));
         info('Шагов', c.steps);
@@ -198,7 +202,9 @@
       }
       case 'demo_stats': {
         const s = data.stats;
+        currency = s.currency || 'USD';
         heading('Статистика DEMO', 'По последним ' + s.total + ' из ' + s.maximum + ' циклов');
+        info('Валюта', currency);
         info('Всего сессий', s.total);
         info('Успешных', s.recovered);
         info('Проигрышных', s.lost);

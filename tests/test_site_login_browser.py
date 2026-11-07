@@ -240,3 +240,19 @@ def test_site_login_chromium_receives_proxy_and_keeps_context(monkeypatch):
     assert calls[1] == ('launch', {'headless': True, 'proxy': {'server': 'socks5://127.0.0.1:10808'}})
     assert calls[2][0] == 'context'
     assert calls[3] == ('closed', True)
+
+
+def test_timeout_with_open_login_form_reports_unconfirmed_submission(caplog):
+    from site_account import LoginProblem
+    from site_login_browser import SiteLoginBrowser
+    html = """<form onsubmit="event.preventDefault()"><input type="email">
+        <input type="password"><button>Войти</button></form>"""
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=.15) as driver:
+            await driver.context.route('**/*', lambda route: route.fulfill(
+                status=200, content_type='text/html', body=html))
+            with pytest.raises(LoginProblem, match='Форма входа осталась открыта'):
+                await driver.login('private@example.test', 'secret789', None)
+    asyncio.run(run())
+    assert 'secret789' not in caplog.text
+    assert 'private@example.test' not in caplog.text

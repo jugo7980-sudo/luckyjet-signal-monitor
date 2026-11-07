@@ -83,7 +83,11 @@ class WebLoginFlow:
                     await self.account.request('sendPhoto', {
                         'chat_id': self.account.owner_id,
                         'photo_file': ('login-page.png', screenshot, 'image/png'),
-                        'caption': 'Состояние страницы до ввода логина и пароля',
+                        'caption': (
+                            'Диагностика после отправки формы: поля ввода скрыты'
+                            if getattr(exc, 'page_screenshot_stage', None) == 'after_submission'
+                            else 'Состояние страницы до ввода логина и пароля'
+                        ),
                     })
                 except Exception:
                     log.warning('Could not deliver login screenshot to owner')

@@ -2118,10 +2118,11 @@ class TelegramPasswordGate(HistoryPanels):
     async def _handle_demo_round(self, user_id, coefficient):
         lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
         async with lock:
-            ledger = self.demo_ledgers.get(user_id)
-            if ledger is None or not ledger.enabled:
+            # Keep the maximum-step series even when DEMO is switched off.
+            ledger = self._demo_ledger(user_id)
+            if not ledger.track_max_step(coefficient):
                 return None
-            event = ledger.process_round(coefficient)
+            event = ledger.process_round(coefficient) if ledger.enabled else None
             await self._persist_demo(user_id)
         if not event:
             return None
@@ -2143,12 +2144,17 @@ class TelegramPasswordGate(HistoryPanels):
 
     async def on_history_gap(self):
         for user_id in list(self.authorized):
-            ledger = self.demo_ledgers.get(user_id)
-            if ledger is None or not ledger.enabled:
-                continue
-            ledger.low_streak = 0
-            entry = ledger.finish_active("incomplete_data") if ledger.active else None
-            await self._persist_demo(user_id)
+            lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
+            async with lock:
+                ledger = self.demo_ledgers.get(user_id)
+                if ledger is None:
+                    continue
+                # A missing source interval cannot be joined to the previous
+                # series: reset tracking for both DEMO and always-on steps.
+                ledger.reset_max_step_progress()
+                ledger.low_streak = 0
+                entry = ledger.finish_active("incomplete_data") if ledger.enabled and ledger.active else None
+                await self._persist_demo(user_id)
             if entry is not None:
                 await self._send_demo_warning(
                     user_id,

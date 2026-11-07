@@ -22,14 +22,14 @@
     return e;
   };
   async function api(method = 'GET', payload = null, pageNumber = page) {
-    if (!tg || !tg.initData) throw new Error('Открой приложение через Telegram.');
+    if (!window.canUsePremium?.()) throw new Error('Требуется Premium.');
     const stop = new AbortController();
     const timeout = setTimeout(() => stop.abort(), 8000);
     try {
       const response = await fetch('/api/admin?page=' + encodeURIComponent(pageNumber), {
-        method, credentials: 'omit', cache: 'no-store', signal: stop.signal,
+        method, credentials: 'same-origin', cache: 'no-store', signal: stop.signal,
         headers: {
-          Authorization: 'tma ' + tg.initData,
+          ...(tg?.initData ? {Authorization: 'tma ' + tg.initData} : {}),
           ...(method === 'POST' ? {'Content-Type': 'application/json'} : {}),
         },
         ...(method === 'POST' ? {body: JSON.stringify(payload)} : {}),

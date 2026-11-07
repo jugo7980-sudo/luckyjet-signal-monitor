@@ -97,7 +97,7 @@ def test_guest_locks_and_premium_telegram_upgrade_mobile_browser():
             await page.locator('nav [data-tab=home]').click()
             await page.locator('#private-overview').wait_for(state='visible')
             assert await page.locator('#header-balance').inner_text() != '—'
-            assert await page.locator('#summary-heading').inner_text() == 'Сводка за 3 из 20 раундов'
+            await page.wait_for_function("document.querySelector('#summary-heading').textContent === 'Сводка за 3 из 20 раундов'")
             assert '/api/overview' in calls
             assert 'access:telegram_login' in calls and 'access:premium' in calls
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')

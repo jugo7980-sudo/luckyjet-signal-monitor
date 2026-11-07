@@ -35,7 +35,11 @@ def test_shell_tabs_mobile_browser():
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             await page.locator('nav [data-tab=account]').click()
             assert await page.locator('#page-account .locked-section').is_visible()
-            assert not await page.locator('#open-settings').is_visible()
+            assert await page.locator('#open-settings').is_visible()
+            assert not await page.locator('#settings-panel').is_visible()
+            await page.locator('#open-settings').click()
+            assert await page.locator('#install-shortcut').is_visible()
+            assert not await page.locator('#settings-controls').is_visible()
             assert not errors
             await browser.close()
     asyncio.run(run())

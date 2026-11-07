@@ -54,7 +54,7 @@ def test_history_keeps_newest_one_hundred_sessions_on_load_and_finish():
     assert ledger.history[0]["outcome"] == "recovered"
 
 
-def test_insufficient_next_stake_closes_session_before_unaffordable_step_and_resets_base_to_ten():
+def test_insufficient_next_stake_closes_session_and_preserves_selected_stake():
     ledger = DemoLedger(enabled=True, balance_cents=7_000, base_stake_cents=2_000)
     start_cycle(ledger)
 
@@ -69,8 +69,9 @@ def test_insufficient_next_stake_closes_session_before_unaffordable_step_and_res
     assert event["entry"]["outcome"] == "insufficient_balance"
     assert event["entry"]["base_stake_cents"] == 2_000
     assert ledger.balance_cents == 1_000
-    assert ledger.base_stake_cents == MINIMUM_STAKE_CENTS
-    assert ledger.next_stake_cents == MINIMUM_STAKE_CENTS
+    assert ledger.base_stake_cents == 2000
+    assert ledger.next_stake_cents == 2000
+    assert ledger.enabled is False
 
 
 def test_active_session_rejects_trigger_and_base_stake_changes():
@@ -141,7 +142,9 @@ def test_demo_below_minimum_stake_stays_paused_and_does_not_build_trigger_streak
 
     events = [ledger.process_round(value) for value in ("1.10", "1.20", "1.30", "1.40")]
 
-    assert events == [None, None, None, None]
+    assert events[0]["type"] == "insufficient_balance"
+    assert events[1:] == [None, None, None]
+    assert ledger.enabled is False
     assert ledger.active is False
     assert ledger.low_streak == 0
     assert ledger.history == []

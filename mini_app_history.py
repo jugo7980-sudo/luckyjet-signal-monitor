@@ -65,6 +65,7 @@ def _entry(raw):
 def _cycle(entry, index, detailed=False):
     result = {
         'index': index,
+        'currency': entry.get('currency', 'USD'),
         'started_at': entry.get('started_at'),
         'ended_at': entry.get('ended_at'),
         'outcome': entry.get('outcome'),
@@ -87,13 +88,14 @@ def _demo_stats(ledger):
     valid = [r for r in records if r.get('outcome') in
              {'recovered', 'insufficient_balance'} and r.get('net_cents') is not None]
     return {
+        'currency': ledger.currency,
         'total': len(records),
         'maximum': MAX_HISTORY,
         'recovered': sum(r.get('outcome') == 'recovered' for r in records),
         'lost': sum(r.get('outcome') == 'insufficient_balance' for r in records),
         'incomplete': sum(r.get('outcome') == 'incomplete_data' for r in records),
         'stopped': sum(r.get('outcome') == 'stopped_by_user' for r in records),
-        'since_reset_cents': ledger.balance_cents - DEFAULT_BALANCE_CENTS,
+        'since_reset_cents': ledger.balance_cents - ledger.initial_balance_cents,
         'history_net_cents': sum(int(r['net_cents']) for r in valid),
         'average_steps': round(sum(len(r.get('rounds') or []) for r in valid) / len(valid), 1) if valid else 0,
     }

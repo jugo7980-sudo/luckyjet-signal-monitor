@@ -46,9 +46,9 @@
     login.textContent = name;
     login.title = data.registered ? 'Аккаунт Telegram' : 'Войти через Telegram';
     premium.hidden = !data.registered || data.premium;
-    document.getElementById('header-balance').textContent = data.premium
-      ? new Intl.NumberFormat('ru-RU', {style: 'currency', currency: 'USD'})
-          .format((Number(data.balance_cents) || 1000000) / 100) : '—';
+    document.getElementById('header-premium').hidden = !data.premium;
+    if (data.premium) window.renderDemoBalance?.({balance_cents:data.balance_cents, currency:data.currency, balance_verified:data.balance_verified});
+    else document.getElementById('header-balance').textContent = '—';
     nativeRegister.hidden = !(data.verified && !data.registered);
     keyForm.hidden = !(data.registered && !data.premium);
     logout.hidden = !data.verified || Boolean(app && app.initData);

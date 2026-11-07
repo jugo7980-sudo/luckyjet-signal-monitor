@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
+from .demo_money import CURRENCIES, valid_amount, format_money
 
 
 DEFAULT_BALANCE_CENTS = 1_000_000  # $10,000.00
@@ -38,15 +39,22 @@ class DemoLedger:
     """Tracks simulated bets only; it never sends a wager to the game."""
 
     def __init__(self, **state):
+        self.currency = state.get("currency", "USD")
+        if self.currency not in CURRENCIES:
+            self.currency = "USD"
+        self.minimum_stake_cents = CURRENCIES[self.currency][2]
+        self.initial_balance_cents = max(0, self._int(state.get("initial_balance_cents", DEFAULT_BALANCE_CENTS), DEFAULT_BALANCE_CENTS))
+        self.reset_revision = str(state.get("reset_revision") or "legacy")
+        self.demo_after_stream_id = str(state.get("demo_after_stream_id") or "")
         self.enabled = bool(state.get("enabled", False))
         trigger = self._int(state.get("trigger_streak", 4), 4)
         self.trigger_streak = trigger if trigger in TRIGGER_OPTIONS else 4
         self.balance_cents = max(0, self._int(state.get("balance_cents", DEFAULT_BALANCE_CENTS), DEFAULT_BALANCE_CENTS))
         stake = self._int(state.get("base_stake_cents", DEFAULT_STAKE_CENTS), DEFAULT_STAKE_CENTS)
-        self.base_stake_cents = max(MINIMUM_STAKE_CENTS, stake)
+        self.base_stake_cents = max(self.minimum_stake_cents, stake)
         self.low_streak = max(0, self._int(state.get("low_streak", 0), 0))
         self.active = bool(state.get("active", False))
-        self.next_stake_cents = max(MINIMUM_STAKE_CENTS, self._int(state.get("next_stake_cents", self.base_stake_cents), self.base_stake_cents))
+        self.next_stake_cents = max(self.minimum_stake_cents, self._int(state.get("next_stake_cents", self.base_stake_cents), self.base_stake_cents))
         self.cycle_stake_cents = max(0, self._int(state.get("cycle_stake_cents", 0), 0))
         self.cycle_start_balance_cents = max(0, self._int(state.get("cycle_start_balance_cents", self.balance_cents), self.balance_cents))
         self.cycle_started_at = state.get("cycle_started_at")
@@ -109,6 +117,10 @@ class DemoLedger:
 
     def dump(self):
         return {
+            "currency": self.currency,
+            "initial_balance_cents": self.initial_balance_cents,
+            "reset_revision": self.reset_revision,
+            "demo_after_stream_id": self.demo_after_stream_id,
             "enabled": self.enabled,
             "trigger_streak": self.trigger_streak,
             "balance_cents": self.balance_cents,
@@ -182,7 +194,9 @@ class DemoLedger:
             return None, False
         if not self.track_max_step(coefficient, now=now):
             return None, False
-        event = self.process_round(coefficient, now=now) if self.enabled else None
+        before_reset = (position is not None and self.demo_after_stream_id
+                        and position <= self._stream_position(self.demo_after_stream_id))
+        event = self.process_round(coefficient, now=now) if self.enabled and not before_reset else None
         self.last_archived_round_id = identifier
         if position is not None:
             self.last_archived_stream_id = str(stream_id)
@@ -200,14 +214,14 @@ class DemoLedger:
         return True
 
     def set_balance(self, cents: int) -> bool:
-        if cents < MINIMUM_STAKE_CENTS or self.active:
+        if not valid_amount(cents, self.currency) or self.active:
             return False
         self.balance_cents = cents
         self.cycle_start_balance_cents = cents
         return True
 
     def set_base_stake(self, cents: int) -> bool:
-        if self.active or cents < MINIMUM_STAKE_CENTS or cents > self.balance_cents:
+        if self.active or not valid_amount(cents, self.currency) or cents > self.balance_cents:
             return False
         self.base_stake_cents = cents
         self.next_stake_cents = cents
@@ -231,6 +245,7 @@ class DemoLedger:
             return None
         self.low_streak = 0
         if self.balance_cents < self.base_stake_cents:
+            self.enabled = False
             return {"type": "insufficient_balance", "needed_cents": self.base_stake_cents}
         self.active = True
         self.cycle_started_at = datetime.now(timezone.utc).isoformat()
@@ -241,7 +256,15 @@ class DemoLedger:
         self._record_step(1)
         return {"type": "trigger", "next_stake_cents": self.next_stake_cents}
 
-    def reset(self):
+    def money(self, cents):
+        return format_money(cents, self.currency)
+
+    def reset(self, *, currency="USD", balance_cents=DEFAULT_BALANCE_CENTS,
+              base_stake_cents=DEFAULT_STAKE_CENTS, reset_revision=None):
+        if (not valid_amount(balance_cents, currency)
+                or not valid_amount(base_stake_cents, currency)
+                or base_stake_cents > balance_cents):
+            raise ValueError("Invalid DEMO reset amounts")
         # A DEMO reset must not erase independent source statistics.
         streak_maxima = self.daily_max_low_streak.copy()
         ongoing_streak = self.consecutive_below_two
@@ -252,7 +275,11 @@ class DemoLedger:
         self.__init__(
             enabled=enabled,
             trigger_streak=trigger,
-            base_stake_cents=MINIMUM_STAKE_CENTS,
+            currency=currency,
+            balance_cents=balance_cents,
+            initial_balance_cents=balance_cents,
+            base_stake_cents=base_stake_cents,
+            reset_revision=reset_revision or self.reset_revision,
             daily_max_low_streak=streak_maxima,
             consecutive_below_two=ongoing_streak,
             last_archived_round_id=last_round_id,
@@ -275,6 +302,7 @@ class DemoLedger:
             else None
         )
         entry = {
+            "currency": self.currency,
             "started_at": self.cycle_started_at,
             "ended_at": (now or datetime.now(timezone.utc)).isoformat(),
             "rounds": self.cycle_rounds[:],
@@ -313,8 +341,8 @@ class DemoLedger:
 
     def _finish_insufficient(self, needed_cents: int, *, lost_stake_cents=None, now=None):
         entry = self._finish_cycle(outcome="insufficient_balance", now=now)
-        self.base_stake_cents = MINIMUM_STAKE_CENTS
-        self.next_stake_cents = MINIMUM_STAKE_CENTS
+        self.enabled = False
+        self.next_stake_cents = self.base_stake_cents
         event = {
             "type": "insufficient_balance",
             "needed_cents": needed_cents,
@@ -334,9 +362,10 @@ class DemoLedger:
         if not multiplier.is_finite() or multiplier < 1:
             return None
 
-        if not self.active and self.balance_cents < MINIMUM_STAKE_CENTS:
+        if not self.active and self.balance_cents < self.base_stake_cents:
             self.low_streak = 0
-            return None
+            self.enabled = False
+            return {"type": "insufficient_balance", "needed_cents": self.base_stake_cents}
 
         if not self.active:
             if multiplier >= 2:

@@ -69,7 +69,7 @@ async def process_archive_event(redis, gate, state, panel, stream_id, fields, *,
     """Process one event; commit legacy cursor only after DEMO state is saved."""
     kind = fields.get("type")
     if kind == "gap":
-        await gate.on_history_gap(silent=silent)
+        await gate.on_history_gap(silent=silent, stream_id=stream_id)
         await redis.set(UI_CURSOR_KEY, stream_id)
         return
     if kind == "baseline":

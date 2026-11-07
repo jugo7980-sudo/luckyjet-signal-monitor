@@ -7,6 +7,7 @@
   const demoStatus = document.getElementById('demo-controls-status');
   const settingsStatus = document.getElementById('settings-controls-status');
   let busy = false;
+  let generation = 0;
   let loadedAt = 0;
   let latest = null;
   const all = [...document.querySelectorAll('[data-control]')];
@@ -36,6 +37,7 @@
   window.showDemoProbe = showProbe;
   function paint(data) {
     latest = data;
+    window.renderDemoBalance?.(data.demo);
     const demo = data.demo, settings = data.settings;
     demoPanel.hidden = false;
     settingsPanel.hidden = false;
@@ -53,7 +55,8 @@
     }
     toggle.textContent = demo.enabled ? 'Выключить DEMO' : 'Включить DEMO';
     document.getElementById('demo-trigger-select').value = String(demo.trigger);
-    document.getElementById('demo-stake-input').value = (demo.base_stake_cents / 100).toFixed(2);
+    document.getElementById('demo-stake-input').value = (demo.base_stake_cents / 100).toFixed(demo.currency === 'KRW' ? 0 : 2);
+    document.getElementById('demo-stake-label').textContent = 'Стартовая ставка, ' + (demo.currency || 'USD');
     document.getElementById('demo-low-streak').textContent =
       demo.active ? 'Цикл активен · шаг ' + demo.step :
         'Текущая серия <2x: ' + demo.low_streak + ' из ' + demo.trigger;
@@ -88,11 +91,13 @@
   }
   async function load(force = false) {
     if (busy || (!force && latest && Date.now() - loadedAt < 20000)) return;
+    const currentGeneration = generation;
     busy = true;
     message('Загрузка настроек…');
     if (latest) paint(latest);
     try {
       const data = await request();
+      if (generation !== currentGeneration || !window.canUsePremium?.()) return;
       loadedAt = Date.now();
       demoStatus.textContent = '';
       settingsStatus.textContent = '';
@@ -106,26 +111,34 @@
       message(error.name === 'AbortError' ? 'Сервер не ответил.' : error.message, true);
     } finally {
       busy = false;
-      if (latest) paint(latest);
+      if (generation === currentGeneration && latest && window.canUsePremium?.()) paint(latest);
     }
   }
   async function action(name, value, confirm = false) {
     if (busy) return;
+    const currentGeneration = generation;
     busy = true;
+    window.demoViewEpoch++;
     message('Сохранение…');
     if (latest) paint(latest);
     try {
       const data = await request('POST', {action: name, ...(value === undefined ? {} : {value}), ...(confirm ? {confirm: true} : {})});
+      if (generation !== currentGeneration || !window.canUsePremium?.()) return;
+      window.demoViewEpoch++;
       loadedAt = Date.now();
       paint(data);
       message(data.message || 'Сохранено.');
-      if (name === 'demo_reset' && window.resetHistoryCache) window.resetHistoryCache();
+      if (name === 'demo_reset') {
+        resetModal.hidden = true;
+        document.getElementById('demo-reset').focus();
+        if (window.resetHistoryCache) window.resetHistoryCache();
+      }
       if (typeof loadOverview === 'function') loadOverview();
     } catch (error) {
       message(error.name === 'AbortError' ? 'Сервер не ответил.' : error.message, true);
     } finally {
       busy = false;
-      if (latest) paint(latest);
+      if (generation === currentGeneration && latest && window.canUsePremium?.()) paint(latest);
     }
   }
   function confirmAction(text, name) {
@@ -146,8 +159,58 @@
   document.getElementById('demo-stake-save').addEventListener('click', () =>
     action('demo_stake', document.getElementById('demo-stake-input').value));
   document.getElementById('demo-probe-start').addEventListener('click', () => action('demo_probe_start'));
-    document.getElementById('demo-reset').addEventListener('click', () =>
-    confirmAction('Сбросить DEMO? Баланс станет $10,000.00. История циклов, максимальные шаги и статистика DEMO будут удалены.', 'demo_reset'));
+  const resetModal = document.getElementById('demo-reset-modal');
+  const resetForm = document.getElementById('demo-reset-form');
+  const resetCurrency = document.getElementById('demo-reset-currency');
+  const resetBalance = document.getElementById('demo-reset-balance');
+  const resetStake = document.getElementById('demo-reset-stake');
+  const resetPreview = document.getElementById('demo-reset-preview');
+  let resetRevision = null;
+  function resetAmount(raw, currency) {
+    const text = raw.trim().replace(',', '.');
+    const pattern = currency === 'KRW' ? /^[0-9]+$/ : /^[0-9]+(?:\.[0-9]{1,2})?$/;
+    if (!pattern.test(text)) return null;
+    const amount = Math.round(Number(text) * 100);
+    return Number.isSafeInteger(amount) && amount >= (currency === 'USD' ? 1 : 100) && amount <= 100000000000000 ? amount : null;
+  }
+  function previewReset() {
+    const currency = resetCurrency.value;
+    const balance = resetAmount(resetBalance.value, currency), stake = resetAmount(resetStake.value, currency);
+    const valid = balance !== null && stake !== null && stake <= balance;
+    document.getElementById('demo-reset-submit').disabled = busy || !valid;
+    resetPreview.textContent = valid
+      ? 'Баланс: ' + window.formatDemoMoney(balance, currency) + ' · Ставка: ' + window.formatDemoMoney(stake, currency) + ' · ' + currency
+      : 'Введи баланс и ставку. Ставка не выше баланса. Воны — целые, рубли и доллары — до двух знаков после запятой.';
+  }
+  document.getElementById('demo-reset').addEventListener('click', () => {
+    if (!latest || busy) return;
+    resetCurrency.value = latest.demo.currency || 'USD';
+    resetBalance.value = ''; resetStake.value = '';
+    resetRevision = latest.demo.reset_revision || 'legacy';
+    resetModal.hidden = false; previewReset(); resetCurrency.focus();
+  });
+  document.getElementById('demo-reset-cancel').addEventListener('click', () => {
+    if (busy) return;
+    resetModal.hidden = true; document.getElementById('demo-reset').focus();
+  });
+  resetForm.addEventListener('input', previewReset);
+  resetForm.addEventListener('change', previewReset);
+  resetForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy || resetAmount(resetBalance.value, resetCurrency.value) === null || resetAmount(resetStake.value, resetCurrency.value) === null) return;
+    document.getElementById('demo-reset-submit').disabled = true;
+    await action('demo_reset', {currency: resetCurrency.value, balance: resetBalance.value.trim(), stake: resetStake.value.trim(), revision: resetRevision}, true);
+    previewReset();
+  });
+  resetModal.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !busy) document.getElementById('demo-reset-cancel').click();
+    if (event.key === 'Tab') {
+      const nodes = [...resetForm.querySelectorAll('select,input,button')].filter(n => !n.disabled);
+      const first = nodes[0], last = nodes[nodes.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
   document.getElementById('settings-notifications').addEventListener('click', () => action('notifications_toggle'));
   document.getElementById('settings-sound').addEventListener('click', () => action('sound_toggle'));
   selectAction('settings-threshold', 'notification_threshold');
@@ -159,7 +222,9 @@
     action('test_notification'));
   window.openControlsTab = () => load();
   window.clearControlsData = () => {
+    generation++;
     latest = null; loadedAt = 0;
+    resetModal.hidden = true;
     demoPanel.hidden = true; settingsPanel.hidden = true;
     probeArea.hidden = true;
     demoStatus.textContent = 'Нет доступа';

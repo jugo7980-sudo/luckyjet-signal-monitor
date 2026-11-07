@@ -1,5 +1,7 @@
 """Private Telegram bot access, settings, alerts, and admin controls."""
 import asyncio
+from luckyjet_signal.demo_money import format_money, parse_money
+from mini_app import app_url
 import hmac
 from mini_app import app_url
 import re
@@ -462,7 +464,7 @@ class TelegramPasswordGate(HistoryPanels):
         if self.site_account is not None and user_id is not None and self.is_admin(user_id):
             rows.append([{"text": "👤 Аккаунт сайта", "callback_data": "site_status"}])
         if user_id is not None:
-            balance = format_dollars(self._demo_ledger(user_id).balance_cents)
+            balance = self._demo_ledger(user_id).money(self._demo_ledger(user_id).balance_cents)
             rows.append([{"text": f"🔄 💵 Баланс: {balance}", "callback_data": "demo_refresh_balance"}])
         rows.append([{"text": "✖ Закрыть", "callback_data": "menu_close"}])
         return {"inline_keyboard": rows}
@@ -477,14 +479,14 @@ class TelegramPasswordGate(HistoryPanels):
             current_net = ledger.balance_cents - ledger.cycle_start_balance_cents
             progress = (
                 f"Шаг: {len(ledger.cycle_rounds) + 1}\n"
-                f"Следующая виртуальная ставка: {format_dollars(ledger.next_stake_cents)}\n"
-                f"Текущий результат: {'+' if current_net > 0 else ''}{format_dollars(current_net)}\n"
-                f"Баланс: {format_dollars(ledger.balance_cents)}"
+                f"Следующая виртуальная ставка: {self._demo_ledger(user_id).money(ledger.next_stake_cents)}\n"
+                f"Текущий результат: {'+' if current_net > 0 else ''}{self._demo_ledger(user_id).money(current_net)}\n"
+                f"Баланс: {self._demo_ledger(user_id).money(ledger.balance_cents)}"
             )
         else:
             progress = (
                 f"Сейчас ниже 2x подряд: {ledger.low_streak} из {ledger.trigger_streak}\n"
-                f"Баланс: {format_dollars(ledger.balance_cents)}"
+                f"Баланс: {self._demo_ledger(user_id).money(ledger.balance_cents)}"
             )
         return f"🧪 Демо · {state}\n{progress}"
 
@@ -500,8 +502,8 @@ class TelegramPasswordGate(HistoryPanels):
         return {"inline_keyboard": [
             self._setting_row("🧪 Демо", "⏸ Выключить" if ledger.enabled else "▶️ Включить", "demo_toggle", style="danger" if ledger.enabled else "success"),
             self._setting_row("🎯 Старт: серия <2x", f"{ledger.trigger_streak} подряд", "demo_trigger_menu"),
-            self._setting_row("🔄 Демо-баланс", format_dollars(ledger.balance_cents), "demo_refresh_balance"),
-            self._setting_row("💰 Первая ставка", format_dollars(ledger.base_stake_cents), "demo_set_stake"),
+            self._setting_row("🔄 Демо-баланс", self._demo_ledger(user_id).money(ledger.balance_cents), "demo_refresh_balance"),
+            self._setting_row("💰 Первая ставка", self._demo_ledger(user_id).money(ledger.base_stake_cents), "demo_set_stake"),
             [{"text": "📜 История циклов", "callback_data": "demo_history"}],
             [{"text": "📶 Максимальный шаг", "callback_data": "demo_daily_days:0"}],
             [{"text": "📊 Статистика DEMO", "callback_data": "demo_stats"}],
@@ -574,6 +576,7 @@ class TelegramPasswordGate(HistoryPanels):
             return "📜 История демо-циклов\nЦиклов пока нет."
         page = min(max(0, page), len(history) - 1)
         entry = history[page]
+        money = lambda amount: format_money(amount, entry.get("currency", "USD"))
         outcome = entry.get("outcome")
         reason = {
             "recovered": "цель 2x достигнута",
@@ -593,25 +596,25 @@ class TelegramPasswordGate(HistoryPanels):
             stake = int(item.get("stake_cents", 0) or 0)
             payout = int(item.get("payout_cents", 0) or 0)
             step_net = payout - stake if payout else -stake
-            step_result = ("+" if step_net > 0 else "") + format_dollars(step_net)
+            step_result = ("+" if step_net > 0 else "") + money(step_net)
             lines.append(
-                f"Шаг {step}: {format_dollars(stake)} · {item.get('coefficient', '?')}x · {step_result}"
+                f"Шаг {step}: {money(stake)} · {item.get('coefficient', '?')}x · {step_result}"
             )
         if outcome == "recovered":
             lines.append("")
             lines.append("Потраченные средства возвращены.")
         lines += ["", f"Причина завершения: {reason}",
-                  f"Всего поставлено: {format_dollars(entry.get('total_stake_cents', 0) or 0)}"]
+                  f"Всего поставлено: {money(entry.get('total_stake_cents', 0) or 0)}"]
         payout = entry.get("payout_cents")
         if payout is not None:
-            lines.append(f"Выплата: {format_dollars(payout)}")
+            lines.append(f"Выплата: {money(payout)}")
         net = entry.get("net_cents")
         if net is not None:
             net = int(net)
-            lines.append(f"Чистый результат: {'+' if net > 0 else ''}{format_dollars(net)}")
+            lines.append(f"Чистый результат: {'+' if net > 0 else ''}{money(net)}")
         lines.append(
-            f"Баланс: {format_dollars(entry.get('balance_before_cents', 0) or 0)} → "
-            f"{format_dollars(entry.get('balance_after_cents', 0) or 0)}"
+            f"Баланс: {money(entry.get('balance_before_cents', 0) or 0)} → "
+            f"{money(entry.get('balance_after_cents', 0) or 0)}"
         )
         return "\n".join(lines)
 
@@ -619,7 +622,7 @@ class TelegramPasswordGate(HistoryPanels):
     def _demo_stats_text(self, user_id):
         ledger = self._demo_ledger(user_id)
         history = list(ledger.history)
-        since_reset = ledger.balance_cents - DEFAULT_BALANCE_CENTS
+        since_reset = ledger.balance_cents - ledger.initial_balance_cents
         period = (f"За последние {MAX_HISTORY} сессий" if len(history) == MAX_HISTORY
                   else f"По истории ({len(history)} из {MAX_HISTORY})")
         successful = sum(entry.get("outcome") == "recovered" for entry in history)
@@ -641,8 +644,8 @@ class TelegramPasswordGate(HistoryPanels):
             f"Проигрышных: {losses}\n"
             f"Неполных: {incomplete}\n"
             f"Остановлено вручную: {stopped}\n"
-            f"С последнего сброса: {'+' if since_reset > 0 else ''}{format_dollars(since_reset)}\n"
-            f"{period}: {'+' if total_net > 0 else ''}{format_dollars(total_net)}\n"
+            f"С последнего сброса: {'+' if since_reset > 0 else ''}{self._demo_ledger(user_id).money(since_reset)}\n"
+            f"{period}: {'+' if total_net > 0 else ''}{self._demo_ledger(user_id).money(total_net)}\n"
             f"Среднее шагов: {average_steps:.1f}"
         )
 
@@ -727,6 +730,7 @@ class TelegramPasswordGate(HistoryPanels):
         rows = []
         for index in range(page * 10, min(len(history), (page + 1) * 10)):
             entry = history[index]
+            money = lambda amount: format_money(amount, entry.get("currency", "USD"))
             stamp = self._cycle_time(entry.get("ended_at") or entry.get("started_at"))
             if stamp != "время не сохранено":
                 stamp = stamp[:5] + " " + stamp[11:16]
@@ -734,7 +738,7 @@ class TelegramPasswordGate(HistoryPanels):
                 result = "⚠️ данные"
             else:
                 net = int(entry.get("net_cents", 0))
-                result = ("+" if net > 0 else "") + format_dollars(net)
+                result = ("+" if net > 0 else "") + money(net)
             round_count = len(entry.get("rounds") or [])
             rows.append([{"text": f"{round_count} шаг. · {stamp} · {result}", "callback_data": f"demo_cycle:{token}:{index}"}])
         pager = []
@@ -805,7 +809,7 @@ class TelegramPasswordGate(HistoryPanels):
                 markup = {"inline_keyboard": self._navigation_rows({"daily_date":"demo_daily_days:0","coef_date":"coef_days:0","hi_date":"hi_days:0"}[field])}
             await self._send_transient(user_id, chat_id, answer, markup)
             return True
-        cents = parse_dollars(raw)
+        cents = parse_money(raw, self._demo_ledger(user_id).currency)
         if field is None:
             return False
         ledger = self._demo_ledger(user_id)
@@ -817,19 +821,19 @@ class TelegramPasswordGate(HistoryPanels):
             return True
         updated = False
         if cents is None:
-            answer = "❌ Введите сумму в USD, не более двух знаков после точки."
+            answer = f"❌ Введите сумму в {ledger.currency}. Воны — целые, рубли и доллары — до двух знаков после запятой."
             self.demo_pending_inputs[user_id] = field
         elif field == "balance" and ledger.set_balance(cents):
             await self._persist_demo(user_id)
-            answer = f"✅ Виртуальный баланс установлен: {format_dollars(cents)}"
+            answer = f"✅ Виртуальный баланс установлен: {self._demo_ledger(user_id).money(cents)}"
             updated = True
         elif field == "stake" and ledger.set_base_stake(cents):
             await self._persist_demo(user_id)
-            answer = f"✅ Стартовая ставка установлена: {format_dollars(cents)}"
+            answer = f"✅ Стартовая ставка установлена: {self._demo_ledger(user_id).money(cents)}"
             updated = True
         else:
             answer = (
-                f"❌ Введите сумму от $10 до {format_dollars(ledger.balance_cents)}. "
+                f"❌ Введите сумму от {ledger.money(ledger.minimum_stake_cents)} до {ledger.money(ledger.balance_cents)}. "
                 "Используйте не более двух знаков после точки, например 25.50."
             )
             self.demo_pending_inputs[user_id] = field
@@ -1118,7 +1122,7 @@ class TelegramPasswordGate(HistoryPanels):
             f"Последний коэффициент: {latest}\n"
             f"Данные: {freshness}\n"
             f"Деморежим: {demo_state}\n"
-            f"Баланс демо-счёта (виртуальный): {format_dollars(self._demo_ledger(user_id).balance_cents)}\n"
+            f"Баланс демо-счёта (виртуальный): {self._demo_ledger(user_id).money(self._demo_ledger(user_id).balance_cents)}\n"
             f"История: {min(len(values), self.user_history_size(user_id))} раундов\n"
             f"Серия ниже 2x: {len(self.current_streak)} из {self.user_threshold(user_id)}\n"
             f"Аптайм: {hours:02d}:{minutes:02d}:{seconds:02d}"
@@ -1697,7 +1701,7 @@ class TelegramPasswordGate(HistoryPanels):
                 if trigger_event and trigger_event["type"] == "insufficient_balance":
                     answer += (
                         f"\nНедостаточно баланса для стартовой ставки "
-                        f"{format_dollars(trigger_event['needed_cents'])}."
+                        f"{self._demo_ledger(user_id).money(trigger_event['needed_cents'])}."
                     )
                 markup = self.demo_menu(user_id)
         elif data.startswith("demo_trigger:"):
@@ -1723,12 +1727,13 @@ class TelegramPasswordGate(HistoryPanels):
             answer = self._demo_text(user_id)
             markup = self.demo_menu(user_id)
         elif data == "demo_set_stake":
+            ledger = self._demo_ledger(user_id)
             if self._demo_ledger(user_id).active:
                 answer = "💰 Стартовая ставка\nСейчас цикл ещё не завершён. Изменить ставку можно после его завершения или сброса демо-цикла."
                 markup = {"inline_keyboard": self._navigation_rows("demo_menu")}
             else:
                 self.demo_pending_inputs[user_id] = "stake"
-                answer = "💰 Изменить стартовую ставку\nВведите сумму в долларах, например 10 или 25.50. Минимум $10; сумма не должна превышать виртуальный баланс."
+                answer = f"💰 Изменить стартовую ставку\nВалюта: {ledger.currency}. Минимум {ledger.money(ledger.minimum_stake_cents)}; сумма не должна превышать виртуальный баланс. Воны — целые."
                 markup = {"inline_keyboard": self._navigation_rows("demo_menu")}
         elif data == "demo_input_cancel":
             self.demo_pending_inputs.pop(user_id, None)
@@ -1770,30 +1775,10 @@ class TelegramPasswordGate(HistoryPanels):
             # Compatibility with buttons rendered before the paginated list.
             page = self._to_int(data.split(":", 1)[1])
             answer, markup = self._demo_history_text(user_id, page), self._demo_history_menu(user_id, page)
-        elif data == "demo_reset":
-            self.pending_confirmations[user_id] = "demo"
-            state = "включённым" if self._demo_ledger(user_id).enabled else "выключенным"
-            answer = ("♻️ Сбросить DEMO?\n"
-                      "Баланс станет $10,000.00, стартовая ставка — $10.00. "
-                      "Активная сессия прекратится. История циклов, максимальные шаги по дням и вся статистика DEMO обнулятся. "
-                      f"Условие запуска сохраняется. Демо останется {state}.")
-            markup = {"inline_keyboard": [
-                [{"text": "✅ Да, сбросить", "callback_data": "demo_reset_confirm"}],
-                [{"text": "Отмена", "callback_data": "demo_menu"}],
-            ]}
-            markup["inline_keyboard"] += self._navigation_rows()
-        elif data == "demo_reset_confirm":
-            if self.pending_confirmations.pop(user_id, None) != "demo":
-                await self._send_transient(user_id, chat_id,
-                    "Подтверждение устарело. Для сброса выберите «Сбросить демо-баланс и циклы» заново.",
-                    self.demo_menu(user_id))
-                return
-            ledger = self._demo_ledger(user_id)
-            ledger.reset()
-            self._demo_history_views.pop(user_id, None)
-            await self._persist_demo(user_id)
-            answer = self._demo_text(user_id)
-            markup = self.demo_menu(user_id)
+        elif data in {"demo_reset", "demo_reset_confirm"}:
+            self.pending_confirmations.pop(user_id, None)
+            answer = "♻️ Открой DEMO в приложении: выбери валюту, введи баланс и ставку, затем подтверди сброс."
+            markup = {"inline_keyboard": [[{"text": "Открыть DEMO", "web_app": {"url": app_url()}}]]}
         elif data == "settings_notifications":
             if user_id in self.notifications_disabled:
                 self.notifications_disabled.remove(user_id)
@@ -2142,15 +2127,15 @@ class TelegramPasswordGate(HistoryPanels):
                 "⚠️ DEMO-сессия завершена\n"
                 "Причина: недостаточно баланса\n"
                 f"Шагов: {len(entry.get('rounds') or [])}\n"
-                f"Результат: {'+' if net > 0 else ''}{format_dollars(net)}\n"
-                f"Остаток: {format_dollars(ledger.balance_cents)}\n"
-                f"Новая ставка: {format_dollars(ledger.base_stake_cents)}",
+                f"Результат: {'+' if net > 0 else ''}{self._demo_ledger(user_id).money(net)}\n"
+                f"Остаток: {self._demo_ledger(user_id).money(ledger.balance_cents)}\n"
+                f"Стартовая ставка сохранена: {ledger.money(ledger.base_stake_cents)}\nDEMO остановлено.",
             )
         if event.get("type") == "recovered" or event.get("entry") is not None:
             await self._refresh_open_demo_history(user_id)
         return event
 
-    async def on_history_gap(self, *, silent=False):
+    async def on_history_gap(self, *, silent=False, stream_id=None):
         for user_id in list(self.authorized):
             lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
             async with lock:
@@ -2161,9 +2146,11 @@ class TelegramPasswordGate(HistoryPanels):
                 # series: reset tracking for both DEMO and always-on steps.
                 ledger.reset_max_step_progress()
                 ledger.low_streak = 0
-                if ledger.enabled:
+                before_reset = (stream_id is not None and ledger.demo_after_stream_id
+                                and ledger._stream_position(stream_id) <= ledger._stream_position(ledger.demo_after_stream_id))
+                if ledger.enabled and not before_reset:
                     ledger.balance_verified = False
-                entry = ledger.finish_active("incomplete_data") if ledger.enabled and ledger.active else None
+                entry = ledger.finish_active("incomplete_data") if ledger.enabled and ledger.active and not before_reset else None
                 await self._persist_demo(user_id)
             if entry is not None and not silent:
                 await self._send_demo_warning(

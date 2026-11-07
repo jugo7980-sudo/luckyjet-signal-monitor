@@ -49,7 +49,8 @@ def test_navigation_date_input_reset_and_persistence():
         restored=DemoLedger(**json.loads(await redis.hget('luckyjet:demo_sessions','42')))
         assert restored.daily_max_low_streak['2026-01-02']==7
         assert restored.daily_max_steps['2026-01-02']==99
-        await click(gate,'demo_reset'); await click(gate,'demo_reset_confirm')
+        ledger.reset()
+        await gate._persist_demo(42)
         assert ledger.daily_max_steps == {}
         assert ledger.daily_max_low_streak['2026-01-02'] == 7
         await redis.aclose(); await gate.close()

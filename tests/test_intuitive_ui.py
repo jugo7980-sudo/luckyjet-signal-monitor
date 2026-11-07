@@ -82,7 +82,7 @@ def test_resets_require_fresh_confirmation_and_cancel_preserves_data():
         assert ledger.balance_cents == 123_400
         await click(gate, "demo_reset")
         await click(gate, "demo_reset_confirm")
-        assert ledger.balance_cents == 1_000_000
+        assert ledger.balance_cents == 123_400
         ledger.balance_cents = 456_700
         await click(gate, "demo_reset_confirm")
         assert ledger.balance_cents == 456_700

@@ -35,7 +35,7 @@ def test_v08_guest_layout_320_390_430_and_compact_tabs():
                         from urllib.parse import urlparse, parse_qs
                         limit = int(parse_qs(urlparse(url).query).get("limit", ["20"])[0])
                         await req.fulfill(content_type="application/json", body=json.dumps({
-                            "coefficients": ["1.25x", "3.50x", "11.00x", "112.32x"] * (limit // 4),
+                            "coefficients": (["1.25x", "3.50x", "11.00x", "112.32x"] * ((limit + 3) // 4))[:limit],
                             "last_round_at": None, "limit": limit,
                         }))
                     elif "/api/overview" in url or "/api/history" in url or "/api/controls" in url:

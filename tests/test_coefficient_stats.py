@@ -40,12 +40,11 @@ def test_invalid_buttons_rejected():
 def test_day_page_uses_one_transaction_and_preserves_page_bounds():
  class Pipeline:
   def __init__(self): self.commands=[]; self.executions=0
-  def zremrangebyscore(self,*args): self.commands.append(('trim',args))
   def zcard(self,*args): self.commands.append(('count',args))
   def zrevrange(self,*args): self.commands.append(('page',args))
   async def execute(self):
    self.executions+=1
-   return [0, 21, [b'2026-11-02', b'2026-11-01']]
+   return [21, [b'2026-11-02', b'2026-11-01']]
  class Store:
   def __init__(self): self.pipe=Pipeline()
   def pipeline(self): return self.pipe
@@ -54,7 +53,7 @@ def test_day_page_uses_one_transaction_and_preserves_page_bounds():
   days,total=await CoefficientStats(store).days(1)
   assert days==['2026-11-02','2026-11-01'] and total==21
   assert store.pipe.executions==1
-  assert [name for name,_ in store.pipe.commands]==['trim','count','page']
+  assert [name for name,_ in store.pipe.commands]==['count','page']
   assert store.pipe.commands[-1][1]==('luckyjet:coef:days',10,19)
  asyncio.run(run())
 
@@ -109,3 +108,10 @@ def test_bootstrap_repairs_initial_double_count_once():
   await CoefficientStats(store).bootstrap()
   assert store.eval_calls == [(UNDER2_DOUBLE_FIX, 2, (UNDER2_FIX_MARKER, f'luckyjet:coef:{UNDER2_FIX_DAY}'))]
  asyncio.run(run())
+
+
+def test_daily_statistics_and_seen_rounds_no_longer_expire():
+ from coefficient_stats import SCRIPT, UNDER2_DOUBLE_FIX
+ assert "7948800" not in SCRIPT
+ assert "7948800" not in UNDER2_DOUBLE_FIX
+ assert "EXPIRE', KEYS[2]" not in SCRIPT

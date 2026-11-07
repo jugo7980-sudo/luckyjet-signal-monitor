@@ -3,6 +3,7 @@ import asyncio
 import httpx
 
 from luckyjet_password_gate import TelegramPasswordGate
+from history_panels import HISTORY_PANEL_TITLE
 
 
 class FakeRequest:
@@ -13,7 +14,7 @@ class FakeRequest:
 
     async def __call__(self, method, payload):
         self.calls.append((method, payload))
-        if method == "editMessageText" and payload.get("text") == "📊" and self.fail_edit_history_once:
+        if method == "editMessageText" and payload.get("text") == HISTORY_PANEL_TITLE and self.fail_edit_history_once:
             self.fail_edit_history_once = False
             raise httpx.HTTPError("message missing")
         if method == "sendMessage":

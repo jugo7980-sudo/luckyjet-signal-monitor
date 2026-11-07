@@ -49,7 +49,7 @@ def test_navigation_and_thirty_rounds_keep_exactly_two_messages():
             await gate.handle_callback(callback(action, menu_id))
             assert gate.menu_messages[42] == menu_id
         assert len(gate.demo_ledgers[42].history) == 5
-        assert "Время Таиланда, UTC+7" in gate._demo_history_text(42)
+        assert "Время Владивостока, UTC+10" in gate._demo_history_text(42)
         await gate.close()
 
     asyncio.run(run())
@@ -85,8 +85,8 @@ def test_cycle_dates_persist_across_restart_and_legacy_dates_remain_unknown():
     restored.process_round("2.00")
     entry = restored.history[0]
     assert entry["started_at"] <= entry["ended_at"]
-    assert ReliableTelegramPasswordGate._cycle_time("2026-11-02T15:33:00+00:00") == "02.11.2026 22:33:00"
-    assert ReliableTelegramPasswordGate._cycle_time("2026-11-02T22:33:00+00:00") == "03.11.2026 05:33:00"
-    assert ReliableTelegramPasswordGate._cycle_time("2026-11-02T15:33:00") == "02.11.2026 22:33:00"
-    assert ReliableTelegramPasswordGate._cycle_time("2026-11-02T18:33:00+03:00") == "02.11.2026 22:33:00"
+    assert ReliableTelegramPasswordGate._cycle_time("2026-11-02T15:33:00+00:00") == "03.11.2026 01:33:00"
+    assert ReliableTelegramPasswordGate._cycle_time("2026-11-02T22:33:00+00:00") == "03.11.2026 08:33:00"
+    assert ReliableTelegramPasswordGate._cycle_time("2026-11-02T15:33:00") == "03.11.2026 01:33:00"
+    assert ReliableTelegramPasswordGate._cycle_time("2026-11-02T18:33:00+03:00") == "03.11.2026 01:33:00"
     assert ReliableTelegramPasswordGate._cycle_time(None) == "время не сохранено"

@@ -96,3 +96,20 @@ def test_round_with_source_timestamp_from_previous_day_rejected_for_verification
         assert status["cross_day_timestamp_mismatches"] == 1
         await r.aclose()
     asyncio.run(run())
+
+
+def test_completed_day_confirms_round_sequence_but_not_game_clock_when_time_missing():
+    async def run():
+        r = FakeRedis(decode_responses=True)
+        start = datetime(2026, 11, 6, tzinfo=TZ)
+        await add(r, start - timedelta(minutes=1), "round", "0")
+        await add(r, start + timedelta(hours=1), "round", "1")
+        await add(r, start + timedelta(hours=2), "round", "2")
+        await add(r, start + timedelta(days=1, minutes=1), "round", "3")
+        result = await archive_day_evidence(r, "2026-11-06", legacy_total=2)
+        assert result["status"] == "sequence_checked"
+        assert result["source_time_missing"] == 2
+        assert result["gaps"] == 0
+        assert result["counts_match"] is True
+        await r.aclose()
+    asyncio.run(run())

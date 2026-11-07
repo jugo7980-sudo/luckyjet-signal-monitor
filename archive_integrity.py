@@ -92,10 +92,11 @@ async def archive_day_evidence(redis, day: str, *, legacy_total=None):
     # Only an exact timestamp match, no archive gaps, and a day that began
     # and ended while the archive was running can support day-level fidelity.
     # This does NOT independently prove the third-party game was complete.
-    verified = (
-        observed_whole_day and rounds > 0 and missing_source_time == 0
-        and timestamp_mismatches == 0 and compares and counters_match
+    sequence_checked = (
+        observed_whole_day and rounds > 0 and timestamp_mismatches == 0
+        and compares and counters_match
     )
+    verified = sequence_checked and missing_source_time == 0
     reasons = []
     if not archive_started_before:
         reasons.append("архив ещё не охватывал начало суток")
@@ -117,7 +118,11 @@ async def archive_day_evidence(redis, day: str, *, legacy_total=None):
         reasons.append("текущие сутки ещё не закончились")
     return {
         "day": day,
-        "status": "verified" if verified else "unverified",
+        "status": (
+            "verified" if verified
+            else "sequence_checked" if sequence_checked
+            else "unverified"
+        ),
         "archived_rounds": rounds,
         "legacy_total": int(legacy_total) if compares else None,
         "counts_match": counters_match if compares else None,

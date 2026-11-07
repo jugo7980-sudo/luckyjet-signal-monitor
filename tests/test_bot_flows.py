@@ -328,7 +328,7 @@ def test_invalid_stale_demo_button_is_acknowledged_without_deleting_menu():
     gate.chats[42] = 42
     gate.menu_messages[42] = 801
 
-    asyncio.run(gate.handle_callback(callback(42, "demo_trigger:7", 801)))
+    asyncio.run(gate.handle_callback(callback(42, "demo_trigger:11", 801)))
 
     assert gate.menu_messages[42] == 801
     assert 801 not in [p["message_id"] for m, p in request.calls if m == "deleteMessage"]

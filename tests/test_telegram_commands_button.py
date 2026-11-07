@@ -58,16 +58,28 @@ def test_pinned_app_message_is_reused_after_restart_not_sent_twice():
     async def run():
         database = FakeRedis(decode_responses=True)
         calls = []
+        pinned = {"id": None}
         async def request(method, payload):
             calls.append((method, payload))
-            return {"ok":True, "result": {"message_id":456}}
+            if method == "getChat":
+                return {"ok": True, "result": {
+                    "id": 42, "type": "private",
+                    **({"pinned_message": {"message_id": pinned["id"]}}
+                       if pinned["id"] else {}),
+                }}
+            if method == "pinChatMessage":
+                pinned["id"] = payload["message_id"]
+                return {"ok": True, "result": True}
+            if method == "sendMessage":
+                return {"ok": True, "result": {"message_id": 456}}
+            return {"ok": True, "result": True}
         gate = TelegramPasswordGate(request, password="test")
         gate.redis = database
         await gate._ensure_app_pin(42)
         await gate._ensure_app_pin(42)
         assert len([x for x in calls if x[0] == "sendMessage"]) == 1
         assert await database.hget("luckyjet:pinned_app_messages", "42") == "456"
-        assert len([x for x in calls if x[0] == "pinChatMessage"]) == 2
+        assert len([x for x in calls if x[0] == "pinChatMessage"]) == 1
         await gate._register_commands_button(42)
         await gate._register_commands_button(42)
         assert len([x for x in calls if x[0] == "setChatMenuButton"]) == 1

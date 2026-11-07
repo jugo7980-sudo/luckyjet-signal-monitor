@@ -77,8 +77,8 @@ def test_v05_compact_refresh_summary_and_throttled_polling():
             assert await button.locator('svg.refresh-rotate').count() == 1
             assert await page.locator('.below-tiles #refresh-data').count() == 1
             assert await page.locator('#page-home > #refresh-data').count() == 0
-            await page.wait_for_function("document.querySelector('#summary-heading').textContent.includes('7 из 20')")
-            assert await page.locator('#coef-grid .coef').count() == 7
+            await page.wait_for_function("document.querySelector('#summary-heading').textContent.includes('150 раундов')")
+            await page.wait_for_function("document.querySelectorAll('#coef-grid .coef').length === 7")
             assert '0,1 с' in await page.locator('#live-status').inner_text()
             await page.wait_for_function("document.querySelector('#refresh-data').dataset.state==='idle'")
             # Inspect the synchronous click handler before the 70ms mocked
@@ -94,11 +94,11 @@ def test_v05_compact_refresh_summary_and_throttled_polling():
             assert await button.locator('svg.refresh-check').count() == 1
 
             await page.locator('#recent-limit').select_option('50')
-            await page.wait_for_function("document.querySelector('#summary-heading').textContent.includes('50 раундов')")
-            assert await page.locator('#coef-grid .coef').count() == 50
+            assert await page.locator('#summary-heading').inner_text() == 'Сводка архива · 150 раундов'
+            await page.wait_for_function("document.querySelectorAll('#coef-grid .coef').length === 50")
             await page.locator('#recent-limit').select_option('100')
-            await page.wait_for_function("document.querySelector('#summary-heading').textContent.includes('100 раундов')")
-            assert await page.locator('#coef-grid .coef').count() == 100
+            assert await page.locator('#summary-heading').inner_text() == 'Сводка архива · 150 раундов'
+            await page.wait_for_function("document.querySelectorAll('#coef-grid .coef').length === 100")
             # Cached coefficient nodes should survive polls when the source data is unchanged.
             await page.evaluate("window.__firstCell = document.querySelector('#coef-grid .coef')")
             recorded = len(limits)

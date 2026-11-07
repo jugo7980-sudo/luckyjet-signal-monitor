@@ -39,6 +39,16 @@ class FakeKeyboard:
         return None
 
 
+class FakeField:
+    def __init__(self):
+        self.value = None
+        self.pressed = []
+    async def fill(self, value, **kwargs):
+        self.value = value
+    async def press(self, key, **kwargs):
+        self.pressed.append(key)
+
+
 class FakePage:
     def __init__(self):
         self.url = "https://example.test/login"
@@ -70,6 +80,9 @@ class FakeDriver:
         self.login_url = "https://example.test/login"
         self.logged_in = False
         self.closed = False
+        self.fields = {"email": FakeField(), "password": FakeField()}
+    async def _field(self, name):
+        return self.fields.get(name)
     async def __aenter__(self):
         return self
     async def __aexit__(self, *args):
@@ -129,6 +142,15 @@ def test_remote_owner_access_and_manual_actions_are_not_public():
         assert gate.site_account.last_driver.page.masked
         assert (await call(action="tap", x=.5, y=.5))[0] == "200 OK"
         assert gate.site_account.last_driver.page.mouse.clicks[-1] == (215, 466)
+        assert (await call(action="fill_email", text="example@test.example"))[0] == "200 OK"
+        assert (await call(action="fill_password", text="different-private-password"))[0] == "200 OK"
+        assert gate.site_account.last_driver.fields["email"].value == "example@test.example"
+        assert gate.site_account.last_driver.fields["password"].value == "different-private-password"
+        assert gate.site_account.last_driver.fields["email"].pressed == ["Tab"]
+        assert gate.site_account.last_driver.fields["password"].pressed == ["Tab"]
+        assert (await call(action="fill_password", text="corrected-private-password"))[0] == "200 OK"
+        assert gate.site_account.last_driver.fields["password"].value == "corrected-private-password"
+        assert gate.site_account.last_driver.fields["email"].value == "example@test.example"
         assert (await call(action="type", text="one-time-secret"))[0] == "200 OK"
         assert (await call(action="key", key="Control+Shift+I"))[0] == "400 Bad Request"
         assert (await call(action="save"))[0] == "400 Bad Request"
@@ -140,6 +162,8 @@ def test_remote_owner_access_and_manual_actions_are_not_public():
         assert gate.site_account.generation == 1
         assert gate.site_account.last_driver.closed
         assert "one-time-secret" not in json.dumps(result)
+        assert "different-private-password" not in json.dumps(result)
+        assert "corrected-private-password" not in json.dumps(result)
     asyncio.run(run())
 
 

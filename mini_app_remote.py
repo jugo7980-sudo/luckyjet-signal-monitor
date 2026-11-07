@@ -340,6 +340,17 @@ async def remote_browser(authorization, gate, token, method="GET", body=None):
             return json_response("503 Service Unavailable", {
                 "error": "Не удалось проверить IP через японский прокси. Прямой запрос запрещён."
             })
+    if op == "check_happ" and set(data) == {"action"}:
+        # An isolated temporary SOCKS tunnel. The existing monitor and its
+        # Xray remain unchanged; node secrets are read only from Railway env.
+        from happ_probe import probe_happ_egress
+        try:
+            report = await asyncio.wait_for(probe_happ_egress(), timeout=55)
+            return json_response("200 OK", report)
+        except (OSError, RuntimeError, asyncio.TimeoutError):
+            return json_response("503 Service Unavailable", {
+                "error": "Не удалось проверить узлы Happ. Основной прокси не изменён."
+            })
     if op == "start" and set(data) == {"action"}:
         if account.busy or account.field:
             return json_response("409 Conflict", {"error": "Заверши другой вход через Telegram."})

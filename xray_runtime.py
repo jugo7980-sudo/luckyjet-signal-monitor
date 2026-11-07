@@ -56,6 +56,7 @@ _SAFE_XRAY_REASONS = frozenset({
     "Local Xray SOCKS port not ready",
     "Proxy probe gave no egress IP",
     "Xray outbound connection probe failed",
+    "Proxy egress is not Japan",
 })
 
 
@@ -223,6 +224,28 @@ def make_config(outbound: dict) -> dict:
     }
 
 
+async def verify_japan_egress(proxy_url: str) -> None:
+    """Fail closed unless at least one independent proxy-only check returns JP."""
+    sources = (
+        ("https://api.country.is/", "country"),
+        ("https://ipwho.is/", "country_code"),
+    )
+    async with httpx.AsyncClient(proxy=proxy_url, trust_env=False, timeout=10) as client:
+        for url, field in sources:
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                data = response.json()
+                country = str(data.get(field, "")).upper() if isinstance(data, dict) else ""
+            except (httpx.HTTPError, ValueError, TypeError):
+                continue
+            if country == "JP":
+                return
+            if len(country) == 2 and country.isalpha():
+                raise XrayConfigError("Proxy egress is not Japan")
+    raise XrayConfigError("Xray outbound connection probe failed")
+
+
 class XrayManager:
     """Owns a private SOCKS subprocess; exits cleanly without affecting the bot."""
     def __init__(self, *, binary="/usr/local/bin/xray"):
@@ -276,19 +299,13 @@ class XrayManager:
         else:
             raise XrayConfigError("Local Xray SOCKS port not ready")
 
-        # A listening socket alone does not prove a functioning tunnel.
+        # A listening socket alone does not prove a functioning JP tunnel.
+        # Try two independent country APIs; one blocked IP-check endpoint must
+        # not disable an otherwise healthy Japanese proxy.
         test_proxy = f"socks5://{_SOCKS_HOST}:{_SOCKS_PORT}"
-        try:
-            async with httpx.AsyncClient(proxy=test_proxy, trust_env=False, timeout=10) as http:
-                response = await http.get("https://api.ipify.org?format=json")
-                response.raise_for_status()
-                result = response.json()
-                if not isinstance(result, dict) or not result.get("ip"):
-                    raise XrayConfigError("Proxy probe gave no egress IP")
-        except (httpx.HTTPError, ValueError) as exc:
-            raise XrayConfigError("Xray outbound connection probe failed") from None
+        await verify_japan_egress(test_proxy)
         self.proxy_url = test_proxy
-        log.info("Xray game egress verified through SOCKS; Telegram and Redis remain direct")
+        log.info("Xray Japan egress verified through SOCKS; Telegram and Redis remain direct")
         return True
 
     async def stop(self):

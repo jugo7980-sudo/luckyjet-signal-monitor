@@ -165,3 +165,78 @@ def test_logged_out_profile_button_is_not_login_evidence():
                 await driver.login('owner@example.test', 'password', None)
     asyncio.run(run())
 
+
+
+def test_japanese_site_login_never_uses_direct_connection():
+    from site_account import LoginProblem
+    from site_login_browser import SiteLoginBrowser
+    async def run():
+        with pytest.raises(LoginProblem, match='прямое подключение запрещено'):
+            async with SiteLoginBrowser('https://example.test/login', expected_country='JP'):
+                pass
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('country,accepted', [('JP', True), ('SG', False)])
+def test_site_egress_country_checked_over_socks_only(monkeypatch, country, accepted):
+    import site_login_browser as site
+    requests = []
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return {'country': country}
+    class Client:
+        def __init__(self, **kwargs): requests.append(kwargs)
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def get(self, url):
+            assert url == 'https://api.country.is/'
+            return Response()
+    monkeypatch.setattr(site.httpx, 'AsyncClient', Client)
+    async def run():
+        if accepted:
+            await site.verify_proxy_country('socks5://127.0.0.1:10808', 'JP')
+        else:
+            from site_account import LoginProblem
+            with pytest.raises(LoginProblem, match='страна: SG'):
+                await site.verify_proxy_country('socks5://127.0.0.1:10808', 'JP')
+    asyncio.run(run())
+    assert len(requests) == 1
+    assert requests[0]['proxy'] == 'socks5://127.0.0.1:10808'
+    assert requests[0]['trust_env'] is False
+
+
+def test_site_login_chromium_receives_proxy_and_keeps_context(monkeypatch):
+    import site_login_browser as site
+    calls = []
+    class Page:
+        def set_default_timeout(self, n): pass
+    class Context:
+        async def new_page(self): return Page()
+    class Browser:
+        async def new_context(self, **kwargs):
+            calls.append(('context', kwargs))
+            return Context()
+        async def close(self): calls.append(('closed', True))
+    class Chromium:
+        async def launch(self, **kwargs):
+            calls.append(('launch', kwargs))
+            return Browser()
+    class PW:
+        chromium = Chromium()
+    class Manager:
+        async def __aenter__(self): return PW()
+        async def __aexit__(self, *args): pass
+    async def verifier(proxy, country):
+        calls.append(('verification', (proxy, country)))
+    monkeypatch.setattr(site, 'verify_proxy_country', verifier)
+    async def run():
+        async with site.SiteLoginBrowser(
+            'https://example.test/login', proxy_url='socks5://127.0.0.1:10808',
+            expected_country='JP', playwright_factory=lambda: Manager()
+        ):
+            pass
+    asyncio.run(run())
+    assert calls[0] == ('verification', ('socks5://127.0.0.1:10808', 'JP'))
+    assert calls[1] == ('launch', {'headless': True, 'proxy': {'server': 'socks5://127.0.0.1:10808'}})
+    assert calls[2][0] == 'context'
+    assert calls[3] == ('closed', True)

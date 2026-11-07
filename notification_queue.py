@@ -4,6 +4,7 @@ import json
 import uuid
 from contextvars import ContextVar
 import logging
+from telegram_delivery import notification
 
 streak_view = ContextVar('streak_view', default=None)
 log = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class NotificationQueue:
             self.scheduled.add(uid)
             self.queue.put_nowait(uid)
         if self.task is None or self.task.done():
-            self.task = asyncio.create_task(self.run())
+            self.task = asyncio.create_task(self._serve())
 
     async def restore(self):
         if self.gate.redis:
@@ -56,6 +57,16 @@ class NotificationQueue:
             for uid in items:
                 self._schedule(uid)
 
+    async def _serve(self):
+        # Bounded concurrency keeps one slow recipient from holding up everyone.
+        workers = [asyncio.create_task(self.run()) for _ in range(4)]
+        try:
+            await asyncio.gather(*workers)
+        finally:
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+
     async def run(self):
         while True:
             uid = await self.queue.get()
@@ -64,12 +75,14 @@ class NotificationQueue:
                 if item is None:
                     continue
                 token = streak_view.set((self.gate, item['streak']))
+                delivery_token = notification.set(True)
                 try:
                     if uid in self.gate.authorized:
                         result = await self.gate._update_streak_notice(uid, ending=item['ending'])
                         if result is False:
                             raise RuntimeError('Telegram notice not applied')
                 finally:
+                    notification.reset(delivery_token)
                     streak_view.reset(token)
                 async with self.lock:
                     if self.pending.get(uid) == item:

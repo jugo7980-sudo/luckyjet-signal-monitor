@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from collections import OrderedDict
 
 interactive = ContextVar("interactive_delivery", default=False)
+notification = ContextVar("notification_delivery", default=False)
 
 
 def color_buttons(payload):
@@ -34,7 +35,7 @@ class TelegramDelivery:
         self._pace = asyncio.Lock()
         self._next = 0
         self._cache = OrderedDict()
-        self._urgent = 0
+        self._waiting = [0, 0, 0]
         self._locks = [asyncio.Lock() for _ in range(64)]
 
     async def __call__(self, method, payload):
@@ -48,12 +49,11 @@ class TelegramDelivery:
             if method.startswith('editMessage') and cached and cached[0] == method and cached[1] == payload and time.monotonic() - cached[2] < self.cache_seconds:
                 return {'ok': True, 'result': True}
             for attempt in range(3):
-                urgent = interactive.get()
-                if urgent:
-                    self._urgent += 1
+                priority = 2 if notification.get() else 1 if interactive.get() else 0
+                self._waiting[priority] += 1
                 try:
                     while True:
-                        if not urgent and self._urgent:
+                        if any(self._waiting[priority + 1:]):
                             await asyncio.sleep(0.001)
                             continue
                         async with self._pace:
@@ -63,8 +63,7 @@ class TelegramDelivery:
                                 break
                         await asyncio.sleep(max(0.001, delay))
                 finally:
-                    if urgent:
-                        self._urgent -= 1
+                    self._waiting[priority] -= 1
                 try:
                     result = await self.request(method, payload)
                     break

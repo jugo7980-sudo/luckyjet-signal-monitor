@@ -249,3 +249,21 @@ def test_authenticated_config_and_backfill_from_persisted_source_cursor():
         gate.redis = None
         await gate.close()
     asyncio.run(run())
+
+
+def test_krw_payout_rounds_to_integer_won_not_fractional_display():
+    ledger = DemoLedger(
+        currency='KRW', enabled=False, balance_cents=100000,
+        initial_balance_cents=100000, base_stake_cents=100,
+        high_gap={'enabled': True, 'phase': 'waiting_reference',
+                  'reference': '100', 'wait_rounds': 0,
+                  'target': '1.50', 'stake_cents': 100},
+    )
+    advance(ledger, 1, 120)
+    advance(ledger, 2, 1.5)
+    assert ledger.high_history[0]['total_stake_cents'] == 100
+    assert ledger.high_history[0]['payout_cents'] == 200  # nearest whole KRW
+    assert ledger.high_history[0]['net_cents'] == 100
+    assert ledger.balance_cents == 100100
+    assert ledger.balance_cents % 100 == 0
+

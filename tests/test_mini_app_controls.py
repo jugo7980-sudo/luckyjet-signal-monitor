@@ -53,7 +53,7 @@ def test_user_scoped_controls_writes_and_invariants():
         assert (await request(uid=43))[1]['demo']['balance_cents'] == 1_000_000
 
         assert (await request('demo_toggle'))[1]['demo']['enabled'] is True
-        assert (await request('demo_trigger', value=5))[1]['demo']['trigger'] == 5
+        assert (await request('demo_trigger', value=10))[1]['demo']['trigger'] == 10
         assert (await request('demo_stake', value='25.50'))[1]['demo']['base_stake_cents'] == 2550
         gate._demo_ledger(42).active = True
         assert (await request('demo_toggle'))[0] == '409 Conflict'
@@ -164,7 +164,9 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             await page.locator('nav [data-tab=demo]').click()
             await page.locator('#demo-controls').wait_for(state='visible')
             await page.locator('#demo-toggle').click()
-            await page.locator('#demo-trigger-select').select_option('5')
+            options = await page.locator('#demo-trigger-select option').evaluate_all('(items) => items.map(item => item.value)')
+            assert options == [str(n) for n in range(2, 11)]
+            await page.locator('#demo-trigger-select').select_option('10')
             await page.locator('#demo-stake-input').fill('25.50')
             await page.locator('#demo-stake-save').click()
             await page.locator('#demo-reset').click()

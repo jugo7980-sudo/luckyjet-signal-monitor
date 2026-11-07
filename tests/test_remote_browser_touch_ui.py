@@ -69,12 +69,18 @@ def test_owner_drag_delivers_live_pointer_events_before_finger_release():
                 const svg='<svg xmlns="http://www.w3.org/2000/svg" width="430" height="932"><rect width="430" height="932" fill="white"/></svg>';
                 e.src='data:image/svg+xml;base64,'+btoa(svg);
             }""")
+            # Keep the synthetic test image fully visible and uncovered by
+            # the sticky toolbar; the test targets pointer transport, not layout.
+            await page.evaluate("""() => {
+                document.querySelector('.remote-bar').style.display='none';
+                document.querySelector('#remote-browser-image').style.height='260px';
+            }""")
             await image.scroll_into_view_if_needed()
             await page.wait_for_function("document.querySelector('#remote-browser-image').complete")
             rect = await image.bounding_box()
-            assert rect, "Remote screen must be visible"
+            assert rect and rect["height"] > 200, "Remote screen must be visible"
             x = rect["x"] + rect["width"] * .15
-            y = max(5, min(800, rect["y"] + 60))
+            y = rect["y"] + rect["height"] * .5
             await page.mouse.move(x, y)
             await page.mouse.down()
             for _ in range(50):

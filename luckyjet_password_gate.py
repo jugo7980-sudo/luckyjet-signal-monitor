@@ -27,14 +27,10 @@ log = logging.getLogger("luckyjet.auth")
 MENU_IDLE_SECONDS = 60
 RESTART_CONFIRM_SECONDS = 60
 RESTART_COOLDOWN_SECONDS = 15 * 60
-RESTART_COOLDOWN_KEY = "luckyjet:public_restart:cooldown"
+RESTART_COOLDOWN_KEY = "luckyjet:user_restart:cooldown"
 APP_PIN_KEY = "luckyjet:pinned_app_messages"  # legacy entries for cleanup
 APP_PIN_REFRESH_KEY = "luckyjet:pinned_app_refresh_20261107_v2"
 APP_LAUNCH_TTL_SECONDS = 45
-
-
-class RestartRequested(Exception):
-    """A deliberate whole-service shutdown; Railway restarts the process."""
 
 
 THAILAND_TIME = timezone(timedelta(hours=7), name="Asia/Bangkok")
@@ -89,7 +85,7 @@ class TelegramPasswordGate(HistoryPanels):
         self.failures = {}
         self.blocked_until = {}
         self._restart_pending = {}
-        self._restart_requested = asyncio.Event()
+        self._mini_app_control_locks = {}
         self.offset = None
 
         self.current_streak = []
@@ -165,7 +161,7 @@ class TelegramPasswordGate(HistoryPanels):
                         {"command": "menu", "description": "Открыть меню"},
                         {"command": "status", "description": "Статус мониторинга"},
                         {"command": "settings", "description": "Настройки"},
-                        {"command": "restart", "description": "Перезапустить бота и приложение"},
+                        {"command": "restart", "description": "Перезапустить личный интерфейс бота"},
                     ]
                 },
             )
@@ -228,9 +224,6 @@ class TelegramPasswordGate(HistoryPanels):
                             tasks.create_task(handle_user(batch))
                     if updates:
                         self.offset = max(update["update_id"] for update in updates) + 1
-                    if self._restart_requested.is_set():
-                        log.warning("Public /restart confirmed: stopping bot and Mini App to restart service")
-                        raise RestartRequested("Confirmed restart requested by a Telegram user")
                 except asyncio.CancelledError:
                     raise
                 except (httpx.HTTPError, RuntimeError, ValueError, KeyError, TypeError) as exc:
@@ -1256,23 +1249,19 @@ class TelegramPasswordGate(HistoryPanels):
         await self._register_commands_button(chat_id)
 
     async def _request_restart(self, user_id, chat_id):
-        """Any unblocked private-chat user can request a confirmed full restart."""
+        """Offer a confirmation for restarting only this user's Telegram UI."""
         if self.redis is None:
             await self.request("sendMessage", {
                 "chat_id": chat_id,
                 "text": "Перезапуск недоступен: нет подключения к Redis.",
             })
             return
-        if self._restart_requested.is_set():
-            await self.request("sendMessage", {
-                "chat_id": chat_id, "text": "Перезапуск уже запущен.",
-            })
-            return
-        remaining = await self.redis.ttl(RESTART_COOLDOWN_KEY)
+        cooldown_key = f"{RESTART_COOLDOWN_KEY}:{user_id}"
+        remaining = await self.redis.ttl(cooldown_key)
         if remaining > 0:
             await self.request("sendMessage", {
                 "chat_id": chat_id,
-                "text": f"Перезапуск временно недоступен. Повтори через {max(1, (remaining + 59) // 60)} мин.",
+                "text": f"Личный перезапуск временно недоступен. Повтори через {max(1, (remaining + 59) // 60)} мин.",
             })
             return
         nonce = secrets.token_urlsafe(12)
@@ -1280,8 +1269,10 @@ class TelegramPasswordGate(HistoryPanels):
         await self.request("sendMessage", {
             "chat_id": chat_id,
             "text": (
-                "Перезапустить бот и Mini App для всех пользователей?\n"
-                "История, DEMO, настройки и Premium-доступ сохранятся.\n"
+                "Перезапустить только твой интерфейс Telegram-бота?\\n"
+                "Активный DEMO-цикл будет остановлен и сохранён в истории.\\n"
+                "Баланс, статистика, настройки и Premium-доступ сохранятся.\\n"
+                "Mini App и другие пользователи не затрагиваются.\\n"
                 "Подтверждение действует 60 секунд."
             ),
             "reply_markup": {"inline_keyboard": [
@@ -1290,12 +1281,42 @@ class TelegramPasswordGate(HistoryPanels):
             ]},
         })
 
+    async def _restart_user_session(self, user_id, chat_id):
+        """Reset only this user's transient Telegram UI; preserve persistent data."""
+        lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            ledger = self.demo_ledgers.get(user_id)
+            if ledger is not None:
+                if ledger.active:
+                    ledger.finish_active("stopped_by_user")
+                ledger.enabled = False
+                ledger.low_streak = 0
+                await self._persist_demo(user_id)
+
+        self.history_open.discard(user_id)
+        history_was_hidden = user_id in self.history_hidden
+        await self._clear_streak_notice(user_id)
+        await self._prepare_start(user_id, chat_id)
+        if history_was_hidden:
+            self.history_hidden.add(user_id)
+            await self._persist_user(user_id)
+
+        if await self.is_authorized(user_id):
+            if not history_was_hidden:
+                await self.ensure_private_history(user_id)
+            await self._send_transient(user_id, chat_id, self._main_text(), self.menu(user_id))
+        else:
+            await self.request("sendMessage", {
+                "chat_id": chat_id,
+                "text": "Личный интерфейс перезапущен. Для входа используй /start.",
+            })
+
     async def _restart_callback(self, callback, user_id, chat_id, data):
-        """Handle confirmations before authorization gating; all users may restart."""
-        async def reply(text, alert=False):
+        """Apply only the requesting user's confirmed restart."""
+        async def reply(message, alert=False):
             try:
                 await self.request("answerCallbackQuery", {
-                    "callback_query_id": callback["id"], "text": text,
+                    "callback_query_id": callback["id"], "text": message,
                     "show_alert": bool(alert),
                 })
             except (httpx.HTTPError, RuntimeError, KeyError):
@@ -1315,28 +1336,30 @@ class TelegramPasswordGate(HistoryPanels):
         if action == "restart_cancel":
             await reply("Отменено.")
             return
-        if self.redis is None or self._restart_requested.is_set():
+        if self.redis is None:
             await reply("Перезапуск сейчас недоступен.", True)
             return
-        # Redis SET NX provides a single global restart budget across restarts/replicas.
+
+        cooldown_key = f"{RESTART_COOLDOWN_KEY}:{user_id}"
         accepted = await self.redis.set(
-            RESTART_COOLDOWN_KEY, str(user_id),
-            ex=RESTART_COOLDOWN_SECONDS, nx=True,
+            cooldown_key, "1", ex=RESTART_COOLDOWN_SECONDS, nx=True,
         )
         if not accepted:
-            remaining = await self.redis.ttl(RESTART_COOLDOWN_KEY)
+            remaining = await self.redis.ttl(cooldown_key)
             await reply(f"Повтори через {max(1, (remaining + 59) // 60)} мин.", True)
             return
-        await reply("Перезапуск подтверждён.")
-        log.warning("Whole-service restart authorized via Telegram: user_id=%s", user_id)
         try:
-            await self.request("sendMessage", {
-                "chat_id": chat_id,
-                "text": "Перезапуск бота и Mini App запущен. Данные сохранены.",
-            })
-        except (httpx.HTTPError, RuntimeError):
-            log.warning("Restart confirmation message could not be delivered")
-        self._restart_requested.set()
+            await self._restart_user_session(user_id, chat_id)
+        except Exception:
+            await self.redis.delete(cooldown_key)
+            log.exception("Personal Telegram UI restart failed: user_id=%s", user_id)
+            await reply("Не удалось перезапустить интерфейс.", True)
+            return
+        await self._safe_delete(
+            chat_id, self._to_int(((callback.get("message") or {}).get("message_id"))
+        )
+        await reply("Личный интерфейс перезапущен.")
+        log.info("Personal Telegram UI restarted: user_id=%s", user_id)
 
     async def handle_update(self, update):
         callback = update.get("callback_query")
@@ -2080,11 +2103,13 @@ class TelegramPasswordGate(HistoryPanels):
             await self._send_transient(user_id, chat_id, text, markup)
 
     async def _handle_demo_round(self, user_id, coefficient):
-        ledger = self.demo_ledgers.get(user_id)
-        if ledger is None or not ledger.enabled:
-            return None
-        event = ledger.process_round(coefficient)
-        await self._persist_demo(user_id)
+        lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            ledger = self.demo_ledgers.get(user_id)
+            if ledger is None or not ledger.enabled:
+                return None
+            event = ledger.process_round(coefficient)
+            await self._persist_demo(user_id)
         if not event:
             return None
         if event.get("type") == "insufficient_balance" and event.get("entry"):

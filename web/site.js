@@ -169,7 +169,7 @@
     '<div class="remote-line"><button id="remote-drag-mode" type="button" aria-pressed="false">CAPTCHA: включить перетаскивание</button></div>',
     '</div>',
     '<img id="remote-browser-image" alt="Экран удалённого браузера. Нажми на поле, затем введи текст выше." width="430" height="932" draggable="false">',
-    '<p style="font-size:12px;color:#bcb0cd;margin:10px 3px">Для CAPTCHA прокрути снимок до ползунка, включи «CAPTCHA: перетаскивание», затем проведи пальцем от ползунка до выбранной точки. Жест выполняется после отпускания пальца. В остальном — обычные касания. Время сессии ограничено.</p>',
+    '<p style="font-size:12px;color:#bcb0cd;margin:10px 3px">Для CAPTCHA прокрути снимок до ползунка, включи «CAPTCHA: перетаскивание», затем проведи пальцем от ползунка до выбранной точки. Движение передаётся серверу во время удержания пальца. В остальном — обычные касания. Время сессии ограничено.</p>',
   ].join('');
   document.body.appendChild(overlay);
   const remoteStatus = overlay.querySelector('#remote-browser-status');
@@ -180,14 +180,17 @@
   const remoteDragButton = overlay.querySelector('#remote-drag-mode');
   let remoteDragMode = false;
   let remoteDragTrace = null;
+  let remoteGesture = null;
+  let remoteGestureCounter = 0;
+  let remoteFrameBusy = false;
   let remoteTimer = null;
   let remoteBusy = false;
   let remoteActive = false;
   function remoteNotice(message) { remoteStatus.textContent = message; }
   function remoteSchedule() {
     clearTimeout(remoteTimer);
-    if (remoteActive && !overlay.hidden && !document.hidden && !remoteDragTrace)
-      remoteTimer = setTimeout(remoteFrame, 1800);
+    if (remoteActive && !overlay.hidden && !document.hidden && !remoteFrameBusy)
+      remoteTimer = setTimeout(remoteFrame, remoteGesture ? 320 : 650);
   }
   async function remoteAPI(method, data, timeoutMs = 12000) {
     if (!tg?.initData || !window.canUsePremium?.())
@@ -207,22 +210,27 @@
     } finally { clearTimeout(timer); }
   }
   async function remoteFrame() {
-    if (remoteBusy || !remoteActive || overlay.hidden || remoteDragTrace) return;
-    remoteBusy = true;
+    if (remoteFrameBusy || !remoteActive || overlay.hidden) return;
+    remoteFrameBusy = true;
     try {
-      const result = await remoteAPI('GET');
+      const result = await remoteAPI('GET', undefined, 6000);
       if (!result.active) {
         remoteActive = false;
         remoteNotice('Браузер закрыт. Открой заново.');
       } else {
         if (result.image) remoteImage.src = 'data:image/jpeg;base64,' + result.image;
-        remoteNotice('Япония · Время до закрытия: ' + Math.floor(result.seconds_remaining / 60) + ' мин.');
+        if (!remoteGesture)
+          remoteNotice('Япония · Время до закрытия: ' + Math.floor(result.seconds_remaining / 60) + ' мин.');
       }
-    } catch (err) { remoteNotice(err.message); }
-    finally { remoteBusy = false; remoteSchedule(); }
+    } catch (err) {
+      if (!remoteGesture) remoteNotice(err.message);
+    } finally {
+      remoteFrameBusy = false;
+      remoteSchedule();
+    }
   }
   async function remoteAction(data) {
-    if (remoteBusy || !remoteActive) return;
+    if (remoteBusy || !remoteActive || remoteGesture) return;
     remoteBusy = true;
     clearTimeout(remoteTimer);
     try {
@@ -265,6 +273,7 @@
     remoteCode.value = '';
     remoteImage.removeAttribute('src');
     remoteDragTrace = null;
+    remoteGesture = null;
     try { await remoteAPI('POST', {action:'close'}); } catch (_) {}
   });
   function remotePoint(event) {
@@ -274,6 +283,7 @@
     return [Number(x.toFixed(4)), Number(y.toFixed(4))];
   }
   remoteDragButton.addEventListener('click', () => {
+    if (remoteGesture) return;
     remoteDragMode = !remoteDragMode;
     remoteDragTrace = null;
     remoteImage.style.touchAction = remoteDragMode ? 'none' : 'manipulation';
@@ -290,49 +300,99 @@
     const [x, y] = remotePoint(event);
     remoteAction({action:'tap', x, y});
   });
-  remoteImage.addEventListener('pointerdown', event => {
-    if (!remoteDragMode || !remoteActive || remoteBusy || !remoteImage.src) return;
-    if (event.pointerType === 'mouse' && event.button !== 0) return;
-    event.preventDefault();
-    clearTimeout(remoteTimer);
-    remoteImage.setPointerCapture(event.pointerId);
-    remoteDragTrace = {id: event.pointerId, started: performance.now(), points: [remotePoint(event)]};
-  });
-  remoteImage.addEventListener('pointermove', event => {
-    const trace = remoteDragTrace;
-    if (!trace || trace.id !== event.pointerId) return;
-    event.preventDefault();
-    const point = remotePoint(event);
-    const prev = trace.points[trace.points.length - 1];
-    if ((Math.abs(point[0] - prev[0]) + Math.abs(point[1] - prev[1])) < .005) return;
-    if (trace.points.length < 31) trace.points.push(point);
-    else trace.points[trace.points.length - 1] = point;
-  });
-  remoteImage.addEventListener('pointerup', event => {
-    const trace = remoteDragTrace;
-    if (!trace || trace.id !== event.pointerId) return;
+  // Forward actual finger down/move/up events, not a prerecorded gesture.
+  // Each move replaces any queued unsent move; network lag cannot accumulate.
+  async function remoteGesturePump(gesture) {
+    if (gesture.running || remoteGesture !== gesture || !remoteActive) return;
+    gesture.running = true;
+    try {
+      if (!gesture.serverDown) {
+        await remoteAPI('POST', {
+          action:'pointer', phase:'down', gesture:gesture.token,
+          x:gesture.start[0], y:gesture.start[1],
+        }, 6500);
+        gesture.serverDown = true;
+      }
+      while (remoteGesture === gesture && remoteActive) {
+        if (gesture.end) {
+          await remoteAPI('POST', {
+            action:'pointer', phase:'up', gesture:gesture.token,
+            x:gesture.end[0], y:gesture.end[1],
+          }, 6500);
+          remoteGesture = null;
+          remoteNotice('Ползунок отпущен. Проверь ответ CAPTCHA.');
+          break;
+        }
+        if (!gesture.next) break;
+        const position = gesture.next;
+        gesture.next = null;
+        await remoteAPI('POST', {
+          action:'pointer', phase:'move', gesture:gesture.token,
+          x:position[0], y:position[1],
+        }, 6500);
+      }
+    } catch (err) {
+      if (remoteGesture === gesture) {
+        remoteGesture = null;
+        remoteNotice('Передача движения прервана: ' + err.message);
+      }
+      if (gesture.serverDown) {
+        const point = gesture.end || gesture.last || gesture.start;
+        try {
+          await remoteAPI('POST', {
+            action:'pointer', phase:'up', gesture:gesture.token,
+            x:point[0], y:point[1],
+          }, 3500);
+        } catch (_) { /* Server watchdog releases held mouse after 3s. */ }
+      }
+    } finally {
+      gesture.running = false;
+      if (remoteGesture === gesture && (gesture.end || gesture.next))
+        remoteGesturePump(gesture);
+      else remoteSchedule();
+    }
+  }
+  function finishRemoteGesture(event, cancelled=false) {
+    const gesture = remoteDragTrace;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
     event.preventDefault();
     remoteDragTrace = null;
     if (remoteImage.hasPointerCapture(event.pointerId))
       remoteImage.releasePointerCapture(event.pointerId);
-    const end = remotePoint(event);
-    trace.points.push(end);
-    const start = trace.points[0];
-    const delta = Math.abs(end[0] - start[0]) * 430 + Math.abs(end[1] - start[1]) * 932;
-    if (delta < 12) {
-      remoteNotice('Жест слишком короткий. Протяни ползунок дальше.');
-      remoteSchedule();
-      return;
-    }
-    const duration = Math.max(100, Math.min(4000, Math.round(performance.now() - trace.started)));
-    remoteAction({action:'drag', points:trace.points, duration_ms:duration});
+    gesture.end = cancelled ? (gesture.last || gesture.start) : remotePoint(event);
+    gesture.next = null;
+    remoteNotice(cancelled
+      ? 'Удержание прервано. Отпускаем ползунок на сервере…'
+      : 'Отпускаем ползунок на сервере…');
+    remoteGesturePump(gesture);
+  }
+  remoteImage.addEventListener('pointerdown', event => {
+    if (!remoteDragMode || !remoteActive || remoteBusy || remoteGesture || !remoteImage.src) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    remoteImage.setPointerCapture(event.pointerId);
+    const position = remotePoint(event);
+    const gesture = {
+      pointerId:event.pointerId,
+      token:(remoteGestureCounter = remoteGestureCounter % 2147483646 + 1),
+      start:position, last:position, next:null, end:null,
+      running:false, serverDown:false,
+    };
+    remoteDragTrace = remoteGesture = gesture;
+    remoteNotice('Удержание началось. Веди ползунок пальцем.');
+    remoteGesturePump(gesture);
   });
-  remoteImage.addEventListener('pointercancel', event => {
-    if (!remoteDragTrace || remoteDragTrace.id !== event.pointerId) return;
-    remoteDragTrace = null;
-    remoteNotice('Перетаскивание отменено.');
-    remoteSchedule();
+  remoteImage.addEventListener('pointermove', event => {
+    const gesture = remoteDragTrace;
+    if (!gesture || gesture.pointerId !== event.pointerId || gesture.end) return;
+    event.preventDefault();
+    const position = remotePoint(event);
+    if (Math.abs(position[0] - gesture.last[0]) + Math.abs(position[1] - gesture.last[1]) < .004) return;
+    gesture.last = gesture.next = position;
+    remoteGesturePump(gesture);
   });
+  remoteImage.addEventListener('pointerup', event => finishRemoteGesture(event));
+  remoteImage.addEventListener('pointercancel', event => finishRemoteGesture(event, true));
   async function remoteWrite(field, operation) {
     const value = field.value;
     field.value = '';

@@ -103,7 +103,7 @@ def test_history_reset_requires_confirm_and_valid_scope():
 
 
 def test_cycle_filter_uses_completed_at_not_history_index():
-    marker = {'at_ms': 1800000000000}
+    marker = {'at_ms': 1790000000000}
     assert _after_cycle_reset({'ended_at': '2027-01-01T00:00:00+00:00'}, marker)
     assert not _after_cycle_reset({'ended_at': '2026-01-01T00:00:00+00:00'}, marker)
     assert not _after_cycle_reset({'ended_at': 'not-a-date'}, marker)

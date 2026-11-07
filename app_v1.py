@@ -6,6 +6,7 @@ import os
 
 import httpx
 
+from archive_consumer import consume_archive
 from history_refresh import HistoryRefresh
 from telegram_delivery import TelegramDelivery
 from live_panel_updates import LivePanelUpdates
@@ -271,6 +272,7 @@ async def _main_async() -> None:
         if redis is None:
             raise RuntimeError("Continuous history requires Redis persistence")
         password_gate.coefficient_stats.redis = redis
+        log.info("Archive audit: recorded_events=%d", await redis.xlen("luckyjet:archive:v1:events"))
         # Resume existing data and last confirmed cursor without a reset.
         restored = await monitor.load_state(config)
         state.__dict__.update(restored.__dict__)
@@ -278,7 +280,12 @@ async def _main_async() -> None:
         seed_private_streak(password_gate, state.previous)
         async with asyncio.TaskGroup() as owned:
             owned.create_task(password_gate.start())
-            owned.create_task(direct_only.run_monitor(monitor, config, state=state))
+            if os.getenv("ARCHIVE_CONSUMER_ENABLED", "0") == "1":
+                # Source collection belongs to the two independent workers.
+                # Site login, CAPTCHA and UI restarts cannot stop them.
+                owned.create_task(consume_archive(password_gate, state, panel))
+            else:
+                owned.create_task(direct_only.run_monitor(monitor, config, state=state))
     await retire_legacy_history_panel(panel)
 
     try:

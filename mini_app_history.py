@@ -307,11 +307,21 @@ async def history(authorization, gate, token, query=''):
             })
         if view == 'max_steps':
             marker = markers.get('max_steps')
-            days = sorted((d for d in ledger.daily_max_low_streak
+            maxima = dict(ledger.daily_max_low_streak)
+            if marker and redis_for_reset is not None:
+                summary, steps = await _after_reset_day(redis_for_reset, marker['day'], marker)
+                if summary is not None:
+                    if summary['total']:
+                        maxima[marker['day']] = steps
+                    else:
+                        maxima.pop(marker['day'], None)
+                else:
+                    maxima[marker['day']] = None
+            days = sorted((d for d in maxima
                            if not marker or d >= marker['day']), reverse=True)
             return json_response('200 OK', {
                 'view': view, 'days': [
-                    {'day': key, 'steps': ledger.daily_max_low_streak[key]}
+                    {'day': key, 'steps': maxima[key]}
                     for key in days[page*10:page*10+10]],
                 'total': len(days), 'page': page, 'view_reset': bool(marker),
             })
@@ -346,6 +356,10 @@ async def history(authorization, gate, token, query=''):
         if marker:
             raw = await redis.zrevrange('luckyjet:coef:days', 0, -1)
             days = [_string(d) for d in raw if _string(d) >= marker['day']]
+            if marker['day'] in days:
+                summary, _ = await _after_reset_day(redis, marker['day'], marker)
+                if summary is not None and summary['total'] == 0:
+                    days.remove(marker['day'])
             total = len(days)
             days = days[page*10:page*10+10]
         else:
@@ -373,6 +387,13 @@ async def history(authorization, gate, token, query=''):
         if marker:
             raw = await redis.zrevrange('luckyjet:coef:high:days', 0, -1)
             eligible_days = [_string(d) for d in raw if _string(d) >= marker['day']]
+            if marker['day'] in eligible_days:
+                raw_ids = await redis.lrange(f'luckyjet:coef:high:{marker["day"]}', 0, -1)
+                raw_entries = await redis.hmget('luckyjet:coef:high:entries', raw_ids) if raw_ids else []
+                found = any(entry and float(entry.get('stamp') or 0)*1000 > marker['at_ms']
+                            for entry in (_entry(value) for value in raw_entries))
+                if not found:
+                    eligible_days.remove(marker['day'])
             total = len(eligible_days)
             days = eligible_days[page*10:page*10+10]
         else:
@@ -381,6 +402,8 @@ async def history(authorization, gate, token, query=''):
         state = {_string(k): _string(v) for k, v in
                  (await redis.hgetall('luckyjet:coef:high:state')).items()}
         previous = json.loads(state['last_high']) if state.get('last_high') else None
+        if marker and previous and float(previous.get('stamp') or 0) * 1000 <= marker['at_ms']:
+            previous = None
         return json_response('200 OK', {
             'view': view, 'total': total, 'page': page,
             'days': [_string(d) for d in days],

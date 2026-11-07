@@ -448,9 +448,9 @@ async def health_server(gate=None, bot_token=None) -> None:
                 status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
             else:
                 path, _, query = line[1].partition('?')
-                if line[0] == 'POST' and path not in {'/api/controls', '/api/admin', '/api/site', '/api/access'}:
+                if line[0] == 'POST' and path not in {'/api/controls', '/api/admin', '/api/site', '/api/access', '/api/browser'}:
                     status, content_type, body = '405 Method Not Allowed', 'text/plain', b'Method not allowed'
-                elif path in {'/api/public', '/api/access', '/api/overview', '/api/history', '/api/controls', '/api/admin', '/api/site'}:
+                elif path in {'/api/public', '/api/access', '/api/overview', '/api/history', '/api/controls', '/api/admin', '/api/site', '/api/browser'}:
                     pairs = [header.split(':', 1) for header in request.decode('ascii').split('\r\n')[1:] if ':' in header]
                     auth = [value.strip() for key, value in pairs if key.lower() == 'authorization']
                     if len(auth) > 1:
@@ -466,7 +466,7 @@ async def health_server(gate=None, bot_token=None) -> None:
                     elif path == '/api/history':
                         from mini_app_history import history
                         status, content_type, body = await history(auth_header, gate, bot_token, query)
-                    elif path in {'/api/controls', '/api/admin', '/api/site', '/api/access'}:
+                    elif path in {'/api/controls', '/api/admin', '/api/site', '/api/access', '/api/browser'}:
                         payload = None
                         if line[0] == 'POST':
                             contents = [value.strip() for key, value in pairs if key.lower() == 'content-length']
@@ -496,6 +496,11 @@ async def health_server(gate=None, bot_token=None) -> None:
                         elif path == '/api/site':
                             from mini_app_site import site
                             status, content_type, body = await site(auth_header, gate, bot_token, method, payload)
+                        elif path == '/api/browser':
+                            from mini_app_remote import remote_browser
+                            # This endpoint requires the signed Telegram launch data,
+                            # never a browser session cookie or premium login alone.
+                            status, content_type, body = await remote_browser(auth[0] if auth else '', gate, bot_token, method, payload)
                         else:
                             from mini_app_controls import controls
                             status, content_type, body = await controls(auth_header, gate, bot_token, method, payload)

@@ -332,6 +332,149 @@ html{scroll-padding-bottom:calc(118px + env(safe-area-inset-bottom))}
 }
 @media(prefers-reduced-motion:reduce){.section-toggle span,#page-home .monitoring-chevron{transition:none}}
 
+
+/* v0.2.5 — calm Lucky Jet palette; one primary action, minimal chrome. */
+:root{--bg:#100d19;--panel:#201a30;--surface:#2a213b;--line:#3a304b;--text:#f5f0ff;--muted:#b1a7c2;--accent:#ba80ff}
+body{background:#100d19;color:var(--text)}
+.wrap{padding:9px 15px calc(115px + env(safe-area-inset-bottom));max-width:610px}
+.topbar{min-height:56px;padding:5px 0;background:#16111e;box-shadow:none;border-bottom:1px solid #302640;backdrop-filter:blur(12px)}
+.topbar .brand .mark{background:#332345}
+.topbar .top-login,.topbar .top-premium{border:0;background:#342544;box-shadow:none;padding:5px 9px}
+.topbar .top-balance small{font-size:9px}
+.tab-page h1{font-size:24px;font-weight:720;line-height:1.16;margin:17px 0 12px;letter-spacing:-.6px}
+.screen-subtitle{display:none}
+#page-history>.field-help{display:none}
+#page-demo .kicker{display:none}
+#page-home .home-heading{margin:5px 0 9px}
+#page-home #live-home{margin-top:6px}
+#page-home .recent-results-card,#page-home #summary-accordion,#page-home #monitoring-accordion{background:#20192d;border:0;box-shadow:none;border-radius:16px}
+#page-home #summary-accordion .summary-details{padding:8px 12px 13px}
+#page-home #summary-accordion>.summary-trigger{min-height:54px}
+#page-home #summary-accordion .ind-summary-cards>.ind-stat{background:#2b223b;border:0;box-shadow:none;min-height:72px;padding:11px}
+#page-home #summary-accordion .ind-summary-cards>.ind-stat-primary{background:#36254b}
+#page-home #summary-accordion .ind-summary-cards .ind-stat-icon{display:none}
+#page-home #summary-accordion .ind-summary-cards .ind-stat-label{font-size:11px;color:#c9bada;margin-bottom:5px}
+#page-home #summary-accordion .ind-summary-cards .ind-stat strong{font-size:21px;margin:0;font-variant-numeric:tabular-nums}
+#page-home #summary-accordion .ind-summary-cards .ind-stat-hint{display:none}
+#page-home #summary-accordion .ind-summary-cards .ind-stat[data-missing="true"] .ind-stat-hint{display:block;font-size:10px;margin-top:5px}
+#page-home #summary-accordion .insight-heading{font-size:12px;font-weight:650;color:#cab9dc}
+#page-home #summary-accordion .section-toggle{border:0;background:#2c223a;border-radius:10px}
+#page-home #summary-accordion .ind-summary-match{background:#282038;border:0;margin:5px 0;border-radius:11px}
+#page-home #summary-accordion #ind-summary-status{color:#b4a2c6;font-size:11px}
+#page-home #monitoring-accordion>.monitoring-toggle{min-height:51px}
+#page-home #monitoring-accordion .monitoring-details{border-top:1px solid #372a49}
+#page-home .recent-results-card{padding:11px}
+#page-home .recent-results-card .refresh-compact{background:#2e2340;border:0;color:#d6b5fb;box-shadow:none}
+#page-home .recent-results-card .coef{text-shadow:none;box-shadow:none;border:0;border-radius:9px}
+#page-home .recent-results-card .coef.mid{background:#4b2876;color:#e2c7ff}
+#page-home .recent-results-card .coef.high{background:#784012;color:#ffca80}
+#page-home #summary-accordion #ind-summary-apply{background:linear-gradient(115deg,#7130c3,#aa5ef3);border:0;box-shadow:none}
+#page-home #summary-accordion .result-context{background:transparent;border:0;padding:0;margin:9px 0;color:#a991c7;font-size:11px}
+#page-home #summary-accordion .ind-summary-title{margin:12px 0 6px}
+#page-home #summary-explainer .summary-help-btn{background:#2b2139;border:0}
+#page-demo #live-demo{background:#211a30;border:0;box-shadow:none;border-radius:16px;padding:14px;margin:9px 0 15px}
+#page-demo .live-label{font-size:11px;color:#ab9ebd;margin-bottom:1px}
+#page-demo .balance{font-size:27px;line-height:1.2;margin:5px 0 11px;letter-spacing:-.6px}
+#page-demo .demo-strategy-accordion{border:0;background:#2b223a;border-radius:12px;margin-top:8px!important}
+#page-demo .demo-strategy-accordion>.summary-trigger{background:none;border:0;min-height:48px;margin-top:0!important;box-shadow:none;padding:11px}
+#page-demo .demo-strategy-accordion .summary-preview{margin-top:4px}
+#page-demo .controls-panel{background:#241c33;padding:11px;margin-top:0}
+#page-demo .controls-panel .settings-title{display:none}
+#page-demo .control-row{padding:10px 0}
+#page-demo .control-row label small{display:none}
+#page-demo .control-row input,#page-demo .control-row select{border-color:#57416e!important}
+#page-demo .control-primary{min-height:43px}
+#page-demo #demo-probe-area .settings-title{display:block}
+#page-history .history-tabs{background:#21182f;border:0;border-radius:12px;margin:8px 0 8px;padding:3px;box-shadow:none}
+#page-history .history-tabs button{min-height:39px;padding:6px 2px;font-size:11px;border:0;color:#a99bbf}
+#page-history .history-tabs button[aria-selected="true"]{background:#503078;color:#fff;border-radius:9px}
+#page-history .history-actions{margin:8px 0 1px}
+#page-history .history-actions #history-refresh{min-height:40px;background:#2b213b;border:0;font-size:12px;color:#d7b9fa}
+#page-history .history-actions #history-back{min-height:40px;background:none;border:0}
+#page-history .history-status{min-height:0;margin:5px 0;font-size:11px;color:#a99cbd}
+#page-history .history-heading{font-size:16px;margin:12px 0 3px}
+#page-history .history-subtitle{font-size:11px;margin:0 0 9px}
+#page-history .history-date-row{gap:7px}
+#page-history .history-date-row input{min-height:40px}
+#page-history .history-date-button{min-height:40px;background:#35234e;border:0;color:#e0c1ff}
+#page-history .history-item{background:#221a32;border:0;box-shadow:none;border-radius:11px;padding:10px 12px;margin:5px 0}
+#page-history .history-item strong{font-size:13px}
+#page-history .history-item small{font-size:11px}
+#page-history .history-metric{background:#21192f;border:0;box-shadow:none;border-radius:10px;padding:10px}
+#page-history .history-pager{margin:8px 0}
+#page-history .history-pager button{min-height:37px}
+#page-history .history-guide,.history-manage{margin:8px 0}
+#page-history #history-explainer{font-size:11px;line-height:1.5;padding:8px 11px;margin:0;color:#b8aacb;background:#21192f;border:0}
+#page-history #history-reset-panel{padding:0;border:0;background:transparent;margin:8px 0!important;border-radius:0}
+#page-history #history-reset-panel h3{font-size:12px;color:#d5bddf;margin:6px 0 9px}
+#page-history #history-reset-panel .field-help{display:none}
+#page-history #history-reset-panel .control-danger{background:#35212f;color:#eab5c8;border:0;min-height:40px;margin:5px 0;border-radius:10px}
+#page-history #history-archive-launch{border:0;background:transparent;padding:0;margin:12px 0 0!important}
+#page-history #history-archive{min-height:41px!important;border:0;border-radius:10px;background:#302240}
+#page-history #history-archive-exit{margin:8px 0 9px}
+#page-account .account-card{background:#211a2f;border:0;box-shadow:none;border-radius:14px;padding:0 12px;margin:5px 0 12px}
+#page-account .account-row{min-height:51px;padding:8px 2px;gap:10px;font-size:13px}
+#page-account .account-row+.account-row{border-top:1px solid #392b4c}
+#page-account .row-icon{width:30px;height:30px;border-radius:10px;background:#38254f}
+#page-account .row-icon svg{width:17px;height:17px}
+#page-account .shortcut-label small{font-size:10px}
+#page-account .return-bot-link{font-size:12px;color:#bda9d2;min-height:40px}
+#page-account .return-bot-link .row-icon{width:26px;height:26px;background:#2b2139}
+#page-account #settings-panel{background:#20192d;border:0;box-shadow:none;border-radius:13px;margin-top:8px;padding:9px 11px}
+#page-account #settings-panel .settings-title{display:none}
+#page-account #settings-panel .account-card{margin:0 0 8px}
+#page-account #settings-controls{background:none;border:0;padding:0}
+#page-account .control-row{border-color:#392c49;padding:9px 0;min-height:45px}
+#page-account .control-row label small,#page-account .control-row span small{display:none}
+#page-account #site-section{background:#21192f;border:0;box-shadow:none;border-radius:16px;padding:14px;margin:10px 0}
+#page-account #site-section .admin-section-header{align-items:center}
+#page-account #site-section .admin-section-header h2{font-size:15px;line-height:1.35;margin:0}
+#page-account #site-refresh{width:38px;height:38px;border:0;border-radius:11px;padding:2px;font-size:21px;background:#2d2240}
+#page-account #site-status-text{font-size:11px;margin:6px 0 11px;line-height:1.4}
+#page-account .site-label{font-size:11px;color:#b6a9c7;margin-top:8px}
+#page-account #site-section .site-input{min-height:43px!important;background:#2d233d!important;border:1px solid #4a355f!important;border-radius:11px!important}
+#page-account #site-section .site-button{min-height:45px!important;background:linear-gradient(110deg,#7c33c7,#ac60e9)!important;color:#fff!important;border:0!important;box-shadow:none}
+#page-account #site-section .site-actions{margin:5px 0}
+#page-account .site-privacy{font-size:11px;color:#a99ab9;margin:11px 1px}
+#page-account .site-privacy summary{cursor:pointer;color:#b9a3ce}
+#page-account .site-privacy p{margin:5px 0;line-height:1.5}
+#page-account #admin-wrapper{margin:10px 0}
+#page-account #admin-section{background:#21192f;border:0;box-shadow:none;padding:12px;margin:0}
+#page-account #admin-section .admin-section-header h2{display:none}
+#page-account #admin-section .admin-user{background:#2d223a;border:0;box-shadow:none;border-radius:10px;padding:9px}
+#page-account #app-release-notes{border:0;background:#21192f;margin:12px 0!important;box-shadow:none}
+#page-account #app-release-notes .summary-trigger{background:transparent;border:0;box-shadow:none}
+#page-account #app-release-notes .history-note{font-size:11px;line-height:1.5}
+.minimal-disclosure{background:#21192f;border:0;border-radius:12px;overflow:hidden;box-shadow:none}
+.minimal-disclosure>summary{min-height:43px;display:flex;align-items:center;justify-content:space-between;gap:9px;padding:11px 13px;cursor:pointer;list-style:none;color:#d7c5e6;font-weight:600;font-size:12px}
+.minimal-disclosure>summary::-webkit-details-marker{display:none}
+.minimal-disclosure>summary span{font-size:14px;color:#aa80d9;transition:transform 180ms}
+.minimal-disclosure[open]>summary span{transform:rotate(180deg)}
+.minimal-disclosure-body{padding:2px 11px 11px}
+.minimal-help{margin:8px 0;font-size:11px;color:#ac9fc0}
+.minimal-help summary{cursor:pointer;font-weight:550;padding:7px 0}
+.minimal-help p{font-size:11px;line-height:1.55;margin:4px 0 10px}
+#page-demo .demo-info{margin:6px 0 9px;background:#281f36}
+#page-demo .demo-info .metric{font-size:12px;padding:9px 0}
+#page-demo .demo-info .metric span small{display:none}
+#page-demo .demo-info .metric strong{font-size:12px}
+#page-account .technical-tools{margin:13px 0 0;background:#2a2139}
+#page-account .technical-tools>summary{font-size:12px}
+#page-account .technical-tools>.history-outline{display:block;width:100%;text-align:center;border:0;border-radius:10px;background:#352647;color:#d5b8ed;margin:5px 0!important}
+#page-account .technical-tools>a{font-size:11px!important;padding:9px 2px}
+#page-account .technical-tools>[role="status"]{font-size:11px!important;line-height:1.4}
+nav{width:calc(100% - 24px);max-width:530px;bottom:calc(8px + env(safe-area-inset-bottom));border:0;border-radius:18px;background:#1f1a2bee;box-shadow:0 5px 18px #0005;padding:3px;backdrop-filter:blur(12px)}
+nav button{min-height:52px;gap:3px;padding:5px 2px;border-radius:14px;font-size:10px;color:#afa5bf}
+nav button svg{width:20px;height:20px}
+nav button[aria-current="page"]{background:#503072;color:#f7ebff}
+.history-outline,.history-date-button{box-shadow:none}
+.history-outline:hover,.history-date-button:hover{background:#38284e}
+button:not(:disabled),.summary-trigger{transition:background-color 180ms ease,opacity 180ms ease,transform 160ms ease}
+button:active:not(:disabled){transform:scale(.985)}
+#page-home .refresh-dot{box-shadow:none}
+@media(max-width:350px){.wrap{padding-left:11px;padding-right:11px}.tab-page h1{font-size:23px}nav{width:calc(100% - 16px)}}
+@media(prefers-reduced-motion:reduce){button:not(:disabled),.summary-trigger,.minimal-disclosure>summary span{transition:none}}
+
 </style></head><body data-access="guest">
 <svg style="display:none" aria-hidden="true"><symbol id="plane" viewBox="0 0 24 24"><path d="m21 3-6 18-4-8-8-4 18-6Z"/><path d="m11 13 10-10"/></symbol><symbol id="home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/></symbol><symbol id="demo" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4 19a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2L14 9V3M7 15h10"/></symbol><symbol id="history" viewBox="0 0 24 24"><path d="M4 4v5h5M4 9a8 8 0 1 1 0 7M12 7v5l3 2"/></symbol><symbol id="settings" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="#15131d"/><circle cx="15" cy="12" r="2" fill="#15131d"/><circle cx="9" cy="18" r="2" fill="#15131d"/></symbol><symbol id="account" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol><symbol id="rocket" viewBox="0 0 24 24"><path d="M5 16.5 3.5 21 8 19.5M9 15l-3-3 3-5c3-3 7-4 12-4 0 5-1 9-4 12l-5 3-3-3Z"/><circle cx="15.5" cy="8.5" r="2"/></symbol></svg>
 <div class="wrap"><header class="topbar"><div class="brand"><span class="mark"><svg><use href="#rocket"/></svg></span><span>Lucky Jet</span></div><div class="topbar-right"><div class="top-balance"><small id="header-premium" class="premium-only">Premium активен</small><small>DEMO</small><strong id="header-balance">—</strong></div><div class="top-actions"><button type="button" class="top-premium" id="top-premium" hidden>Premium</button><button type="button" class="top-login" id="top-login">Войти</button></div></div></header>

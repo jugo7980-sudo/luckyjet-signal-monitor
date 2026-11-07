@@ -58,7 +58,8 @@ def test_personal_restart_stops_only_own_demo_and_preserves_balances_histories_a
         first.cycle_started_at = "2026-11-07T00:00:00+00:00"
         first.history = [{"outcome": "recovered", "net_cents": 1000}]
         first.daily_max_steps = {"2026-11-06": 7}
-        first.tracker_step = 2
+        first.consecutive_below_two = 2
+        first.daily_max_low_streak = {"2026-11-07": 6}
 
         second = gate._demo_ledger(44)
         second.enabled = True
@@ -94,7 +95,8 @@ def test_personal_restart_stops_only_own_demo_and_preserves_balances_histories_a
         assert first.history[0]["balance_after_cents"] == 1_050_000
         assert first.history[1]["outcome"] == "recovered"
         assert first.daily_max_steps["2026-11-06"] == 7
-        assert first.tracker_step == 2  # A bot UI restart must not reset always-on tracking.
+        assert first.consecutive_below_two == 2  # Personal restart preserves source streak.
+        assert first.daily_max_low_streak["2026-11-07"] == 6
         assert second.dump() == before_other
         assert gate.history_hidden == {22}
         assert 22 in gate.notifications_disabled
@@ -105,7 +107,8 @@ def test_personal_restart_stops_only_own_demo_and_preserves_balances_histories_a
         saved = json.loads(await gate.redis.hget("luckyjet:demo_sessions", "22"))
         assert saved["enabled"] is False and saved["active"] is False
         assert saved["balance_cents"] == 1_050_000
-        assert saved["tracker_step"] == 2
+        assert saved["consecutive_below_two"] == 2
+        assert saved["daily_max_low_streak"]["2026-11-07"] == 6
         assert saved["history"][0]["outcome"] == "stopped_by_user"
         assert json.loads(await gate.redis.hget("luckyjet:demo_sessions", "44"))["enabled"] is True
         assert 0 < await gate.redis.ttl(f"{RESTART_COOLDOWN_KEY}:22") <= RESTART_COOLDOWN_SECONDS

@@ -6,6 +6,8 @@ from contextlib import AsyncExitStack
 import os
 import re
 import time
+
+import httpx
 from urllib.parse import urlsplit
 from playwright.async_api import Error as BrowserError, TimeoutError as BrowserTimeout
 
@@ -39,9 +41,43 @@ def classify_login(*, success, code, error, challenge):
     return 'success' if success else 'waiting'
 
 
+
+async def verify_proxy_country(proxy_url: str | None, expected_country: str) -> None:
+    """Confirm the SOCKS exit country before any site credentials are transmitted."""
+    if not proxy_url:
+        raise LoginProblem('Японский прокси не подключён. Вход остановлен, прямое подключение запрещено.')
+
+    # Both checks are made through the configured SOCKS tunnel, never directly.
+    sources = (
+        ('https://api.country.is/', 'country'),
+        ('https://ipwho.is/', 'country_code'),
+    )
+    try:
+        async with httpx.AsyncClient(proxy=proxy_url, timeout=10, trust_env=False) as client:
+            for url, field in sources:
+                try:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    payload = response.json()
+                    country = str(payload.get(field, '')).upper() if isinstance(payload, dict) else ''
+                    if len(country) != 2 or not country.isalpha():
+                        continue
+                except (httpx.HTTPError, ValueError, TypeError):
+                    continue
+                if country != expected_country.upper():
+                    raise LoginProblem(
+                        f'Выходной IP прокси не в Японии (страна: {country}). Вход остановлен.'
+                    )
+                return
+    except httpx.HTTPError:
+        pass
+    raise LoginProblem('Не удалось подтвердить японский IP через прокси. Вход остановлен.')
+
+
 class SiteLoginBrowser:
     def __init__(self, login_url, *, headless=True, selectors=None, result_timeout=30,
-                 playwright_factory=low_memory_async_playwright):
+                 playwright_factory=low_memory_async_playwright, proxy_url=None,
+                 expected_country=None):
         self.login_url = login_url
         self.headless = headless
         self.selectors = {key: os.getenv(f'SITE_AUTH_{key.upper()}_SELECTOR', value)
@@ -51,6 +87,8 @@ class SiteLoginBrowser:
         self.code_submit_selector = os.getenv('SITE_AUTH_CODE_SUBMIT_SELECTOR', '')
         self.result_timeout = result_timeout
         self.playwright_factory = playwright_factory
+        self.proxy_url = proxy_url
+        self.expected_country = expected_country
         self.context = None
         self.page = None
         self._stack = None
@@ -58,8 +96,13 @@ class SiteLoginBrowser:
     async def __aenter__(self):
         self._stack = AsyncExitStack()
         try:
+            if self.expected_country:
+                await verify_proxy_country(self.proxy_url, self.expected_country)
             p = await self._stack.enter_async_context(self.playwright_factory())
-            browser = await p.chromium.launch(headless=self.headless)
+            options = {'headless': self.headless}
+            if self.proxy_url:
+                options['proxy'] = {'server': self.proxy_url}
+            browser = await p.chromium.launch(**options)
             self._stack.push_async_callback(browser.close)
             self.context = await browser.new_context(viewport={'width': 430, 'height': 932}, locale='ru-RU')
             self.page = await self.context.new_page()

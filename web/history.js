@@ -31,7 +31,7 @@
     if (!timestamp) return 'Время не сохранено';
     const raw = typeof timestamp === 'number' ? timestamp * 1000 : Date.parse(timestamp);
     if (!Number.isFinite(raw)) return 'Время не сохранено';
-    return new Date(raw).toLocaleString('ru-RU', {timeZone: 'Asia/Bangkok', day: '2-digit',
+    return new Date(raw).toLocaleString('ru-RU', {timeZone: 'Asia/Vladivostok', day: '2-digit',
       month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'});
   };
   function info(label, value, hint) {
@@ -82,7 +82,7 @@
     const input = el('input');
     input.type = 'date';
     input.id = 'history-date';
-    input.max = new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
+    input.max = new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Vladivostok', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
     const button = el('button', 'history-date-button', 'Показать');
     button.type = 'button';
     button.addEventListener('click', () => {
@@ -100,7 +100,7 @@
     setPager(data);
     switch (data.view) {
       case 'days':
-        heading('История Кэф', 'Статистика по дням · Таиланд, UTC+7');
+        heading('История Кэф', 'Статистика по дням · Владивосток, UTC+10');
         datePicker('days');
         if (!data.days.length) note('Пока нет сохранённых дней.');
         for (const day of data.days) item(formatDay(day), 'Коэффициенты и количество раундов',
@@ -108,7 +108,7 @@
         break;
       case 'day': {
         const s = data.summary || {};
-        heading(formatDay(data.day), 'История Кэф · Таиланд, UTC+7');
+        heading(formatDay(data.day), 'История Кэф · Владивосток, UTC+10');
         info('Всего раундов', s.total ?? 0);
         info('<2x', s.lt2_tracking ? (s.lt2 ?? 0) : 'Нет данных',
           s.lt2_partial ? 'С обновления' : '');
@@ -165,7 +165,7 @@
         const c = data.item;
         const reasons = {recovered: 'Цель 2x достигнута', insufficient_balance: 'Недостаточно баланса',
           incomplete_data: 'Неполные данные', stopped_by_user: 'Остановлена пользователем'};
-        heading('Цикл ' + (c.index + 1), 'Время Таиланда, UTC+7');
+        heading('Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
         info('Начало', formatTime(c.started_at));
         info('Завершение', formatTime(c.ended_at));
         info('Шагов', c.steps);
@@ -196,14 +196,14 @@
         break;
       }
       case 'max_steps':
-        heading('Максимальный шаг', 'По дням · Таиланд, UTC+7');
+        heading('Максимальный шаг', 'По дням · Владивосток, UTC+10');
         datePicker('max_steps');
         if (!data.days.length) note('Данных пока нет.');
         for (const d of data.days) item(formatDay(d.day), 'Показать максимум', 
           () => navigate('max_step_day', {day: d.day}, true), d.steps + ' шаг.');
         break;
       case 'max_step_day':
-        heading(formatDay(data.day), 'Максимальный шаг · Таиланд, UTC+7');
+        heading(formatDay(data.day), 'Максимальный шаг · Владивосток, UTC+10');
         if (data.steps == null) note('Нет сохранённых данных за этот день.');
         else info('Максимальный шаг', data.steps);
         break;

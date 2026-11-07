@@ -138,7 +138,7 @@ class SiteAccount:
             return
         if self.owner_id is not None:
             await self.request('sendMessage', {
-                'chat_id': self.owner_id, 'text': text, 'protect_content': True,
+                'chat_id': self.owner_id, 'text': text,
                 'reply_markup': markup or self.menu(),
             })
 
@@ -378,7 +378,6 @@ class SiteAccount:
                     'chat_id': self.owner_id,
                     'photo_file': ('login-page.png', screenshot, 'image/png'),
                     'caption': 'Состояние страницы бота до ввода данных входа',
-                    'protect_content': True,
                 })
                 await self.cleanup.add(result.get('result', {}).get('message_id'), delay=60)
         except Exception as exc:

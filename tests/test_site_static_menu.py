@@ -237,6 +237,9 @@ def test_error_screenshot_is_removed_when_menu_closes(tmp_path):
         account._task = asyncio.create_task(account._login('owner@example.test', 'private-password'))
         await account._task
         assert 88 in account.cleanup.pending
+        sent_photo = [p for m, p in tg.calls if m == 'sendPhoto'][-1]
+        assert sent_photo['chat_id'] == account.owner_id
+        assert 'protect_content' not in sent_photo
         await click(gate, 'menu_close')
         assert 88 not in account.cleanup.pending
         assert any(m == 'deleteMessage' and p['message_id'] == 88 for m,p in tg.calls)

@@ -121,6 +121,7 @@
     } else {
       status.textContent = 'Сохранённые раунды проанализированы; полнота истории самого игрового сайта не подтверждена.';
     }
+    if (quality.history_search_limited) status.textContent += ' Поиск последнего X ограничен глубиной архива; отсутствие совпадения за её пределами не подтверждено.';
     if (quality.duplicate_entries) status.textContent += ' Повторные записи: ' + quality.duplicate_entries + '.';
     if (quality.unverified_source_timing) status.textContent += ' Время отдельных раундов не подтверждено источником.';
   }

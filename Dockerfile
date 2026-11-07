@@ -1,4 +1,4 @@
-FROM ghcr.io/xtls/xray-core:26.10.29 AS xray
+FROM ghcr.io/xtls/xray-core:26.9.9 AS xray
 
 FROM python:3.12-slim
 COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray

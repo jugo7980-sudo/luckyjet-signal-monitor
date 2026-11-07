@@ -136,13 +136,13 @@ async def history(authorization, gate, token, query=''):
             return json_response('200 OK', {'view': view, 'stats': _demo_stats(ledger)})
         if view == 'max_step_day':
             return json_response('200 OK', {
-                'view': view, 'day': day, 'steps': ledger.daily_max_steps.get(day),
+                'view': view, 'day': day, 'steps': ledger.daily_max_low_streak.get(day),
             })
         if view == 'max_steps':
-            days = sorted(ledger.daily_max_steps, reverse=True)
+            days = sorted(ledger.daily_max_low_streak, reverse=True)
             return json_response('200 OK', {
                 'view': view, 'days': [
-                    {'day': key, 'steps': ledger.daily_max_steps[key]}
+                    {'day': key, 'steps': ledger.daily_max_low_streak[key]}
                     for key in days[page*10:page*10+10]],
                 'total': len(days), 'page': page,
             })

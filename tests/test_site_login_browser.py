@@ -261,6 +261,33 @@ def test_timeout_with_open_login_form_reports_unconfirmed_submission(caplog):
     assert 'private@example.test' not in caplog.text
 
 
+def test_login_timeout_logs_only_post_status_counts_without_request_data(caplog):
+    from site_account import LoginProblem
+    from site_login_browser import SiteLoginBrowser
+    html = """<form onsubmit="event.preventDefault();
+        fetch('/login-submit', {method:'POST', body:'private-request-body'})">
+        <input type="email"><input type="password"><button>Войти</button>
+    </form>"""
+
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=.5) as driver:
+            async def route(request):
+                if request.request.url.endswith('/login-submit'):
+                    await request.fulfill(status=503, body='private-error-response')
+                else:
+                    await request.fulfill(status=200, content_type='text/html', body=html)
+            await driver.context.route('**/*', route)
+            with pytest.raises(LoginProblem, match='Форма входа осталась открыта'):
+                await driver.login('owner@example.test', 'private-password', None)
+    asyncio.run(run())
+    assert 'post_observed=1' in caplog.text
+    assert 'post_5xx=1' in caplog.text
+    assert 'private-request-body' not in caplog.text
+    assert 'private-error-response' not in caplog.text
+    assert 'owner@example.test' not in caplog.text
+    assert 'private-password' not in caplog.text
+
+
 def test_login_opener_recovers_from_spa_click_timeout_when_dialog_already_open():
     from playwright.async_api import TimeoutError as BrowserTimeout
     from site_login_browser import SiteLoginBrowser

@@ -338,3 +338,61 @@ def test_remote_ip_check_requires_owner_and_active_proxy(monkeypatch):
         assert gate.site_account.store.load() is None
         assert gate.site_account.generation == 0
     asyncio.run(run())
+
+
+def test_happ_diagnostics_only_owner_may_run(monkeypatch):
+    from happ_probe import probe_happ_egress
+    import happ_probe
+
+    requests = []
+    async def fake_probe():
+        requests.append("run")
+        return {"cached": False, "nodes": [
+            {"node": "primary", "status": "ok", "ip": "1.1.1.1", "country": "JP"},
+            {"node": "fallback", "status": "egress_check_failed"},
+        ]}
+    monkeypatch.setattr(happ_probe, "probe_happ_egress", fake_probe)
+    gate = Gate()
+
+    async def call(uid, action):
+        return decoded(await remote_browser(
+            signed(uid), gate, "fixture", "POST",
+            json.dumps({"action": action}).encode(),
+        ))
+
+    async def run():
+        assert (await call(42, "check_happ"))[0] == "403 Forbidden"
+        assert not requests
+        status, data = await call(99, "check_happ")
+        assert status == "200 OK"
+        assert data["nodes"][0]["ip"] == "1.1.1.1"
+        assert requests == ["run"]
+        assert gate.site_account.store.load() is None
+        assert gate.site_account.generation == 0
+    asyncio.run(run())
+
+
+def test_happ_probe_is_cached_and_never_uses_main_xray_port(monkeypatch):
+    import happ_probe
+
+    assert happ_probe.PORT != 10808
+    calls = []
+    async def fake_node(name, uri):
+        calls.append((name, uri))
+        return {"node": name, "status": "ok", "ip": "1.1.1.1", "country": "JP"}
+
+    monkeypatch.setattr(happ_probe, "_probe_node", fake_node)
+    monkeypatch.setenv("HAPP_PRIMARY_URL", "private-primary-connection")
+    monkeypatch.setenv("HAPP_FALLBACK_URL", "private-fallback-connection")
+    monkeypatch.setattr(happ_probe, "_LAST", None)
+    monkeypatch.setattr(happ_probe, "_LAST_AT", 0.0)
+
+    async def run():
+        first = await happ_probe.probe_happ_egress()
+        second = await happ_probe.probe_happ_egress()
+        assert first["cached"] is False and second["cached"] is True
+        assert len(calls) == 2
+        assert first["nodes"][0]["ip"] == "1.1.1.1"
+        assert "private-primary-connection" not in json.dumps(first)
+        assert "private-fallback-connection" not in json.dumps(first)
+    asyncio.run(run())

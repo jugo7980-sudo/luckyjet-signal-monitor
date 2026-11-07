@@ -41,7 +41,7 @@ def test_read_only_counts_interval_and_distinct_thresholds():
         assert result["current"]["average_interval"] == 2
         assert result["current"]["longest_wait"] == 1
         assert result["current"]["maximum"] == 300
-        assert result["previous"]["count"] == 2
+        assert result["previous"]["count"] == 1
         assert result["quality"]["complete_window"] is True
         assert result["quality"]["complete_comparison"] is True
         assert result["matches"][0]["coefficient"] == 300

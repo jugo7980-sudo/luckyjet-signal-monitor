@@ -258,11 +258,12 @@ async function loadOverview(manual=false){
   if(premium&&data.status){const s=data.status;setText('monitor-state',s.age_seconds==null?'Нет данных':s.fresh?'Активен':'Нет свежих раундов');setText('monitor-last',s.last||'Нет данных');setText('monitor-age',s.age_seconds==null?'Неизвестно':s.age_seconds+' сек. назад');setText('monitor-threshold',(s.streak_count??0)+' из '+s.threshold);setText('monitor-uptime',fmtUptime(s.uptime_seconds))}
   if(premium&&data.status&&data.status.probe&&window.showDemoProbe){const key=JSON.stringify(data.status.probe);if(key!==lastProbeKey){window.showDemoProbe(data.status.probe);lastProbeKey=key}}
   if(premium&&data.demo&&demoEpoch===window.demoViewEpoch){
-    setText('demo-balance',money(data.demo.balance_cents,data.demo.currency));setText('demo-enabled',data.demo.enabled?'Включено':'Выключено');
+    setText('demo-balance',money(data.demo.balance_cents,data.demo.currency));setText('demo-enabled',(data.demo.enabled||data.demo.high_gap?.enabled)?'Включено':'Выключено');
     setText('demo-step',data.demo.active?'Шаг '+data.demo.step:'Ожидает запуска');
     setText('demo-stake',money(data.demo.base_stake_cents,data.demo.currency));setText('demo-trigger',data.demo.trigger+' подряд');
     document.getElementById('live-demo').hidden=false;document.getElementById('demo-placeholder').hidden=true;
     window.renderDemoBalance(data.demo);
+     window.renderHighGapSnapshot?.(data.demo.high_gap, data.demo.currency, data.demo.balance_verified);
   }
   document.getElementById('live-home').hidden=false;
   lastSuccessfulCheck=Date.now();

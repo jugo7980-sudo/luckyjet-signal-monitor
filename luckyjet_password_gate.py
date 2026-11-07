@@ -2308,7 +2308,10 @@ class TelegramPasswordGate(HistoryPanels):
         if panels is None:
             await self.update_private_histories()
         for user_id in list(self.authorized):
-            await self._handle_demo_round(user_id, value, round_id=round_id)
+            if round_id is None:
+                await self._handle_demo_round(user_id, value)
+            else:
+                await self._handle_demo_round(user_id, value, round_id=round_id)
             if panels is None:
                 await self._refresh_demo_panel(user_id)
         if panels is not None:

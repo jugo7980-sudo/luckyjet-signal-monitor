@@ -123,3 +123,34 @@ def test_reset_survives_pending_round_batch_save():
             gate.redis = None
             await gate.close()
     asyncio.run(run())
+
+
+def test_reset_persistence_failure_preserves_current_account():
+    from redis.exceptions import ConnectionError
+    async def run():
+        gate = ReliableTelegramPasswordGate(None)
+        gate.authorized.add(42); gate.redis = FakeRedis(decode_responses=True)
+        old = gate._demo_ledger(42).dump()
+        async def fail(*args): raise ConnectionError('fixture')
+        gate._demo_storage.save = fail
+        body = json.dumps({'action':'demo_reset','confirm':True,'value':{
+            'currency':'KRW','balance':'50000','stake':'100','revision':'legacy'}}).encode()
+        status,_,_ = await controls(signed(),gate,'fixture','POST',body)
+        assert status == '503 Service Unavailable'
+        assert gate._demo_ledger(42).dump() == old
+        await gate.redis.aclose(); gate.redis = None; await gate.close()
+    asyncio.run(run())
+
+
+def test_old_gap_before_reset_does_not_invalidate_new_account():
+    async def run():
+        gate = ReliableTelegramPasswordGate(None)
+        gate.authorized.add(42)
+        ledger = gate._demo_ledger(42)
+        ledger.enabled = True; ledger.demo_after_stream_id = '50-0'
+        await gate.on_history_gap(silent=True, stream_id='40-0')
+        assert ledger.balance_verified is True
+        await gate.on_history_gap(silent=True, stream_id='51-0')
+        assert ledger.balance_verified is False
+        await gate.close()
+    asyncio.run(run())

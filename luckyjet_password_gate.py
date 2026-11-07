@@ -2135,7 +2135,7 @@ class TelegramPasswordGate(HistoryPanels):
             await self._refresh_open_demo_history(user_id)
         return event
 
-    async def on_history_gap(self, *, silent=False):
+    async def on_history_gap(self, *, silent=False, stream_id=None):
         for user_id in list(self.authorized):
             lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
             async with lock:
@@ -2146,9 +2146,11 @@ class TelegramPasswordGate(HistoryPanels):
                 # series: reset tracking for both DEMO and always-on steps.
                 ledger.reset_max_step_progress()
                 ledger.low_streak = 0
-                if ledger.enabled:
+                before_reset = (stream_id is not None and ledger.demo_after_stream_id
+                                and ledger._stream_position(stream_id) <= ledger._stream_position(ledger.demo_after_stream_id))
+                if ledger.enabled and not before_reset:
                     ledger.balance_verified = False
-                entry = ledger.finish_active("incomplete_data") if ledger.enabled and ledger.active else None
+                entry = ledger.finish_active("incomplete_data") if ledger.enabled and ledger.active and not before_reset else None
                 await self._persist_demo(user_id)
             if entry is not None and not silent:
                 await self._send_demo_warning(

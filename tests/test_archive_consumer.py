@@ -35,7 +35,7 @@ class DemoGateFixture:
         if changed:
             await self.redis.hset("fixture:demo", "42", json.dumps(self.ledger.dump()))
 
-    async def on_history_gap(self, *, silent=False):
+    async def on_history_gap(self, *, silent=False, stream_id=None):
         self.history_gaps += 1
         self.ledger.reset_max_step_progress()
         if self.ledger.enabled:

@@ -101,6 +101,8 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={'width': 390, 'height': 844})
             errors, actions = [], []
+            pause_controls = {"active": False}
+            control_started, control_resume = asyncio.Event(), asyncio.Event()
             state = {
                 'demo': {'currency':'USD', 'reset_revision':'legacy', 'enabled': False, 'active': False, 'balance_cents': 1_000_000,
                          'base_stake_cents': 1000, 'trigger': 4, 'low_streak': 1,
@@ -150,6 +152,9 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
                             assert payload['confirm'] is True
                             state['settings'].update(notifications=True, sound=True, threshold=4,
                                                      history_size=20, delete_delay=10)
+                    if pause_controls['active']:
+                        control_started.set()
+                        await control_resume.wait()
                     await request.fulfill(content_type='application/json',
                                           body=json.dumps({'message': 'Сохранено.', **state}))
                 elif '/api/overview' in url:
@@ -180,6 +185,12 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             assert '₽' in await page.locator('#header-balance').inner_text()
             assert await page.locator('#demo-stake-input').input_value() == '25.50'
             await page.locator('#demo-reset').click()
+            await page.locator('#demo-reset-currency').select_option('KRW')
+            await page.locator('#demo-reset-balance').fill('1000.50')
+            await page.locator('#demo-reset-stake').fill('10')
+            assert await page.locator('#demo-reset-submit').is_disabled()
+            await page.locator('#demo-reset-balance').fill('1000')
+            assert await page.locator('#demo-reset-submit').is_enabled()
             await page.locator('#demo-reset-cancel').click()
             assert actions.count('demo_reset') == 1
 
@@ -199,6 +210,16 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
                 'notifications_toggle', 'sound_toggle', 'notification_threshold',
                 'history_size', 'delete_delay', 'settings_reset',
             ]
+            # A response from the previous identity must not repaint its money after logout.
+            pause_controls['active'] = True
+            await page.locator('#settings-sound').click()
+            await asyncio.wait_for(control_started.wait(), 3)
+            await page.evaluate("window.accessState={premium:false};window.canUsePremium=()=>false;window.clearControlsData();document.getElementById('header-balance').textContent='—'")
+            async with page.expect_response('**/api/controls'):
+                control_resume.set()
+            await page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            assert await page.locator('#header-balance').inner_text() == '—'
+            assert await page.locator('#demo-controls').is_hidden()
             assert not errors, errors
             await browser.close()
     asyncio.run(run())

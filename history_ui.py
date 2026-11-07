@@ -46,7 +46,7 @@ async def high_screen(stats, action):
         page=int(parts[1]); total=await r.zcard('luckyjet:coef:high:days'); pages=max(1,(total+9)//10); page=min(page,pages-1)
         days=await r.zrevrange('luckyjet:coef:high:days',page*10,page*10+9)
         rows=[[button(datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y'),f'hi_day:{day}:0')] for day in days]
-        text=f'{header}\n{page+1}/{pages} · Таиланд, UTC+7'
+        text=f'{header}\n{page+1}/{pages} · Владивосток, UTC+10'
         if not rows:text+='\nЗаписей пока нет.'
         rows+=pager(page,pages,lambda p:f'hi_days:{p}')
         rows+=[[button('📅 Дата','hi_date')]]+footer('coef_days:0')
@@ -61,7 +61,7 @@ async def high_screen(stats, action):
         when=datetime.fromtimestamp(item['stamp'],TZ).strftime('%H:%M')
         rows.append([button(f"{count} раундов · {when} · {item['value']}x",f'hi_case:{key}:{page}')])
     label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y')
-    text=f'{header}\n{label} · {page+1}/{pages} · Таиланд, UTC+7'
+    text=f'{header}\n{label} · {page+1}/{pages} · Владивосток, UTC+10'
     if not rows:text+='\nНет сохранённых записей.'
     rows+=pager(page,pages,lambda p:f'hi_day:{day}:{p}')
     rows+=[[button('📅 Дата','hi_date')]]+footer('hi_days:0')

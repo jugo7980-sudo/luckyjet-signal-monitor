@@ -321,6 +321,10 @@ async def history(authorization, gate, token, query=''):
         if cursor is None:
             legacy = await stats.summary(selected)
             result['integrity'] = await archive_day_evidence(redis, selected, legacy_total=legacy.get('total'))
+            aggregate, max_low_streak = await _after_reset_day(redis, selected, {'stream_id': '0-0'})
+            result['aggregate'] = aggregate
+            result['max_low_streak'] = max_low_streak
+            result['truncated'] = aggregate is None
         return json_response('200 OK', result)
 
     if view == 'days':

@@ -110,7 +110,9 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 assert await page.locator(".ind-summary-cards .ind-stat").count() == 12
                 assert await page.locator("#summary-help-toggle").count() == 1
                 assert await page.locator("#summary-preview-placeholder").is_hidden()
-                assert await page.locator("#summary-preview-results").is_visible()
+                # Preview is purposefully invisible while <details> is open; its
+                # values are ready for the compact header once the user closes it.
+                assert await page.locator("#summary-preview-results").evaluate("(n) => !n.hidden")
                 assert await page.locator(".ind-summary-cards").first.locator(".ind-stat:visible").count() == 4
                 assert await page.locator("#summary-extra-stats").is_hidden()
                 await page.locator("#summary-stats-toggle").click()
@@ -125,6 +127,7 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     "(n) => n.closest('#summary-accordion') !== null")
                 await page.locator("#summary-help-toggle").click()
                 await page.locator("#summary-accordion summary").click()
+                assert await page.locator("#summary-preview-results").is_visible()
                 await page.locator("#monitoring-accordion summary").click()
                 assert await page.locator("#monitoring-accordion").evaluate("(n) => n.open")
                 assert await page.locator("#monitor-state").count() == 1

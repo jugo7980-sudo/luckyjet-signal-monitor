@@ -133,7 +133,11 @@ async def run_monitor(monitor, config, *, state=None):
             if browser_lock is not None:
                 await browser_lock.acquire()
                 owns_browser_lock = True
-            browser = await p.chromium.launch(headless=config.headless)
+            launch_options = {"headless": config.headless}
+            proxy = getattr(monitor, "game_proxy", None)
+            if proxy:
+                launch_options["proxy"] = {"server": proxy}
+            browser = await p.chromium.launch(**launch_options)
             options = {"viewport": {"width": 430, "height": 932}, "locale": "ru-RU"}
             if account is not None:
                 saved_session = account.storage_state()

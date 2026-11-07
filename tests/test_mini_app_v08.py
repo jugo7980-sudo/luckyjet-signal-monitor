@@ -55,8 +55,9 @@ def test_v08_guest_layout_320_390_430_and_compact_tabs():
                     const gridBox=grid.getBoundingClientRect();
                     return {
                         columns:getComputedStyle(grid).gridTemplateColumns.split(' ').length,
-                        sameRow: tiles.slice(0,7).every(x=>Math.abs(x.top-tiles[0].top)<1),
-                        nextRow:tiles[7].top > tiles[0].top+5,
+                        sameRow: tiles.slice(0,5).every(x=>Math.abs(x.top-tiles[0].top)<1),
+                        nextRow:tiles[5].top > tiles[0].top+5,
+                        completeRows:tiles.length===20 && tiles.slice(15).every(x=>Math.abs(x.top-tiles[15].top)<1),
                         refreshWidth:refresh.width,gridWidth:gridBox.width,refreshHeight:refresh.height,
                         refreshLabel:document.querySelector('#refresh-data .refresh-caption').textContent,
                         headerPosition:getComputedStyle(header).position,
@@ -66,8 +67,8 @@ def test_v08_guest_layout_320_390_430_and_compact_tabs():
                         tileHeight:tiles[0].height,
                     };
                 }""")
-                assert layout["columns"] == 7, layout
-                assert layout["sameRow"] and layout["nextRow"], layout
+                assert layout["columns"] == 5, layout
+                assert layout["sameRow"] and layout["nextRow"] and layout["completeRows"], layout
                 assert abs(layout["refreshWidth"] - layout["gridWidth"]) <= 2, layout
                 assert layout["refreshHeight"] >= 44, layout
                 assert layout["refreshLabel"] == "Обновить"
@@ -92,10 +93,24 @@ def test_v08_guest_layout_320_390_430_and_compact_tabs():
                     assert float(dimensions["lockPadding"].replace("px", "")) <= 20
                     assert float(dimensions["navMinHeight"].replace("px", "")) <= 54
                 await page.locator('nav [data-tab="home"]').click()
-                await page.locator("#recent-limit").select_option("100")
-                await page.wait_for_function("document.querySelectorAll('#coef-grid .coef').length === 100")
-                assert await page.evaluate("getComputedStyle(document.querySelector('#coef-grid')).gridTemplateColumns.split(' ').length") == 7
-                assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                for limit in (30, 50, 100):
+                    await page.locator("#recent-limit").select_option(str(limit))
+                    await page.wait_for_function(f"document.querySelectorAll('#coef-grid .coef').length === {limit}")
+                    grid_state = await page.evaluate("""() => {
+                        const grid = document.querySelector('#coef-grid');
+                        const tiles = [...grid.children].map(e => e.getBoundingClientRect());
+                        return {
+                            columns: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+                            rows: new Set(tiles.map(e => Math.round(e.top))).size,
+                            count: tiles.length,
+                            fullLastRow: tiles.slice(-5).every(e => Math.abs(e.top - tiles[tiles.length-1].top) < 1),
+                            noOverflow: document.documentElement.scrollWidth <= innerWidth
+                        };
+                    }""")
+                    assert grid_state == {
+                        "columns": 5, "rows": limit // 5, "count": limit,
+                        "fullLastRow": True, "noOverflow": True
+                    }, grid_state
                 assert not errors, errors
                 await page.close()
             await browser.close()

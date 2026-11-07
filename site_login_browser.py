@@ -166,6 +166,16 @@ class SiteLoginBrowser:
             await button.click()
         except BrowserTimeout as exc:
             detail = str(exc).lower()
+            opening = action == 'открытия входа'
+            # A SPA can open the dialog and still leave Playwright waiting for a
+            # navigation/actionability check. Do not mistake that for a failed click.
+            if opening:
+                try:
+                    if await self._field('email') is not None or await self._field('password') is not None:
+                        return
+                except BrowserError:
+                    pass
+            reason = 'причина пока не определена'
             if 'intercepts pointer events' in detail:
                 reason = 'кнопку перекрывает другой элемент'
             elif 'not enabled' in detail or 'element is disabled' in detail:
@@ -176,22 +186,49 @@ class SiteLoginBrowser:
                 reason = 'кнопка скрыта'
             elif 'detached' in detail or 'not attached' in detail:
                 reason = 'элемент удалён при обновлении страницы'
-            else:
-                reason = 'причина пока не определена'
+
+            # An ordinary pointer click can time out on animated SPA headers.
+            # Only for OPENING the login form (never submitting secrets), try a
+            # DOM click if hit testing proves the button is genuinely on top.
+            # Do not click through overlays, challenges or disabled controls.
+            if opening and reason == 'причина пока не определена':
                 try:
-                    covered = await button.evaluate("""el => {
+                    hit = await button.evaluate("""el => {
                         const rect = el.getBoundingClientRect();
-                        const top = document.elementFromPoint(
-                            rect.x + rect.width / 2, rect.y + rect.height / 2);
-                        return rect.width > 0 && rect.height > 0 && top && !el.contains(top);
-                    }""", timeout=1000)
+                        const x = rect.x + rect.width / 2;
+                        const y = rect.y + rect.height / 2;
+                        const top = document.elementFromPoint(x, y);
+                        return {
+                            visible: rect.width > 0 && rect.height > 0 &&
+                                     x >= 0 && y >= 0 &&
+                                     x < innerWidth && y < innerHeight,
+                            uncovered: !!top && (top === el || el.contains(top)),
+                            enabled: !el.matches(':disabled, [aria-disabled="true"]') &&
+                                     getComputedStyle(el).pointerEvents !== 'none'
+                        };
+                    }""", timeout=1500)
+                    if hit and hit.get('visible') and hit.get('uncovered') and hit.get('enabled'):
+                        self._check_origin()
+                        if not await self._challenge():
+                            await button.dispatch_event('click', timeout=1500)
+                            logging.getLogger('luckyjet.site_login_browser').info(
+                                'Login opener recovered with verified DOM click'
+                            )
+                            return
+                    elif hit and hit.get('visible') and not hit.get('uncovered'):
+                        reason = 'кнопку перекрывает другой элемент'
+                    elif hit and not hit.get('enabled'):
+                        reason = 'кнопка отключена'
+                    else:
+                        reason = 'кнопка вне доступной области'
                 except BrowserError:
-                    covered = False
-                if covered:
-                    reason = 'кнопку перекрывает другой элемент'
-            problem = LoginProblem(f'Сайт не дал нажать кнопку {action}. Диагностика: {reason}. '
-                                   'Бот отправит снимок страницы для проверки.')
-            if action == 'открытия входа':
+                    reason = 'элемент изменился во время нажатия'
+
+            problem = LoginProblem(
+                f'Сайт не дал нажать кнопку {action}. Диагностика: {reason}. '
+                'Снимок страницы будет отправлен в Telegram, если доступен.'
+            )
+            if opening:
                 try:
                     problem.page_screenshot = await self.page.screenshot(type='png')
                 except BrowserError:

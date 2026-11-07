@@ -170,6 +170,40 @@ class CoefficientStats:
         if values:
             await self.redis.zadd('luckyjet:coef:days',values,nx=True)
 
+        # Keep existing keys created before the no-expiry policy. Without
+        # this one-time migration old daily snapshots and seen-round IDs
+        # would still expire at their originally scheduled TTL.
+        if hasattr(self.redis, 'scan_iter'):
+            await self._preserve_legacy_retention()
+
+    async def _preserve_legacy_retention(self):
+        marker = 'luckyjet:coef:retention-upgraded-v1'
+        if await self.redis.exists(marker):
+            return
+        pipe = self.redis.pipeline()
+        batched = 0
+        async for key in self.redis.scan_iter(match='luckyjet:coef:seen:*', count=500):
+            pipe.persist(key)
+            batched += 1
+            if batched >= 500:
+                await pipe.execute()
+                pipe = self.redis.pipeline()
+                batched = 0
+        days = await self.redis.zrange('luckyjet:coef:days', 0, -1)
+        for day in days:
+            if isinstance(day, bytes):
+                day = day.decode('utf-8')
+            pipe.persist('luckyjet:coef:' + str(day))
+            batched += 1
+            if batched >= 500:
+                await pipe.execute()
+                pipe = self.redis.pipeline()
+                batched = 0
+        if batched:
+            await pipe.execute()
+        await self.redis.set(marker, '1')
+
+
     async def days(self, page=0):
         if self.redis is None:
             return [], 0

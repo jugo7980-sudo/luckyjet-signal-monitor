@@ -8,6 +8,7 @@ from datetime import datetime
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
+from archive_integrity import archive_day_evidence
 from mini_app_api import json_response, telegram_user
 from luckyjet_signal.demo_ledger import DemoLedger, DEFAULT_BALANCE_CENTS, MAX_HISTORY
 
@@ -166,7 +167,13 @@ async def history(authorization, gate, token, query=''):
         days, total = await stats.days(page)
         return json_response('200 OK', {'view': view, 'days': days, 'page': page, 'total': total})
     if view == 'day':
-        return json_response('200 OK', {'view': view, 'day': day, 'summary': await stats.summary(day)})
+        summary = await stats.summary(day)
+        evidence = await archive_day_evidence(
+            redis, day, legacy_total=summary.get('total'),
+        )
+        return json_response('200 OK', {
+            'view': view, 'day': day, 'summary': summary, 'integrity': evidence,
+        })
 
     if view == 'high_days':
         total = await redis.zcard('luckyjet:coef:high:days')

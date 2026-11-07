@@ -466,6 +466,9 @@ async def health_server(gate=None, bot_token=None) -> None:
                     elif path == '/api/history':
                         from mini_app_history import history
                         status, content_type, body = await history(auth_header, gate, bot_token, query)
+                    elif path == '/api/round-summary':
+                        from independent_round_summary import summary
+                        status, content_type, body = await summary(auth_header, gate, bot_token, query)
                     elif path in {'/api/controls', '/api/admin', '/api/site', '/api/access', '/api/browser'}:
                         payload = None
                         if line[0] == 'POST':

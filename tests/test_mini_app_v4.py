@@ -63,7 +63,10 @@ def test_maximum_step_can_be_selected_per_day_without_leaking_another_account():
     async def run():
         gate = ReliableTelegramPasswordGate(None)
         gate.authorized.update({42, 43})
-        gate.demo_ledgers[42] = DemoLedger(daily_max_steps={'2026-11-05': 9, '2026-11-06': 5})
+        gate.demo_ledgers[42] = DemoLedger(
+            daily_max_low_streak={'2026-11-05': 9, '2026-11-06': 5},
+            daily_max_steps={'2026-11-05': 99},
+        )
         code, data = decode(await history(signed(), gate, 'fixture', 'view=max_step_day&day=2026-11-05'))
         assert code == '200 OK' and data['steps'] == 9
         _, missing = decode(await history(signed(43), gate, 'fixture', 'view=max_step_day&day=2026-11-05'))

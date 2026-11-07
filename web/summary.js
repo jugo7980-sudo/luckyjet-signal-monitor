@@ -57,9 +57,10 @@
     const root = byId('ind-summary-matches');
     root.replaceChildren();
     if (!items.length) {
+      setText('ind-summary-match-total', '0');
       const empty = document.createElement('p');
       empty.className = 'history-note';
-      empty.textContent = 'В выбранном периоде совпадений нет.';
+      empty.textContent = 'За выбранное количество раундов искомый коэффициент не встретился.';
       root.appendChild(empty);
       return;
     }
@@ -94,6 +95,8 @@
     const quality = data.quality || {};
     const curr = data.current || {}, prev = data.previous || {};
     setText('summary-heading', 'Сводка архива · ' + data.rounds_requested + ' раундов');
+    setText('ind-summary-context', 'Результат: ' + data.rounds_available + ' сохранённых раундов · искомый ≥ ' + data.target + 'x · отсчёт ≥ ' + data.since_threshold + 'x');
+    setText('ind-summary-match-total', String(curr.count ?? 0));
     setText('summary-preview-count', curr.count);
     setText('summary-preview-since', countText(data.rounds_since_since));
     setText('ind-found', curr.count);
@@ -106,10 +109,41 @@
     setText('ind-average', coefText(curr.average));
     setText('ind-maximum', coefText(curr.maximum));
     setText('ind-below-two', curr.below_two);
-    setText('ind-previous-count', prev.count);
+    setText('ind-previous-count', quality.complete_comparison ? prev.count : null);
     setText('ind-compare', quality.complete_comparison
       ? (curr.count - prev.count > 0 ? '+' : '') + (curr.count - prev.count) : '—');
     renderMatches(data.matches || [], data.match_rows_limited);
+    for (const id of ['ind-average-interval', 'ind-min-interval', 'ind-max-interval']) {
+      const metric = byId(id);
+      const missing = metric.textContent === '—';
+      metric.closest('.ind-stat')?.setAttribute('data-missing', String(missing));
+      const hint = byId(id + '-hint');
+      if (hint) hint.textContent = missing
+        ? (curr.count ?? 0) < 2
+          ? 'Нужно хотя бы 2 совпадения без разрыва архива.'
+          : 'Промежуток между X не подтверждён из-за отсутствующих данных.'
+        : id === 'ind-average-interval' ? 'Среднее число раундов между найденными X.'
+        : id === 'ind-min-interval' ? 'Самый короткий подтверждённый промежуток между X.'
+        : 'Самый длинный подтверждённый промежуток между X.';
+    }
+    const previousHint = byId('ind-previous-count-hint');
+    if (previousHint) previousHint.textContent = quality.complete_comparison
+      ? 'Число искомых X в предшествующих ' + data.rounds_requested + ' раундах.'
+      : 'Для сравнения недостаточно данных предыдущего периода.';
+    const differenceHint = byId('ind-compare-hint');
+    if (differenceHint) differenceHint.textContent = quality.complete_comparison
+      ? 'Сколько искомых X стало больше (+) или меньше (−).'
+      : 'Показатель появится, когда будут доступны два полных периода.';
+    const sinceHint = byId('ind-since-count-hint');
+    if (sinceHint && data.rounds_since_since == null) sinceHint.textContent =
+      'Последний выбранный X не подтверждён в доступной истории.';
+    const targetHint = byId('ind-target-count-hint');
+    if (targetHint && data.rounds_since_target == null) targetHint.textContent =
+      'Последний искомый X не подтверждён в доступной истории.';
+    for (const card of document.querySelectorAll('.ind-stat')) {
+      const value = card.querySelector('strong');
+      if (value) card.setAttribute('data-missing', String(value.textContent === '—'));
+    }
 
     status.className = 'connection ' + (quality.complete_window ? 'ind-summary-good' : 'ind-summary-warning');
     if (quality.window_has_discontinuities || quality.comparison_has_discontinuities) {
@@ -143,6 +177,7 @@
     lastLoadedAt = Date.now();
     button.disabled = true;
     status.textContent = 'Проверяем фактический архив…';
+    setText('ind-summary-context', 'Загружаем данные: ' + rounds + ' раундов, ищем от ' + target + 'x.');
     controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     try {

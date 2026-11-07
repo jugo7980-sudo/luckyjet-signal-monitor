@@ -302,6 +302,7 @@ class DemoLedger:
         enabled = self.enabled
         trigger = self.trigger_streak
         old_currency = self.currency
+        high_was_enabled = self.high_gap.enabled
         high_settings = self.high_gap.dump()
         # Preserve every available pre-reset cycle, including any that was
         # open at the moment of reset. The saved current journal still clears.
@@ -315,6 +316,8 @@ class DemoLedger:
                 self.high_history.insert(0, closed)
                 self.high_history = self.high_history[:MAX_HISTORY]
         pending = self.pending_archive_cycles + self.history + self.high_history
+        # Reset never silently changes the user's on/off preference.
+        high_settings["enabled"] = high_was_enabled
         high_settings["phase"] = "waiting_reference"
         high_settings["reference_id"] = ""
         high_settings["reference_value"] = ""

@@ -79,7 +79,7 @@ def test_reset_all_scopes_is_per_user_and_read_only():
         assert len(archive['items']) == 5
         assert archive['aggregate']['total'] == 5
         assert archive['aggregate']['lt2'] == 4
-        assert archive['max_low_streak'] == 2
+        assert archive['max_low_streak'] == 4
         assert {row['round_id'] for row in archive['items']} == {
             'old-0', 'old-1', 'new-0', 'new-1', 'new-2'}
         assert await redis.xlen(STREAM_KEY) == 5

@@ -46,6 +46,7 @@ def test_personal_restart_stops_only_own_demo_and_preserves_balances_histories_a
         gate.chats.update({22: 22, 44: 44})
         gate.notifications_disabled.add(22)
         gate.history_hidden.add(22)
+        gate.thresholds[22] = 8
 
         first = gate._demo_ledger(22)
         first.enabled = True

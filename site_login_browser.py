@@ -338,10 +338,23 @@ class SiteLoginBrowser:
             email_visible and password_visible, code_visible, error_visible, after_code,
         )
         if email_visible and password_visible:
-            raise LoginProblem(
+            problem = LoginProblem(
                 'Форма входа осталась открыта. Сайт не подтвердил авторизацию '
                 'после отправки данных. Проверь сообщение под формой.'
             )
+            # Screenshot is sent to the verified owner only. Conceal credentials,
+            # OTP, and other input values; never save HTML or form contents.
+            try:
+                problem.page_screenshot = await self.page.screenshot(
+                    type='png',
+                    mask=[self.page.locator('input, textarea, [contenteditable="true"]')],
+                    mask_color='#202020',
+                    timeout=3000,
+                )
+                problem.page_screenshot_stage = 'after_submission'
+            except BrowserError:
+                problem.page_screenshot = None
+            raise problem
         raise LoginProblem(
             'Форма входа изменилась, но вход не подтверждён сайтом. '
             'Нужна проверка интерфейса сайта.'

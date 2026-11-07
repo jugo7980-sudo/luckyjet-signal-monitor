@@ -77,6 +77,17 @@ class WebLoginFlow:
             log.warning('Mini App site sign-in failed: LoginProblem')
             self.phase = 'error'
             self.error = str(exc)
+            screenshot = getattr(exc, 'page_screenshot', None)
+            if screenshot:
+                try:
+                    await self.account.request('sendPhoto', {
+                        'chat_id': self.account.owner_id,
+                        'photo_file': ('login-page.png', screenshot, 'image/png'),
+                        'caption': 'Состояние страницы до ввода логина и пароля',
+                        'protect_content': True,
+                    })
+                except Exception:
+                    log.warning('Could not deliver login screenshot to owner')
         except Exception as exc:
             # Do not format exception messages: they can include site/credential data.
             log.warning('Mini App site sign-in failed: %s', type(exc).__name__)

@@ -217,7 +217,10 @@ async def _main_async() -> None:
         password_gate.admin_chat_id,
         telegram_request,
         SessionStore(os.getenv("SITE_SESSION_PATH", "data/site-auth/session.json"), login_url),
-        lambda: SiteLoginBrowser(login_url, headless=config.headless),
+        lambda: SiteLoginBrowser(
+            login_url, headless=config.headless,
+            proxy_url=monitor.game_proxy, expected_country='JP',
+        ),
         monitor.browser_lock,
     )
     password_gate.site_account = site_account

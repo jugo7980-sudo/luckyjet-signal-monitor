@@ -24,8 +24,15 @@ def decoded(response):
 class FakeMouse:
     def __init__(self):
         self.clicks = []
+        self.events = []
     async def click(self, x, y):
         self.clicks.append((x, y))
+    async def move(self, x, y):
+        self.events.append(("move", x, y))
+    async def down(self):
+        self.events.append(("down",))
+    async def up(self):
+        self.events.append(("up",))
     async def wheel(self, x, y):
         return None
 
@@ -142,6 +149,19 @@ def test_remote_owner_access_and_manual_actions_are_not_public():
         assert gate.site_account.last_driver.page.masked
         assert (await call(action="tap", x=.5, y=.5))[0] == "200 OK"
         assert gate.site_account.last_driver.page.mouse.clicks[-1] == (215, 466)
+        assert (await call(action="drag", points=[[.1, .8], [.3, .8], [.7, .8]],
+                           duration_ms=300))[0] == "200 OK"
+        events = gate.site_account.last_driver.page.mouse.events
+        assert events[0] == ("move", 43, 745.6)
+        assert events[1] == ("down",)
+        assert events[-1] == ("up",)
+        assert events[-2] == ("move", 301, 745.6)
+        assert (await call(action="drag", points=[[.1, .8], [1.3, .8]],
+                           duration_ms=300))[0] == "400 Bad Request"
+        assert (await call(action="drag", points=[[.1, .8], [.3, .8]],
+                           duration_ms=50000))[0] == "400 Bad Request"
+        assert (await call(action="drag", points=[[.1, .8], [.101, .8]],
+                           duration_ms=300))[0] == "400 Bad Request"
         assert (await call(action="fill_email", text="example@test.example"))[0] == "200 OK"
         assert (await call(action="fill_password", text="different-private-password"))[0] == "200 OK"
         assert gate.site_account.last_driver.fields["email"].value == "example@test.example"

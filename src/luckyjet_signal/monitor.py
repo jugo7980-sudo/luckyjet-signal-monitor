@@ -671,6 +671,20 @@ def extract_rounds_from_payload(
                     or node.get("hash")
                 )
 
+                # One-time metadata discovery. Log field *names only*,
+                # never request values, account identifiers, credentials,
+                # cookies or private game session headers.
+                if (rid and os.getenv("HISTORY_FIELD_DIAGNOSTICS") == "1"
+                        and not globals().get("_completed_history_keys_logged", False)):
+                    globals()["_completed_history_keys_logged"] = True
+                    safe_names = [
+                        str(key)[:45]
+                        for key in node.keys()
+                        if isinstance(key, str) and len(key) < 60
+                    ][:45]
+                    log.info("Completed-round source field names only: %s",
+                             sorted(safe_names))
+
                 found.append(
                     {
                         "id": (

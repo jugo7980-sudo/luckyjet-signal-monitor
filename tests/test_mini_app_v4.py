@@ -301,6 +301,6 @@ def test_web_login_flow_delivers_precredential_screenshot_only_to_owner():
         assert flow.phase == 'error'
         assert len(calls) == 1 and calls[0][0] == 'sendPhoto'
         assert calls[0][1]['chat_id'] == 42
-        assert calls[0][1]['protect_content'] is True
+        assert 'protect_content' not in calls[0][1]
         assert 'never-store-this' not in str(calls)
     asyncio.run(run())

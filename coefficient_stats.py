@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
-TZ = ZoneInfo('Asia/Bangkok')
+TZ = ZoneInfo('Asia/Vladivostok')
 THRESHOLDS = (2, 5, 10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000)
 UNDER2_FIX_DAY = '2026-11-03'
 UNDER2_FIX_MARKER = 'luckyjet:coef:lt2-single-count-fixed-v1'

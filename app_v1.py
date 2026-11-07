@@ -276,6 +276,13 @@ async def _main_async() -> None:
         # Resume existing data and last confirmed cursor without a reset.
         restored = await monitor.load_state(config)
         state.__dict__.update(restored.__dict__)
+        prior_id = str(state.last_round_id or "")
+        archived_match = bool(prior_id and await redis.hexists("luckyjet:archive:v1:seen", prior_id))
+        archived_latest = await redis.get("luckyjet:archive:v1:last_id")
+        log.info(
+            "Archive migration preflight: legacy_cursor_present=%s cursor_in_archive=%s archive_has_last=%s",
+            bool(prior_id), archived_match, bool(archived_latest),
+        )
         panel.history = [base.format_history_coefficient(value) for value in state.previous][:panel.limit]
         seed_private_streak(password_gate, state.previous)
         async with asyncio.TaskGroup() as owned:

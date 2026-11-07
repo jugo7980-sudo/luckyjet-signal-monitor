@@ -2118,13 +2118,13 @@ class TelegramPasswordGate(HistoryPanels):
         if chat_id is not None:
             await self._send_transient(user_id, chat_id, text, markup)
 
-    async def _handle_demo_round(self, user_id, coefficient, *, round_id=None):
+    async def _handle_demo_round(self, user_id, coefficient, *, round_id=None, stream_id=None, now=None, silent=False):
         lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
         async with lock:
             # Keep the maximum-step series even when DEMO is switched off.
             ledger = self._demo_ledger(user_id)
             if round_id is not None:
-                event, changed = ledger.process_archived_round(round_id, coefficient)
+                event, changed = ledger.process_archived_round(round_id, coefficient, now=now, stream_id=stream_id)
                 if not changed:
                     return None
             else:
@@ -2132,8 +2132,8 @@ class TelegramPasswordGate(HistoryPanels):
                     return None
                 event = ledger.process_round(coefficient) if ledger.enabled else None
             await self._persist_demo(user_id)
-        if not event:
-            return None
+        if not event or silent:
+            return event
         if event.get("type") == "insufficient_balance" and event.get("entry"):
             entry = event["entry"]
             net = int(entry.get("net_cents", 0) or 0)
@@ -2150,7 +2150,7 @@ class TelegramPasswordGate(HistoryPanels):
             await self._refresh_open_demo_history(user_id)
         return event
 
-    async def on_history_gap(self):
+    async def on_history_gap(self, *, silent=False):
         for user_id in list(self.authorized):
             lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
             async with lock:
@@ -2165,7 +2165,7 @@ class TelegramPasswordGate(HistoryPanels):
                     ledger.balance_verified = False
                 entry = ledger.finish_active("incomplete_data") if ledger.enabled and ledger.active else None
                 await self._persist_demo(user_id)
-            if entry is not None:
+            if entry is not None and not silent:
                 await self._send_demo_warning(
                     user_id,
                     "⚠️ DEMO-сессия остановлена\n"
@@ -2278,7 +2278,7 @@ class TelegramPasswordGate(HistoryPanels):
             if deadline:
                 self._start_streak_deletion(user_id, message_id, deadline)
 
-    async def on_round(self, coefficient, *, round_id=None):
+    async def on_round(self, coefficient, *, round_id=None, stream_id=None, now=None, silent=False):
         value = self._format_coefficient(coefficient)
         if value is None:
             return
@@ -2289,32 +2289,35 @@ class TelegramPasswordGate(HistoryPanels):
         if number < 2:
             self.current_streak.append(value)
             notices = getattr(self, "notification_queue", None)
-            if notices is not None:
+            if notices is not None and not silent:
                 await notices.submit(self.authorized - self.notifications_disabled, self.current_streak)
-            else:
+            elif not silent:
                 for user_id in list(self.authorized):
                     await self._update_streak_notice(user_id)
         else:
             notices = getattr(self, "notification_queue", None)
-            if notices is not None:
+            if notices is not None and not silent:
                 await notices.submit(self.authorized - self.notifications_disabled, self.current_streak, ending=value)
-            else:
+            elif not silent:
                 for user_id in list(self.active_messages):
                     if user_id in self.authorized:
                         await self._update_streak_notice(user_id, ending=value)
             self.current_streak = []
 
         panels = getattr(self, "live_panels", None)
-        if panels is None:
+        if panels is None and not silent:
             await self.update_private_histories()
         for user_id in list(self.authorized):
             if round_id is None:
                 await self._handle_demo_round(user_id, value)
             else:
-                await self._handle_demo_round(user_id, value, round_id=round_id)
-            if panels is None:
+                await self._handle_demo_round(
+                    user_id, value, round_id=round_id, stream_id=stream_id,
+                    now=now, silent=silent,
+                )
+            if panels is None and not silent:
                 await self._refresh_demo_panel(user_id)
-        if panels is not None:
+        if panels is not None and not silent:
             panels.request()
 
     async def _schedule_delete(self, chat_id, message_id, delay):

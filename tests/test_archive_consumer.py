@@ -29,13 +29,13 @@ class DemoGateFixture:
         self.ready_event = asyncio.Event()
         self.ready_event.set()
 
-    async def on_round(self, coefficient, *, round_id=None):
+    async def on_round(self, coefficient, *, round_id=None, stream_id=None, now=None, silent=False):
         assert round_id is not None
-        _, changed = self.ledger.process_archived_round(round_id, coefficient)
+        _, changed = self.ledger.process_archived_round(round_id, coefficient, stream_id=stream_id, now=now)
         if changed:
             await self.redis.hset("fixture:demo", "42", json.dumps(self.ledger.dump()))
 
-    async def on_history_gap(self):
+    async def on_history_gap(self, *, silent=False):
         self.history_gaps += 1
         self.ledger.reset_max_step_progress()
         if self.ledger.enabled:
@@ -132,3 +132,65 @@ def test_demo_reset_preserves_archived_cursor_but_resets_unverified_flag():
     ledger.reset()
     assert ledger.balance_verified is True
     assert ledger.last_archived_round_id == "123"
+
+
+def test_dedupe_skips_older_stream_positions_after_multi_round_replay():
+    ledger = DemoLedger(enabled=True, trigger_streak=2)
+    for stream_id, rid in [("100-0", "10"), ("101-0", "11"), ("102-0", "12")]:
+        _, changed = ledger.process_archived_round(rid, "1.25x", stream_id=stream_id)
+        assert changed
+    assert ledger.active
+    original = ledger.dump()
+    # Rewinding the consumer by several events cannot charge a stake twice.
+    resumed = DemoLedger(**original)
+    for stream_id, rid in [("100-0", "10"), ("101-0", "11"), ("102-0", "12")]:
+        event, changed = resumed.process_archived_round(
+            rid, "1.25x", stream_id=stream_id
+        )
+        assert not changed and event is None
+    assert resumed.dump() == original
+    event, changed = resumed.process_archived_round("13", "1.25x", stream_id="103-0")
+    assert changed
+    assert resumed.last_archived_stream_id == "103-0"
+    assert resumed.balance_cents < original["balance_cents"]
+
+
+def test_silent_archive_replay_preserves_balance_and_source_time():
+    async def run():
+        redis = FakeRedis(decode_responses=True)
+        archive = RoundArchive(redis, "primary")
+        gate = DemoGateFixture(redis, enabled=True, trigger_streak=2)
+        state = State(last_round_id="1", previous=[1.25])
+        panel = SimpleNamespace(history=["1.25x"], limit=20)
+        await archive.append_snapshot(snapshot(3, 2, 1), observed_at_ms=1000)
+        latest = await redis.xrange(STREAM_KEY)
+        for event_id, fields in latest:
+            if fields.get("round_id") in {"2", "3"}:
+                await process_archive_event(
+                    redis, gate, state, panel, event_id, fields, silent=True,
+                )
+        assert gate.ledger.last_archived_stream_id == latest[-1][0]
+        assert gate.ledger.balance_cents == DEFAULT_BALANCE_CENTS
+        # The archived time, not the server's restart time, selects the day.
+        assert "1970-01-01" in gate.ledger.daily_max_low_streak
+        await redis.aclose()
+    asyncio.run(run())
+
+
+def test_replayed_demo_cycles_preserve_archived_dates():
+    from datetime import datetime, timezone
+
+    ledger = DemoLedger(enabled=True, trigger_streak=2)
+    times = [
+        datetime(2026, 11, 7, 13, 58, tzinfo=timezone.utc),
+        datetime(2026, 11, 7, 13, 59, tzinfo=timezone.utc),
+        datetime(2026, 11, 7, 14, 1, tzinfo=timezone.utc),
+    ]
+    for idx, multiplier in enumerate(("1.15x", "1.22x", "2.50x"), 1):
+        ledger.process_archived_round(
+            str(idx), multiplier, stream_id=f"{idx}-0", now=times[idx - 1],
+        )
+    assert ledger.history[0]["started_at"] == times[1].isoformat()
+    assert ledger.history[0]["ended_at"] == times[2].isoformat()
+    assert ledger.balance_verified
+    assert ledger.balance_cents == DEFAULT_BALANCE_CENTS + 1000

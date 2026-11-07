@@ -64,6 +64,7 @@ class DemoLedger:
         }
         self.consecutive_below_two = max(0, self._int(state.get("consecutive_below_two", 0), 0))
         self.last_archived_round_id = str(state.get("last_archived_round_id") or "")
+        self.last_archived_stream_id = str(state.get("last_archived_stream_id") or "")
         self.balance_verified = bool(state.get("balance_verified", True))
         self.backfill_daily_steps()
         self.history = self.history[:MAX_HISTORY]
@@ -124,6 +125,7 @@ class DemoLedger:
             "daily_max_low_streak": self.daily_max_low_streak,
             "consecutive_below_two": self.consecutive_below_two,
             "last_archived_round_id": self.last_archived_round_id,
+            "last_archived_stream_id": self.last_archived_stream_id,
             "balance_verified": self.balance_verified,
         }
 
@@ -153,22 +155,37 @@ class DemoLedger:
         )
         return True
 
-    def process_archived_round(self, round_id, coefficient, *, now=None):
-        """Apply an archived round to DEMO at most once per source ID.
+    @staticmethod
+    def _stream_position(stream_id):
+        parts = str(stream_id or "").split("-")
+        if len(parts) != 2 or not all(part.isdecimal() for part in parts):
+            raise ValueError("Invalid archive stream sequence number")
+        return tuple(int(part) for part in parts)
 
-        The caller must persist this ledger snapshot before acknowledging the
-        archive consumer cursor. A crash after persistence can safely replay
-        the same round without applying a stake twice.
+    def process_archived_round(self, round_id, coefficient, *, now=None, stream_id=None):
+        """Idempotent DEMO processing across crashes and replay cursor rewinds.
+
+        The stream position is monotonic. Reject *any* earlier event, not just
+        the same last source round, before calculating another simulated bet.
         """
         identifier = str(round_id or "").strip()
         if not identifier:
             raise ValueError("Archived DEMO processing requires a source round ID")
+        position = None
+        if stream_id is not None:
+            position = self._stream_position(stream_id)
+            if self.last_archived_stream_id:
+                previous = self._stream_position(self.last_archived_stream_id)
+                if position <= previous:
+                    return None, False
         if identifier == self.last_archived_round_id:
             return None, False
         if not self.track_max_step(coefficient, now=now):
             return None, False
         event = self.process_round(coefficient, now=now) if self.enabled else None
         self.last_archived_round_id = identifier
+        if position is not None:
+            self.last_archived_stream_id = str(stream_id)
         return event, True
 
     def reset_max_step_progress(self):
@@ -229,6 +246,7 @@ class DemoLedger:
         streak_maxima = self.daily_max_low_streak.copy()
         ongoing_streak = self.consecutive_below_two
         last_round_id = self.last_archived_round_id
+        last_stream_id = self.last_archived_stream_id
         enabled = self.enabled
         trigger = self.trigger_streak
         self.__init__(
@@ -238,6 +256,7 @@ class DemoLedger:
             daily_max_low_streak=streak_maxima,
             consecutive_below_two=ongoing_streak,
             last_archived_round_id=last_round_id,
+            last_archived_stream_id=last_stream_id,
             balance_verified=True,
         )
 
@@ -248,6 +267,7 @@ class DemoLedger:
         payout_cents: int | None = 0,
         coefficient=None,
         financial_complete: bool = True,
+        now=None,
     ):
         net_cents = (
             self.balance_cents - self.cycle_start_balance_cents
@@ -256,7 +276,7 @@ class DemoLedger:
         )
         entry = {
             "started_at": self.cycle_started_at,
-            "ended_at": datetime.now(timezone.utc).isoformat(),
+            "ended_at": (now or datetime.now(timezone.utc)).isoformat(),
             "rounds": self.cycle_rounds[:],
             "base_stake_cents": self.base_stake_cents,
             "balance_before_cents": self.cycle_start_balance_cents,
@@ -291,8 +311,8 @@ class DemoLedger:
             )
         return self._finish_cycle(outcome=outcome)
 
-    def _finish_insufficient(self, needed_cents: int, *, lost_stake_cents=None):
-        entry = self._finish_cycle(outcome="insufficient_balance")
+    def _finish_insufficient(self, needed_cents: int, *, lost_stake_cents=None, now=None):
+        entry = self._finish_cycle(outcome="insufficient_balance", now=now)
         self.base_stake_cents = MINIMUM_STAKE_CENTS
         self.next_stake_cents = MINIMUM_STAKE_CENTS
         event = {
@@ -329,7 +349,7 @@ class DemoLedger:
             if self.balance_cents < self.base_stake_cents:
                 return {"type": "insufficient_balance", "needed_cents": self.base_stake_cents}
             self.active = True
-            self.cycle_started_at = datetime.now(timezone.utc).isoformat()
+            self.cycle_started_at = (now or datetime.now(timezone.utc)).isoformat()
             self.next_stake_cents = self.base_stake_cents
             self.cycle_stake_cents = 0
             self.cycle_rounds = []
@@ -339,7 +359,7 @@ class DemoLedger:
 
         stake = self.next_stake_cents
         if self.balance_cents < stake:
-            return self._finish_insufficient(stake)
+            return self._finish_insufficient(stake, now=now)
 
         self._record_step(len(self.cycle_rounds) + 1, now)
         self.balance_cents -= stake
@@ -358,6 +378,7 @@ class DemoLedger:
                 return self._finish_insufficient(
                     next_stake,
                     lost_stake_cents=stake,
+                    now=now,
                 )
             self.next_stake_cents = next_stake
             self._record_step(len(self.cycle_rounds) + 1, now)
@@ -375,5 +396,5 @@ class DemoLedger:
         self.balance_cents += payout
         round_entry["payout_cents"] = payout
         round_entry["balance_after_cents"] = self.balance_cents
-        entry = self._finish_cycle(outcome="recovered", payout_cents=payout, coefficient=str(multiplier))
+        entry = self._finish_cycle(outcome="recovered", payout_cents=payout, coefficient=str(multiplier), now=now)
         return {"type": "recovered", **entry}

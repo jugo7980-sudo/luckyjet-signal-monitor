@@ -27,6 +27,7 @@ from luckyjet_signal.demo_mode import wrap_click_demo_mode
 from luckyjet_signal.settings import Config
 from luckyjet_signal.runtime_connections import RuntimeConnections
 from telegram_polling_lease import TelegramPollingLease
+from telegram_screenshot_policy import apply_screenshot_policy
 from xray_runtime import XrayManager
 
 
@@ -189,7 +190,8 @@ async def _main_async() -> None:
     delivery = TelegramDelivery(panel._request)
 
     async def telegram_request(method, payload):
-        return await telegram_request_with_diagnostics(delivery, method, payload)
+        protected_payload = apply_screenshot_policy(method, payload, config.telegram_chat_id)
+        return await telegram_request_with_diagnostics(delivery, method, protected_payload)
 
     await prepare_telegram_polling(telegram_request, config.telegram_chat_id)
 

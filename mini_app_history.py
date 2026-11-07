@@ -299,7 +299,7 @@ async def history(authorization, gate, token, query=''):
                 'view': view, 'days': [
                     {'day': key, 'steps': ledger.daily_max_low_streak[key]}
                     for key in days[page*10:page*10+10]],
-                'total': len(days), 'page': page,
+                'total': len(days), 'page': page, 'view_reset': bool(marker),
             })
         if view == 'cycles':
             return json_response('200 OK', {
@@ -367,7 +367,7 @@ async def history(authorization, gate, token, query=''):
             'view': view, 'total': total, 'page': page,
             'days': [_string(d) for d in days],
             'since_high': int(state.get('since', 0)), 'gap': state.get('gap') == '1',
-            'last_high': previous,
+            'last_high': previous, 'view_reset': bool(marker),
         })
     if view == 'high_day':
         key = f'luckyjet:coef:high:{day}'

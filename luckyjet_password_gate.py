@@ -1306,6 +1306,11 @@ class TelegramPasswordGate(HistoryPanels):
         if user_id is None or chat_id is None:
             return
 
+        # Users with a pre-existing per-chat Web App override are recovered
+        # on their first interaction, even when they use /restart rather than /start.
+        if chat_id not in self._command_menu_synced:
+            await self._register_commands_button(chat_id)
+
         value = (msg.get("text") or "").strip()
         command = value.split("@", 1)[0].split(" ", 1)[0].lower()
 

@@ -159,6 +159,16 @@
   phoneIPLink.rel = 'noopener noreferrer';
   phoneIPLink.style.cssText = 'display:block;font-size:13px;margin:2px 0 12px;color:#92bcff';
   section.appendChild(phoneIPLink);
+  const happCheck = document.createElement('button');
+  happCheck.type = 'button';
+  happCheck.className = 'history-outline';
+  happCheck.textContent = 'Проверить два узла Happ отдельно';
+  happCheck.style.cssText = 'width:100%;min-height:46px;margin-top:8px';
+  section.appendChild(happCheck);
+  const happResult = document.createElement('div');
+  happResult.setAttribute('role', 'status');
+  happResult.style.cssText = 'font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;padding:8px 2px';
+  section.appendChild(happResult);
   const remoteCSS = document.createElement('style');
   remoteCSS.textContent = [
     '#remote-browser-overlay{position:fixed;inset:0;z-index:130;overflow-y:auto;background:#100e18;color:#fff;padding:9px 9px 30px}',
@@ -243,6 +253,32 @@
         : err.message;
     } finally {
       proxyCheck.disabled = false;
+    }
+  });
+  happCheck.addEventListener('click', async () => {
+    if (happCheck.disabled) return;
+    happCheck.disabled = true;
+    happResult.textContent = 'Проверка двух узлов через отдельный Xray…';
+    try {
+      const data = await remoteAPI('POST', {action:'check_happ'}, 60000);
+      const labels = {primary:'Основной Happ', fallback:'Резервный Happ'};
+      const statuses = {
+        not_configured:'Не настроен', socks_not_ready:'SOCKS не запустился',
+        node_or_runtime_error:'Ошибка узла или конфигурации',
+        egress_check_failed:'Проверка выхода не прошла',
+      };
+      const rows = (data.nodes || []).map(item => {
+        const label = labels[item.node] || 'Узел';
+        return item.status === 'ok'
+          ? label + ': ' + item.ip + ' · ' + item.country
+          : label + ': ' + (statuses[item.status] || 'Ошибка проверки');
+      });
+      happResult.textContent = rows.join('\n') + (data.cached ? '\nРезультат из кеша.' : '');
+    } catch (err) {
+      happResult.textContent = err.name === 'AbortError'
+        ? 'Время проверки истекло.' : err.message;
+    } finally {
+      happCheck.disabled = false;
     }
   });
   async function remoteFrame() {

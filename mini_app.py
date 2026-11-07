@@ -13,6 +13,8 @@ def response(path):
     path = path.split('?', 1)[0]
     if path in {'/app', '/app/'}:
         return '200 OK', 'text/html; charset=utf-8', (Path(__file__).parent / 'web' / 'mini-app.html').read_bytes()
+    if path == '/summary.js':
+        return '200 OK', 'application/javascript; charset=utf-8', (Path(__file__).parent / 'web' / 'summary.js').read_bytes()
     if path == '/history.js':
         return '200 OK', 'application/javascript; charset=utf-8', (Path(__file__).parent / 'web' / 'history.js').read_bytes()
     if path == '/controls.js':

@@ -42,6 +42,15 @@
     probeArea.hidden = !data.admin;
     if (data.probe) showProbe(data.probe);
     const toggle = document.getElementById('demo-toggle');
+    if (demo.balance_verified === false) {
+      demoStatus.textContent = 'DEMO-баланс не подтверждён: источник пропустил раунды. Точная сумма неизвестна.';
+      demoStatus.classList.add('control-error');
+      demoStatus.dataset.archiveWarning = '1';
+    } else if (demoStatus.dataset.archiveWarning) {
+      delete demoStatus.dataset.archiveWarning;
+      demoStatus.textContent = '';
+      demoStatus.classList.remove('control-error');
+    }
     toggle.textContent = demo.enabled ? 'Выключить DEMO' : 'Включить DEMO';
     document.getElementById('demo-trigger-select').value = String(demo.trigger);
     document.getElementById('demo-stake-input').value = (demo.base_stake_cents / 100).toFixed(2);

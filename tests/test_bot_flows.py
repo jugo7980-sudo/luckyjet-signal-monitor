@@ -166,7 +166,7 @@ def test_history_size_setting_updates_panel_and_is_shown_in_settings(size):
     asyncio.run(gate.handle_callback(callback(42, f"history_size:{size}", 500)))
 
     assert gate.user_history_size(42) == size
-    assert len([button for row in gate._history_markup(42)["inline_keyboard"] for button in row if button["callback_data"] == "history_refresh"]) == size
+    assert len([button for row in gate._history_markup(42)["inline_keyboard"] for button in row if button.get("callback_data") == "history_refresh"]) == size
     settings_text = [
         payload["text"] for method, payload in request.calls
         if method in {"sendMessage", "editMessageText"} and payload.get("text", "").startswith("⚙️ Настройки")

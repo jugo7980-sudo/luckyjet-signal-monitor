@@ -125,6 +125,7 @@
     document.getElementById('history-archive-tabs').hidden = !archive;
     document.getElementById('history-archive-exit').hidden = !archive;
     document.getElementById('history-reset-panel').hidden = archive;
+    document.getElementById('history-management').hidden = archive;
     document.getElementById('history-archive-launch').hidden = archive || args.view !== 'days';
     const guide = document.getElementById('history-explainer');
     if (guide) {
@@ -134,11 +135,8 @@
         cycles: 'DEMO-циклы: виртуальные ставки, их завершение и изменение учебного баланса. Это не реальные деньги.',
         max_steps: 'Максимальный шаг: наибольший номер шага за выбранный день по сохранённой истории.'
       };
-      guide.textContent = (archive
-        ? 'Фактический архив: записи нельзя стереть сбросом вкладок. '
-        : 'Текущая история: отображение можно сбрасывать, архив сохранится. ')
-        + (views[active] || views.days)
-        + ' Время по Владивостоку. Неизвестные результаты не восстанавливаются.';
+      guide.textContent = (views[active] || views.days)
+        + ' Время: Владивосток. Неизвестные раунды не восстанавливаются.';
     }
     for (const button of tabs)
       button.setAttribute('aria-selected', String(button.dataset.historyView === active));

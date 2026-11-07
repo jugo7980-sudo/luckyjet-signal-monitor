@@ -95,7 +95,7 @@
     const view = archive ? args.view.slice(8) : args.view;
     const active = ['days', 'day'].includes(view) ? 'days'
       : ['high_days', 'high_day', 'high_item'].includes(view) ? 'high_days'
-      : ['cycles', 'cycle', 'demo_stats'].includes(view) ? 'cycles' : 'max_steps';
+      : ['cycles', 'cycle', 'demo_stats', 'high_cycles', 'high_cycle'].includes(view) ? 'cycles' : 'max_steps';
     document.getElementById('history-live-tabs').hidden = archive;
     document.getElementById('history-archive-tabs').hidden = !archive;
     document.getElementById('history-archive-exit').hidden = !archive;
@@ -110,7 +110,7 @@
     const page = Number(data.page || 0);
     const total = Number(data.total || 0);
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const visible = ['days', 'high_days', 'high_day', 'cycles', 'max_steps'].includes(isArchive(data.view) ? data.view.slice(8) : data.view);
+    const visible = ['days', 'high_days', 'high_day', 'cycles', 'high_cycles', 'max_steps'].includes(isArchive(data.view) ? data.view.slice(8) : data.view);
     pager.hidden = !visible;
     if (!visible) return;
     document.getElementById('history-page-number').textContent = (page + 1) + ' / ' + pages;
@@ -249,27 +249,41 @@
         if (e.uncertain) note('Время события приблизительное.');
         break;
       }
+      case 'high_cycles':
       case 'cycles':
-        heading('История DEMO', data.total + ' циклов · новые сначала');
+        heading(view === 'high_cycles' ? 'Стратегия №2 · история' : 'История DEMO',
+          data.total + ' циклов · новые сначала');
         if (archive) datePicker('cycles');
-        item('Статистика DEMO', 'Результаты по сохранённым сессиям',
-          () => navigate(viewFor('demo_stats'), archive && data.day ? {day: data.day} : {}, true));
+        if (view !== 'high_cycles')
+          item('Статистика DEMO', 'Результаты по сохранённым сессиям',
+            () => navigate(viewFor('demo_stats'), archive && data.day ? {day: data.day} : {}, true));
         if (!data.items.length) note('Завершённых циклов пока нет.');
         for (const c of data.items) {
           currency = c.currency || 'USD';
           const result = c.outcome === 'incomplete_data' || c.net_cents == null
             ? 'Нет полных данных' : signedMoney(c.net_cents);
+          const category = c.strategy === 'high_gap' ? 'После >x' + (c.reference_threshold || 100) : 'Серия <2x';
           item(c.steps + ' шаг. · ' + formatTime(c.ended_at || c.started_at),
-            archive ? c.currency : 'Цикл ' + (c.index + 1),
-            () => navigate(viewFor('cycle'), archive ? {id: c.id} : {index: c.index}, true), result);
+            archive ? category + ' · ' + c.currency : 'Цикл ' + (c.index + 1),
+            () => navigate(view === 'high_cycles' ? 'high_cycle' : viewFor('cycle'),
+              archive ? {id: c.id} : {index: c.index}, true), result);
         }
         break;
+      case 'high_cycle':
       case 'cycle': {
         const c = data.item;
         currency = c.currency || 'USD';
-        const reasons = {recovered: 'Цель 2x достигнута', insufficient_balance: 'Недостаточно баланса',
-          incomplete_data: 'Неполные данные', stopped_by_user: 'Остановлена пользователем'};
-        heading(archive ? 'Цикл DEMO' : 'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
+        const reasons = {recovered: 'Цель достигнута', insufficient_balance: 'Недостаточно баланса',
+          incomplete_data: 'Неполные данные', stopped_by_user: 'Остановлена пользователем',
+          reference_changed: 'Новый опорный коэффициент'};
+        heading(archive ? 'Цикл DEMO' : view === 'high_cycle' ? 'Стратегия №2 · цикл' :
+          'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
+        if (c.strategy === 'high_gap') {
+          info('Стратегия', 'После >x' + (c.reference_threshold || '100'));
+          info('Период ожидания', (c.wait_rounds ?? '—') + ' раундов');
+          info('Автовывод', 'x' + (c.cashout_multiplier || '100'));
+          if (c.reference_coefficient) info('Опорный коэффициент', 'x' + c.reference_coefficient);
+        }
         info('Валюта', currency);
         info('Начало', formatTime(c.started_at));
         info('Завершение', formatTime(c.ended_at));
@@ -291,16 +305,21 @@
         if (archive) {
           heading('Статистика DEMO', data.total + ' сохранённых циклов');
           if (data.truncated) { note('Неполные данные: слишком много записей.'); break; }
-          for (const [code, group] of Object.entries(data.currencies || {})) {
-            currency = code;
-            heading(code);
-            info('Всего сессий', group.total);
-            info('Успешных', group.recovered);
-            info('Проигрышных', group.lost);
-            info('Неполных', group.incomplete);
-            info('Остановленных', group.stopped);
-            info('По истории', signedMoney(group.history_net_cents));
-            info('Среднее шагов', group.average_steps);
+          const strategies = data.strategies || {classic: data.currencies || {}};
+          for (const [strategy, groups] of Object.entries(strategies)) {
+            heading(strategy === 'high_gap' ? 'Стратегия №2' : 'Стратегия №1');
+            for (const [code, group] of Object.entries(groups)) {
+              currency = code;
+              info('Валюта', code);
+              info('Всего сессий', group.total);
+              info('Успешных', group.recovered);
+              info('Проигрышных', group.lost);
+              info('Неполных', group.incomplete);
+              info('Остановленных', group.stopped);
+              if (group.reference_changed) info('Новый опорный коэффициент', group.reference_changed);
+              info('По истории', signedMoney(group.history_net_cents));
+              info('Среднее шагов', group.average_steps);
+            }
           }
           if (!data.total) note('Нет сохранённых циклов.');
           break;
@@ -409,7 +428,7 @@
     if (view === 'archive' || isArchive(view)) return null;
     if (['days', 'day'].includes(view)) return 'days';
     if (['high_days', 'high_day', 'high_item'].includes(view)) return 'high_days';
-    if (['cycles', 'cycle', 'demo_stats'].includes(view)) return 'cycles';
+    if (['cycles', 'cycle', 'high_cycles', 'high_cycle', 'demo_stats'].includes(view)) return 'cycles';
     return 'max_steps';
   };
   async function resetHistory(scope) {
@@ -448,6 +467,10 @@
   }
   window.openHistoryTab = () => {
     if (!current || Date.now() - lastLoad > 30000) navigate(args.view, {...args});
+  };
+  window.openHighGapHistory = () => {
+    stack = []; current = null;
+    navigate('high_cycles');
   };
   window.historyBackInApp = goBack;
   window.resetHistoryCache = () => {

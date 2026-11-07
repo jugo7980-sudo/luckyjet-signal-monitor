@@ -93,6 +93,7 @@ def test_mobile_full_site_design_navigation_and_explanations():
                                  "HapticFeedback:{selectionChanged(){}}}}")
                 await page.route("**/*", route)
                 await page.goto("https://example.test/app")
+                await page.locator('#summary-accordion').wait_for(state='visible')
                 assert not await page.locator("#summary-accordion").evaluate("(n) => n.open")
                 assert not await page.locator("#monitoring-accordion").evaluate("(n) => n.open")
                 assert await page.locator("#summary-preview-placeholder").is_visible()

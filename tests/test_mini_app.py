@@ -88,7 +88,6 @@ def test_live_read_view_and_access_denied_clear_private_data():
             assert not await page.locator('#demo-placeholder').is_visible()
             denied[0]=True
             await page.locator('nav [data-tab=home]').click()
-            await page.locator('#refresh-data').click()
             await page.locator('#live-home').wait_for(state='hidden')
             assert not await page.locator('#live-demo').is_visible()
             assert await page.locator('#live-status').inner_text()=='Нет доступа'

@@ -59,6 +59,7 @@ class TelegramPasswordGate(HistoryPanels):
         self.blocked = set()
         self.pending = set()
         self.chats = {}
+        self._command_menu_synced = set()
         self.history_messages = {}
         self.history_hidden = set()
         self._history_locks = {}
@@ -164,14 +165,21 @@ class TelegramPasswordGate(HistoryPanels):
                 },
             )
             await self.request("setChatMenuButton", {
-                "menu_button": {"type": "web_app", "text": "Приложение", "web_app": {"url": app_url()}}
+                "menu_button": {"type": "commands"}
             })
         except (httpx.HTTPError, RuntimeError):
             log.warning("Telegram command registration failed")
 
+        # Existing per-chat Web App overrides take priority over the global
+        # commands menu. Explicitly replace those we know, plus admin's chat.
+        private_chat_ids = {chat for chat in self.chats.values() if chat > 0}
+        if self.admin_chat_id is not None and self.admin_chat_id > 0:
+            private_chat_ids.add(self.admin_chat_id)
+        for chat_id in sorted(private_chat_ids):
+            await self._register_commands_button(chat_id)
+            await self._ensure_app_pin(chat_id)
         for user_id in list(self.authorized):
             if user_id in self.chats:
-                await self._register_app_button(self.chats[user_id])
                 await self.ensure_private_history(user_id)
 
         try:
@@ -1107,14 +1115,61 @@ class TelegramPasswordGate(HistoryPanels):
             {"inline_keyboard": self._navigation_rows()},
         )
 
-    async def _register_app_button(self, chat_id):
+    async def _register_commands_button(self, chat_id):
+        """Remove the legacy per-chat Mini App launcher next to the message field."""
+        if chat_id in self._command_menu_synced:
+            return
         try:
             await self.request("setChatMenuButton", {
                 "chat_id": chat_id,
-                "menu_button": {"type": "web_app", "text": "Приложение", "web_app": {"url": app_url()}}
+                "menu_button": {"type": "commands"},
+            })
+            self._command_menu_synced.add(chat_id)
+        except (httpx.HTTPError, RuntimeError):
+            log.warning("Could not restore Telegram commands button for chat_id=%s", chat_id)
+
+    async def _ensure_app_pin(self, chat_id):
+        """Keep the Mini App launch button in ONE pinned private-chat message."""
+        if chat_id is None or chat_id <= 0:
+            return
+        key = "luckyjet:pinned_app_messages"
+        known = None
+        if self.redis is not None:
+            known = await self.redis.hget(key, str(chat_id))
+        if known:
+            # A previous run already created the launch message. Never
+            # create duplicates; repinning an existing message is safe.
+            message_id = self._to_int(known)
+        else:
+            try:
+                sent = await self.request("sendMessage", {
+                    "chat_id": chat_id,
+                    "text": "Lucky Jet · приложение",
+                    "reply_markup": {"inline_keyboard": [[{
+                        "text": "Открыть приложение",
+                        "web_app": {"url": app_url()},
+                    }]]},
+                })
+                message_id = self._to_int((sent.get("result") or {}).get("message_id"))
+                if message_id is None:
+                    return
+                if self.redis is not None:
+                    await self.redis.hsetnx(key, str(chat_id), str(message_id))
+            except (httpx.HTTPError, RuntimeError):
+                log.warning("Cannot create pinned Mini App launcher for chat_id=%s", chat_id)
+                return
+        if message_id is None:
+            return
+        try:
+            await self.request("pinChatMessage", {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "disable_notification": True,
             })
         except (httpx.HTTPError, RuntimeError):
-            log.warning("Private Mini App menu registration failed")
+            # If already pinned or user removed the message, avoid spamming
+            # replacements. /start can retry pinning the same message later.
+            log.warning("Could not pin Mini App launcher for chat_id=%s", chat_id)
 
     async def _prepare_start(self, user_id, chat_id):
         """Explicit /start recovers panels even after a locally cleared chat."""
@@ -1137,6 +1192,8 @@ class TelegramPasswordGate(HistoryPanels):
             for message_id in ids:
                 await self._safe_delete(chat_id, message_id)
             await self._persist_user(user_id)
+        await self._register_commands_button(chat_id)
+        await self._ensure_app_pin(chat_id)
 
     async def _request_restart(self, user_id, chat_id):
         """Any unblocked private-chat user can request a confirmed full restart."""
@@ -1262,7 +1319,7 @@ class TelegramPasswordGate(HistoryPanels):
                 self.admin_pending_actions.pop(user_id, None)
             self.chats[user_id] = chat_id
             if command in {"/start", "/menu"}:
-                await self._register_app_button(chat_id)
+                await self._register_commands_button(chat_id)
             if command == "/start":
                 log.info("Telegram start: user_id=%s authorized=True", user_id)
                 await self._prepare_start(user_id, chat_id)
@@ -1447,7 +1504,7 @@ class TelegramPasswordGate(HistoryPanels):
             return
 
         if data == "menu_open":
-            await self._register_app_button(chat_id)
+            await self._register_commands_button(chat_id)
             await self._send_transient(
                 user_id,
                 chat_id,

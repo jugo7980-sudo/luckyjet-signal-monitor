@@ -97,3 +97,24 @@ def test_demo_enable_disable_colors_follow_state():
     assert 'style' not in enable[0]
     gate._demo_ledger(42).enabled=True
     assert gate.demo_menu(42)['inline_keyboard'][0][1]['style']=='danger'
+
+
+def test_notification_precedes_waiting_menu_requests():
+    from telegram_delivery import interactive, notification
+    async def run():
+        calls = []
+        async def request(method, payload):
+            calls.append(payload['chat_id'])
+            return {'ok': True}
+        delivery = TelegramDelivery(request, interval=.03)
+        await delivery('sendMessage', {'chat_id': 0})
+        tasks = [asyncio.create_task(delivery('sendMessage', {'chat_id': 1}))]
+        token = interactive.set(True)
+        tasks.append(asyncio.create_task(delivery('sendMessage', {'chat_id': 2})))
+        interactive.reset(token)
+        token = notification.set(True)
+        tasks.append(asyncio.create_task(delivery('sendMessage', {'chat_id': 3})))
+        notification.reset(token)
+        await asyncio.gather(*tasks)
+        assert calls == [0, 3, 2, 1]
+    asyncio.run(run())

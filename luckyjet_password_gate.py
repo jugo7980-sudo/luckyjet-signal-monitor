@@ -2096,15 +2096,6 @@ class TelegramPasswordGate(HistoryPanels):
             return
         self.last_round = value
         self.last_round_at = time.time()
-        panels = getattr(self, "live_panels", None)
-        if panels is None:
-            await self.update_private_histories()
-        for user_id in list(self.authorized):
-            await self._handle_demo_round(user_id, value)
-            if panels is None:
-                await self._refresh_demo_panel(user_id)
-        if panels is not None:
-            panels.request()
         number = float(value[:-1])
 
         if number < 2:
@@ -2124,6 +2115,16 @@ class TelegramPasswordGate(HistoryPanels):
                     if user_id in self.authorized:
                         await self._update_streak_notice(user_id, ending=value)
             self.current_streak = []
+
+        panels = getattr(self, "live_panels", None)
+        if panels is None:
+            await self.update_private_histories()
+        for user_id in list(self.authorized):
+            await self._handle_demo_round(user_id, value)
+            if panels is None:
+                await self._refresh_demo_panel(user_id)
+        if panels is not None:
+            panels.request()
 
     async def _schedule_delete(self, chat_id, message_id, delay):
         try:

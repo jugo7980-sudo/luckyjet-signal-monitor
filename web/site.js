@@ -136,39 +136,47 @@
 
   /* Manual Japanese-proxy browser: no VNC port or publicly accessible session.
      Requests always carry Telegram's signed initData; secret fields are cleared. */
+  const technicalTools = document.createElement('details');
+  technicalTools.id = 'site-technical-tools';
+  technicalTools.className = 'minimal-disclosure technical-tools';
+  const technicalHeading = document.createElement('summary');
+  technicalHeading.textContent = 'Инструменты и диагностика';
+  technicalTools.appendChild(technicalHeading);
+  section.appendChild(technicalTools);
+
   const remoteLaunch = document.createElement('button');
   remoteLaunch.type = 'button';
   remoteLaunch.className = 'history-outline';
   remoteLaunch.textContent = 'Открыть удалённый браузер · Япония';
-  remoteLaunch.style.cssText = 'width:100%;min-height:46px;margin-top:13px';
-  section.appendChild(remoteLaunch);
+  remoteLaunch.style.cssText = 'width:100%;min-height:40px;margin-top:9px';
+  technicalTools.appendChild(remoteLaunch);
   const proxyCheck = document.createElement('button');
   proxyCheck.type = 'button';
   proxyCheck.className = 'history-outline';
   proxyCheck.textContent = 'Проверить японский IP сервера';
-  proxyCheck.style.cssText = 'width:100%;min-height:46px;margin-top:8px';
-  section.appendChild(proxyCheck);
+  proxyCheck.style.cssText = 'width:100%;min-height:40px;margin-top:7px';
+  technicalTools.appendChild(proxyCheck);
   const proxyResult = document.createElement('div');
   proxyResult.setAttribute('role', 'status');
   proxyResult.style.cssText = 'font-size:13px;line-height:1.5;overflow-wrap:anywhere;padding:8px 2px';
-  section.appendChild(proxyResult);
+  technicalTools.appendChild(proxyResult);
   const phoneIPLink = document.createElement('a');
   phoneIPLink.textContent = 'Проверить IP на POCO для сравнения';
   phoneIPLink.href = 'https://api.ipify.org';
   phoneIPLink.target = '_blank';
   phoneIPLink.rel = 'noopener noreferrer';
   phoneIPLink.style.cssText = 'display:block;font-size:13px;margin:2px 0 12px;color:#92bcff';
-  section.appendChild(phoneIPLink);
+  technicalTools.appendChild(phoneIPLink);
   const happCheck = document.createElement('button');
   happCheck.type = 'button';
   happCheck.className = 'history-outline';
   happCheck.textContent = 'Проверить два узла Happ отдельно';
-  happCheck.style.cssText = 'width:100%;min-height:46px;margin-top:8px';
-  section.appendChild(happCheck);
+  happCheck.style.cssText = 'width:100%;min-height:40px;margin-top:7px';
+  technicalTools.appendChild(happCheck);
   const happResult = document.createElement('div');
   happResult.setAttribute('role', 'status');
   happResult.style.cssText = 'font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;padding:8px 2px';
-  section.appendChild(happResult);
+  technicalTools.appendChild(happResult);
   const remoteCSS = document.createElement('style');
   remoteCSS.textContent = [
     '#remote-browser-overlay{position:fixed;inset:0;z-index:130;overflow-y:auto;background:#100e18;color:#fff;padding:9px 9px 30px}',

@@ -163,6 +163,7 @@ def test_v08_premium_styles_compact_history_demo_settings_admin():
             await page.goto("https://example.test/app")
             await page.locator("#coef-grid .coef").first.wait_for()
             await page.locator('nav [data-tab="demo"]').click()
+            await page.locator("#demo-classic-accordion summary").click()
             await page.locator("#demo-controls").wait_for(state="visible")
             assert await page.evaluate("parseFloat(getComputedStyle(document.querySelector('.control-row')).paddingTop)") <= 8
             assert await page.evaluate("parseFloat(getComputedStyle(document.querySelector('.live-panel')).paddingTop)") <= 12

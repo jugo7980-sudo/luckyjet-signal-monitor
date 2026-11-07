@@ -3,6 +3,7 @@
   'use strict';
   const tg = window.Telegram && window.Telegram.WebApp;
   const panel = document.getElementById('admin-section');
+  const wrapper = document.getElementById('admin-wrapper');
   const list = document.getElementById('admin-users-list');
   const status = document.getElementById('admin-status');
   const counter = document.getElementById('admin-counter');
@@ -77,6 +78,7 @@
   }
   function render(data) {
     panel.hidden = false;
+    if (wrapper) wrapper.hidden = false;
     visible = true;
     list.replaceChildren();
     counter.textContent = 'С доступом: ' + data.authorized_count + ' · Заблокировано: ' + data.blocked_count;
@@ -122,11 +124,13 @@
     } catch (error) {
       if (error.status === 403) {
         panel.hidden = true;
+        if (wrapper) wrapper.hidden = true;
         visible = false;
         list.replaceChildren();
         status.textContent = '';
       } else if (error.status === 401) {
         panel.hidden = true;
+        if (wrapper) wrapper.hidden = true;
         visible = false;
         list.replaceChildren();
       } else {
@@ -141,7 +145,7 @@
   document.getElementById('admin-refresh').addEventListener('click', () => load(page, true));
   window.openAdminTab = () => load(page);
   window.clearAdminData = () => {
-    panel.hidden = true; visible = false; page = 0; lastLoad = 0;
+    panel.hidden = true; if (wrapper) wrapper.hidden = true; visible = false; page = 0; lastLoad = 0;
     list.replaceChildren(); status.textContent = '';
   };
 })();

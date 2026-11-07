@@ -195,6 +195,8 @@ def test_admin_mobile_screen_and_hidden_non_admin():
             await page.route('**/*', route)
             await page.goto('https://example.test/app')
             await page.locator('nav button[data-tab=account]').click()
+            await page.locator('#admin-wrapper').wait_for(state='visible')
+            await page.locator('#admin-disclosure summary').click()
             await page.locator('#admin-section').wait_for(state='visible')
             assert await page.locator('.admin-user').count() == 2
             await page.locator('.admin-user').first.locator('.admin-danger').click()

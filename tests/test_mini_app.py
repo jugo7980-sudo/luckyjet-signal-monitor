@@ -93,6 +93,7 @@ def test_live_read_view_and_access_denied_clear_private_data():
             await page.locator('#live-home').wait_for(state='visible')
             assert await page.locator('.coef').count()==3
             await page.locator('nav [data-tab=demo]').click()
+            await page.locator('#demo-metrics-disclosure summary').click()
             assert await page.locator('#demo-step').inner_text()=='Шаг 4'
             assert not await page.locator('#demo-placeholder').is_visible()
             denied[0]=True

@@ -169,6 +169,7 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             await page.goto('https://example.test/app')
 
             await page.locator('nav [data-tab=demo]').click()
+            await page.locator('#demo-classic-accordion summary').click()
             await page.locator('#demo-controls').wait_for(state='visible')
             await page.locator('#demo-toggle').click()
             options = await page.locator('#demo-trigger-select option').evaluate_all('(items) => items.map(item => item.value)')

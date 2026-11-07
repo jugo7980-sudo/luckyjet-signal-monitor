@@ -142,24 +142,34 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     "document.documentElement.scrollWidth <= innerWidth")
 
                 await page.locator('nav [data-tab="demo"]').click()
+                assert not await page.locator("#demo-classic-accordion").evaluate("(n) => n.open")
+                assert await page.locator("#demo-metrics-disclosure").evaluate("(n) => !n.open")
+                await page.locator("#demo-classic-accordion summary").click()
                 await page.locator("#demo-controls").wait_for(state="visible")
                 assert "виртуальным балансом" in await page.locator(
-                    "#page-demo .screen-subtitle").inner_text()
+                    "#page-demo .screen-subtitle").text_content()
+                assert await page.locator("#page-demo .screen-subtitle").is_hidden()
                 assert await page.locator("#high-gap-panel").is_hidden()
                 await page.locator("#demo-high-accordion summary").click()
                 await page.locator("#high-gap-panel").wait_for(state="visible")
+                await page.locator("#high-gap-help-toggle").click()
                 assert "Без догона" in await page.locator(
-                    "#high-gap-panel > .field-help").inner_text()
+                    "#high-gap-help-body").inner_text()
                 assert await page.evaluate(
                     "document.documentElement.scrollWidth <= innerWidth")
 
                 await page.locator('nav [data-tab="history"]').click()
+                assert not await page.locator("#history-management").evaluate("(n) => n.open")
+                assert await page.locator("#history-reset-scope").is_hidden()
+                await page.locator("#history-guide summary").click()
                 await page.locator("#history-explainer").wait_for(state="visible")
                 await page.locator('[data-history-view="cycles"]').click()
                 await page.wait_for_function(
                     "document.querySelector('#history-explainer').textContent.includes('DEMO-циклы')")
                 assert await page.evaluate(
                     "document.documentElement.scrollWidth <= innerWidth")
+                await page.locator("#history-management summary").click()
+                assert await page.locator("#history-reset-scope").is_visible()
 
                 await page.locator('nav [data-tab="account"]').click()
                 await page.locator("#open-settings").click()

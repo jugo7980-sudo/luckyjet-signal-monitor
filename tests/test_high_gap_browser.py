@@ -96,6 +96,8 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
             await page.goto('https://example.test/app')
             await page.locator('nav [data-tab=demo]').click()
             await page.locator('#demo-classic-accordion').wait_for()
+            assert not await page.locator('#demo-classic-accordion').evaluate('(n) => n.open')
+            await page.locator('#demo-classic-accordion summary').click()
             await page.locator('#demo-controls').wait_for(state='visible', timeout=10000)
             assert await page.locator('#demo-classic-accordion').evaluate('(n) => n.open')
             assert not await page.locator('#demo-high-accordion').evaluate('(n) => n.open')

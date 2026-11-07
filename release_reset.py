@@ -41,3 +41,32 @@ async def apply_release_reset(redis):
         RELEASE_ID, bool(changed), users, sessions,
     )
     return bool(changed)
+
+
+# One-off auth-only reset. Unlike the older release reset above this MUST NOT
+# touch history, DEMO ledgers, settings, block lists, or other user data.
+ACCESS_RESET_ID = "2026-11-07-access-reset-1"
+ACCESS_MARKER_KEY = "luckyjet:access_reset_version"
+_ACCESS_RESET = """
+if redis.call('get', KEYS[1]) == ARGV[1] then return {0, 0, 0} end
+local premium_users = redis.call('scard', KEYS[2])
+local registrations = redis.call('hlen', KEYS[3])
+redis.call('del', KEYS[2], KEYS[3])
+redis.call('set', KEYS[1], ARGV[1])
+return {1, premium_users, registrations}
+"""
+
+
+async def apply_access_reset(redis):
+    """Atomically revoke every Premium grant and Telegram site registration once."""
+    result = await redis.eval(
+        _ACCESS_RESET, 3, ACCESS_MARKER_KEY,
+        "luckyjet:authorized_users", "luckyjet:web_registered",
+        ACCESS_RESET_ID,
+    )
+    applied, premium_users, registrations = map(int, result)
+    logging.getLogger("luckyjet.release").info(
+        "Access reset %s: applied=%s premium_users=%s registrations=%s demo/history/settings=preserved",
+        ACCESS_RESET_ID, bool(applied), premium_users, registrations,
+    )
+    return bool(applied)

@@ -6,6 +6,7 @@ import os
 
 import httpx
 
+from archive_consumer import consume_archive
 from history_refresh import HistoryRefresh
 from telegram_delivery import TelegramDelivery
 from live_panel_updates import LivePanelUpdates
@@ -278,7 +279,12 @@ async def _main_async() -> None:
         seed_private_streak(password_gate, state.previous)
         async with asyncio.TaskGroup() as owned:
             owned.create_task(password_gate.start())
-            owned.create_task(direct_only.run_monitor(monitor, config, state=state))
+            if os.getenv("ARCHIVE_CONSUMER_ENABLED", "0") == "1":
+                # No game browser in UI mode: site/account work cannot
+                # pause collection, which independent services own.
+                owned.create_task(consume_archive(password_gate, state, panel))
+            else:
+                owned.create_task(direct_only.run_monitor(monitor, config, state=state))
     await retire_legacy_history_panel(panel)
 
     try:

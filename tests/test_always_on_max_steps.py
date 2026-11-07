@@ -69,9 +69,13 @@ def test_always_on_tracking_across_rounds_reload_gap_and_history_api(monkeypatch
         class Notices:
             async def submit(self, *a, **kw):
                 pass
+            async def close(self):
+                pass
 
         class Panels:
             def request(self):
+                pass
+            async def close(self):
                 pass
 
         gate.notification_queue = Notices()

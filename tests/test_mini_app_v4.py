@@ -246,3 +246,31 @@ def test_home_colors_removed_quick_access_and_site_web_form():
             assert not errors, errors
             await browser.close()
     asyncio.run(run())
+
+
+def test_web_login_flow_shows_safe_site_diagnostics_without_exposing_secrets():
+    from mini_app_site import WebLoginFlow
+    from site_account import LoginProblem
+    class Driver:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return None
+        async def login(self, email, password, request_code):
+            assert email == 'private@example.test'
+            assert password == 'secret789'
+            raise LoginProblem('Форма входа осталась открыта. Сайт не подтвердил авторизацию.')
+    class Store:
+        def save(self, data): raise AssertionError('Unexpected save')
+    class Account:
+        attempt_timeout = 3
+        browser_lock = asyncio.Lock()
+        store = Store()
+        generation = 0
+        status = 'disconnected'
+        def driver_factory(self): return Driver()
+    async def run():
+        flow = WebLoginFlow(Account())
+        await flow.login('private@example.test', 'secret789')
+        assert flow.phase == 'error'
+        assert flow.error == 'Форма входа осталась открыта. Сайт не подтвердил авторизацию.'
+        assert 'private@example.test' not in flow.error and 'secret789' not in flow.error
+    asyncio.run(run())

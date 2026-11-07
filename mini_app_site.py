@@ -12,6 +12,7 @@ import time
 from urllib.parse import parse_qs
 
 from mini_app_api import json_response, telegram_user
+from site_account import LoginProblem
 
 log = logging.getLogger('luckyjet.mini_app_site')
 
@@ -70,6 +71,12 @@ class WebLoginFlow:
         except TimeoutError:
             self.phase = 'error'
             self.error = 'Время входа истекло. Повтори попытку.'
+        except LoginProblem as exc:
+            # Only fixed, internally authored diagnostic messages may reach the UI.
+            # Never include raw site text, URLs, page HTML or credentials.
+            log.warning('Mini App site sign-in failed: LoginProblem')
+            self.phase = 'error'
+            self.error = str(exc)
         except Exception as exc:
             # Do not format exception messages: they can include site/credential data.
             log.warning('Mini App site sign-in failed: %s', type(exc).__name__)

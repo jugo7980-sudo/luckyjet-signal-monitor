@@ -62,6 +62,7 @@ class DemoLedger:
         self.cycle_rounds = list(state.get("cycle_rounds", []))[-100:]
         self.history = list(state.get("history", []))
         self.high_history = list(state.get("high_history") or [])[:MAX_HISTORY]
+        self.pending_archive_cycles = list(state.get("pending_archive_cycles") or [])
         self.high_gap = HighGapStrategy(
             state.get("high_gap"), min_stake=self.minimum_stake_cents,
             default_stake=self.base_stake_cents,
@@ -140,6 +141,7 @@ class DemoLedger:
             "cycle_rounds": self.cycle_rounds,
             "history": self.history,
             "high_history": self.high_history,
+            "pending_archive_cycles": self.pending_archive_cycles,
             "high_gap": self.high_gap.dump(),
             "daily_max_steps": self.daily_max_steps,
             "daily_max_low_streak": self.daily_max_low_streak,
@@ -301,6 +303,18 @@ class DemoLedger:
         trigger = self.trigger_streak
         old_currency = self.currency
         high_settings = self.high_gap.dump()
+        # Preserve every available pre-reset cycle, including any that was
+        # open at the moment of reset. The saved current journal still clears.
+        if self.active:
+            self._finish_cycle(outcome="stopped_by_user")
+        if self.high_gap.rounds:
+            closed = self.high_gap.stop(
+                currency=self.currency, balance=self.balance_cents,
+            )
+            if closed:
+                self.high_history.insert(0, closed)
+                self.high_history = self.high_history[:MAX_HISTORY]
+        pending = self.pending_archive_cycles + self.history + self.high_history
         high_settings["phase"] = "waiting_reference"
         high_settings["reference_id"] = ""
         high_settings["reference_value"] = ""
@@ -324,6 +338,7 @@ class DemoLedger:
             consecutive_below_two=ongoing_streak,
             high_gap=high_settings,
             high_history=[],
+            pending_archive_cycles=pending,
             last_archived_round_id=last_round_id,
             last_archived_stream_id=last_stream_id,
             balance_verified=True,

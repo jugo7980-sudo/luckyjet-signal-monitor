@@ -360,19 +360,17 @@ def test_login_button_below_fold_scrolls_into_view_without_force_click():
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('role_tag', ['button', 'link'])
-def test_1win_authentication_by_email_second_step(role_tag):
+@pytest.mark.parametrize('tag', ['button', 'a'])
+def test_site_email_authorization_option_after_opening_login(tag):
     from site_login_browser import SiteLoginBrowser
-    element = ('<button type="button"' if role_tag == 'button' else '<a href="#"')
     html = (
-        '<meta charset="utf-8"><button id="header" '
-        'onclick="document.querySelector(\"#choices\").hidden=false">Вход</button>'
-        '<div id="choices" hidden>'
-        + element
-        + ' id="email-option" onclick="document.querySelector(\"#form\").hidden=false">'
+        '''<meta charset="utf-8">
+        <button id="header" onclick="document.getElementById('choices').hidden=false">Вход</button>
+        <div id="choices" hidden>'''
+        + '<' + tag + ' href="#" onclick="document.getElementById(\'form\').hidden=false">'
         + 'Авторизация по почте'
-        + ('</button>' if role_tag == 'button' else '</a>')
-        + '</div><div id="form" hidden><input type="email"><input type="password"></div>'
+        + '</' + tag + '>'
+        + '''</div><div id="form" hidden><input type="email"><input type="password"></div>'''
     )
     async def run():
         async with SiteLoginBrowser('https://example.test/login', result_timeout=3) as driver:

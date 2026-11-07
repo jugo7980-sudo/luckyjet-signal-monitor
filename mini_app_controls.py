@@ -31,7 +31,7 @@ def snapshot(gate, uid):
         'demo': {
             'enabled': ledger.enabled,
             'active': ledger.active,
-            'balance_cents': ledger.balance_cents,
+            'balance_cents': ledger.balance_cents, 'balance_verified': ledger.balance_verified,
             'base_stake_cents': ledger.base_stake_cents,
             'trigger': ledger.trigger_streak,
             'low_streak': ledger.low_streak,

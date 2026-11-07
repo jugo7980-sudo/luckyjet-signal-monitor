@@ -105,7 +105,7 @@ async def controls(authorization, gate, token, method='GET', body=None):
             await gate._persist_demo(uid)
         elif action == 'demo_trigger':
             if type(value) is not int or value not in TRIGGER_OPTIONS:
-                return json_response('400 Bad Request', {'error': 'Допустимое число подряд: 2–6.'})
+                return json_response('400 Bad Request', {'error': 'Допустимое число подряд: 2–10.'})
             if not ledger.set_trigger(value):
                 return json_response('409 Conflict', {'error': 'Условие нельзя изменить во время активного цикла.'})
             if ledger.enabled:

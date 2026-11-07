@@ -1,7 +1,11 @@
 """Maximum-step history is tracked for every authorized user, DEMO on or off."""
 import asyncio
 import json
+import sys
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 from fakeredis.aioredis import FakeRedis
 

@@ -133,6 +133,157 @@
     if (document.hidden) clearTimeout(timer);
     else if (!page.hidden) load(true);
   });
+
+  /* Manual Japanese-proxy browser: no VNC port or publicly accessible session.
+     Requests always carry Telegram's signed initData; secret fields are cleared. */
+  const remoteLaunch = document.createElement('button');
+  remoteLaunch.type = 'button';
+  remoteLaunch.className = 'history-outline';
+  remoteLaunch.textContent = 'Открыть удалённый браузер · Япония';
+  remoteLaunch.style.cssText = 'width:100%;min-height:46px;margin-top:13px';
+  section.appendChild(remoteLaunch);
+  const remoteCSS = document.createElement('style');
+  remoteCSS.textContent = [
+    '#remote-browser-overlay{position:fixed;inset:0;z-index:130;overflow-y:auto;background:#100e18;color:#fff;padding:9px 9px 30px}',
+    '#remote-browser-overlay[hidden]{display:none!important}',
+    '.remote-bar{position:sticky;top:0;z-index:4;background:#201a2c;border:1px solid #483958;border-radius:13px;padding:9px;box-shadow:0 5px 20px #0007}',
+    '.remote-line{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:5px 0}',
+    '.remote-line button{flex:1;min-height:42px;border:1px solid #765c9a;border-radius:10px;background:#3a2b56;color:#fff;font-size:13px}',
+    '.remote-line button:disabled{opacity:.55}',
+    '.remote-line input{flex:1;min-width:0;width:100%;font:inherit;padding:12px;border:1px solid #765c9a;border-radius:10px;background:#171321;color:#fff}',
+    '#remote-browser-image{width:100%;height:auto;display:block;touch-action:manipulation;user-select:none;border:1px solid #514360;border-radius:8px;margin-top:9px;background:#252331;cursor:pointer}',
+    '#remote-browser-status{font-size:12px;line-height:1.35;color:#d1c5e3;min-height:18px;margin:6px 2px}',
+  ].join('');
+  document.head.appendChild(remoteCSS);
+  const overlay = document.createElement('div');
+  overlay.id = 'remote-browser-overlay';
+  overlay.hidden = true;
+  overlay.innerHTML = [
+    '<div class="remote-bar">',
+    '<div class="remote-line"><button id="remote-close" type="button">Закрыть</button><button id="remote-save" type="button">Сохранить вход</button></div>',
+    '<div id="remote-browser-status" role="status">Браузер подключается…</div>',
+    '<div class="remote-line"><input id="remote-text" type="text" autocomplete="off" spellcheck="false" placeholder="Почта или код"><button id="remote-send-text" type="button">Ввести текст</button></div>',
+    '<div class="remote-line"><input id="remote-secret" type="password" autocomplete="new-password" placeholder="Пароль"><button id="remote-send-secret" type="button">Ввести пароль</button></div>',
+    '<div class="remote-line"><button id="remote-enter" type="button">Enter</button><button id="remote-tab" type="button">Tab</button><button id="remote-backspace" type="button">⌫</button><button id="remote-up" type="button">↑</button><button id="remote-down" type="button">↓</button></div>',
+    '</div>',
+    '<img id="remote-browser-image" alt="Экран удалённого браузера. Нажми на поле, затем введи текст выше." width="430" height="932" draggable="false">',
+    '<p style="font-size:12px;color:#bcb0cd;margin:10px 3px">Нажимай на экран как на обычном сайте. Поля в изображении скрыты; ввод выполняется через строку сверху. Время сессии ограничено.</p>',
+  ].join('');
+  document.body.appendChild(overlay);
+  const remoteStatus = overlay.querySelector('#remote-browser-status');
+  const remoteImage = overlay.querySelector('#remote-browser-image');
+  const remoteText = overlay.querySelector('#remote-text');
+  const remoteSecret = overlay.querySelector('#remote-secret');
+  let remoteTimer = null;
+  let remoteBusy = false;
+  let remoteActive = false;
+  function remoteNotice(message) { remoteStatus.textContent = message; }
+  function remoteSchedule() {
+    clearTimeout(remoteTimer);
+    if (remoteActive && !overlay.hidden && !document.hidden)
+      remoteTimer = setTimeout(remoteFrame, 1800);
+  }
+  async function remoteAPI(method, data, timeoutMs = 12000) {
+    if (!tg?.initData || !window.canUsePremium?.())
+      throw new Error('Открой Mini App из Telegram с правами владельца.');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch('/api/browser', {
+        method, signal: controller.signal, cache: 'no-store', credentials: 'same-origin',
+        headers: {Authorization: 'tma ' + tg.initData,
+          ...(method === 'POST' ? {'Content-Type': 'application/json'} : {})},
+        ...(method === 'POST' ? {body: JSON.stringify(data)} : {}),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Сервер не ответил.');
+      return result;
+    } finally { clearTimeout(timer); }
+  }
+  async function remoteFrame() {
+    if (remoteBusy || !remoteActive || overlay.hidden) return;
+    remoteBusy = true;
+    try {
+      const result = await remoteAPI('GET');
+      if (!result.active) {
+        remoteActive = false;
+        remoteNotice('Браузер закрыт. Открой заново.');
+      } else {
+        if (result.image) remoteImage.src = 'data:image/jpeg;base64,' + result.image;
+        remoteNotice('Япония · Время до закрытия: ' + Math.floor(result.seconds_remaining / 60) + ' мин.');
+      }
+    } catch (err) { remoteNotice(err.message); }
+    finally { remoteBusy = false; remoteSchedule(); }
+  }
+  async function remoteAction(data) {
+    if (remoteBusy || !remoteActive) return;
+    remoteBusy = true;
+    clearTimeout(remoteTimer);
+    try {
+      const result = await remoteAPI('POST', data, 17000);
+      if (result.saved) {
+        remoteActive = false;
+        remoteImage.removeAttribute('src');
+        overlay.hidden = true;
+        document.body.style.overflow = '';
+        notice.textContent = result.message;
+        await load(true);
+      } else {
+        remoteNotice(result.message || 'Выполнено.');
+      }
+    } catch (err) { remoteNotice(err.message); }
+    finally { remoteBusy = false; remoteSchedule(); }
+    if (remoteActive) await remoteFrame();
+  }
+  remoteLaunch.addEventListener('click', async () => {
+    if (remoteBusy) return;
+    remoteBusy = true;
+    overlay.hidden = false;
+    document.body.style.overflow = 'hidden';
+    remoteNotice('Подключаем защищённый браузер через Японию…');
+    try {
+      await remoteAPI('POST', {action:'start'}, 75000);
+      remoteActive = true;
+    } catch (err) {
+      remoteNotice(err.message);
+    } finally { remoteBusy = false; }
+    if (remoteActive) await remoteFrame();
+  });
+  overlay.querySelector('#remote-close').addEventListener('click', async () => {
+    clearTimeout(remoteTimer);
+    remoteActive = false;
+    overlay.hidden = true;
+    document.body.style.overflow = '';
+    remoteText.value = '';
+    remoteSecret.value = '';
+    remoteImage.removeAttribute('src');
+    try { await remoteAPI('POST', {action:'close'}); } catch (_) {}
+  });
+  remoteImage.addEventListener('click', event => {
+    if (!remoteActive || remoteBusy || !remoteImage.src) return;
+    const r = remoteImage.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - r.left) / r.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - r.top) / r.height));
+    remoteAction({action:'tap', x, y});
+  });
+  async function remoteWrite(field) {
+    const value = field.value;
+    field.value = '';
+    if (value) await remoteAction({action:'type', text:value});
+  }
+  overlay.querySelector('#remote-send-text').addEventListener('click', () => remoteWrite(remoteText));
+  overlay.querySelector('#remote-send-secret').addEventListener('click', () => remoteWrite(remoteSecret));
+  overlay.querySelector('#remote-enter').addEventListener('click', () => remoteAction({action:'key', key:'Enter'}));
+  overlay.querySelector('#remote-tab').addEventListener('click', () => remoteAction({action:'key', key:'Tab'}));
+  overlay.querySelector('#remote-backspace').addEventListener('click', () => remoteAction({action:'key', key:'Backspace'}));
+  overlay.querySelector('#remote-up').addEventListener('click', () => remoteAction({action:'scroll', direction:'up'}));
+  overlay.querySelector('#remote-down').addEventListener('click', () => remoteAction({action:'scroll', direction:'down'}));
+  overlay.querySelector('#remote-save').addEventListener('click', () => remoteAction({action:'save'}));
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) clearTimeout(remoteTimer);
+    else remoteSchedule();
+  });
+
   window.openSiteTab = () => load();
   window.clearSiteData = () => {
     clearTimeout(timer);

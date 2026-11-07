@@ -506,7 +506,7 @@ async def health_server(gate=None, bot_token=None) -> None:
                     status, content_type, body = mini_app_response(line[1])
         except Exception:
             status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
-        extra = ''.join(f'{k}: {v}\\r\\n' for k, v in extra_headers.items())
+        extra = ''.join(f'{k}: {v}\r\n' for k, v in extra_headers.items())
         writer.write(
             f"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{extra}Content-Length: ".encode()
             + str(len(body)).encode()

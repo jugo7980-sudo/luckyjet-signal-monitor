@@ -8,8 +8,10 @@ import base64
 import json
 import logging
 import time
+from ipaddress import ip_address
 from urllib.parse import parse_qs
 
+import httpx
 from playwright.async_api import Error as BrowserError, TimeoutError as BrowserTimeout
 
 from mini_app_api import json_response, telegram_user
@@ -22,6 +24,42 @@ IDLE_SECONDS = 120
 MAX_SESSION_SECONDS = 540
 MAX_POINTER_SECONDS = 8
 POINTER_IDLE_SECONDS = 3
+
+
+async def check_japanese_egress(proxy_url):
+    """Owner-only egress report. Both probes MUST pass through the Xray SOCKS.
+
+    Never return proxy credentials, a URL, cookies, or a direct-connection
+    fallback. The report is ephemeral and must not be written to logs.
+    """
+    if not isinstance(proxy_url, str) or not proxy_url.startswith("socks5://127.0.0.1:"):
+        raise ValueError("No verified local SOCKS egress")
+    checks = (
+        ("https://api.country.is/", "country"),
+        ("https://ipwho.is/", "country_code"),
+    )
+    async with httpx.AsyncClient(proxy=proxy_url, trust_env=False, timeout=7) as http:
+        for url, field in checks:
+            try:
+                response = await http.get(url)
+                response.raise_for_status()
+                data = response.json()
+                if not isinstance(data, dict):
+                    continue
+                country = data.get(field)
+                raw_ip = data.get("ip")
+                if (not isinstance(country, str) or len(country) != 2
+                        or not country.isalpha() or not isinstance(raw_ip, str)):
+                    continue
+                address = ip_address(raw_ip)
+                if not address.is_global:
+                    continue
+                country = country.upper()
+                return {"ip": str(address), "country": country,
+                        "japan_verified": country == "JP"}
+            except (httpx.HTTPError, ValueError, TypeError):
+                continue
+    raise OSError("Proxy IP verification failed")
 
 
 class RemoteSession:
@@ -287,6 +325,21 @@ async def remote_browser(authorization, gate, token, method="GET", body=None):
         return json_response("400 Bad Request", {"error": "Недопустимый запрос."})
 
     op = data["action"]
+    if op == "check_ip" and set(data) == {"action"}:
+        # Creating a driver is inexpensive and does not start Chromium.
+        # Its proxy_url is wired to the SAME Xray manager used by site login.
+        proxy_url = getattr(account.driver_factory(), "proxy_url", None)
+        if not proxy_url:
+            return json_response("503 Service Unavailable", {
+                "error": "Японский прокси не подключён. Прямой запрос запрещён."
+            })
+        try:
+            details = await asyncio.wait_for(check_japanese_egress(proxy_url), timeout=16)
+            return json_response("200 OK", details)
+        except (OSError, ValueError, httpx.HTTPError, asyncio.TimeoutError):
+            return json_response("503 Service Unavailable", {
+                "error": "Не удалось проверить IP через японский прокси. Прямой запрос запрещён."
+            })
     if op == "start" and set(data) == {"action"}:
         if account.busy or account.field:
             return json_response("409 Conflict", {"error": "Заверши другой вход через Telegram."})

@@ -28,6 +28,9 @@ MENU_IDLE_SECONDS = 60
 RESTART_CONFIRM_SECONDS = 60
 RESTART_COOLDOWN_SECONDS = 15 * 60
 RESTART_COOLDOWN_KEY = "luckyjet:public_restart:cooldown"
+APP_PIN_KEY = "luckyjet:pinned_app_messages"
+APP_PIN_AUDIT_SECONDS = 90
+APP_PIN_AUDIT_BATCH = 20
 
 
 class RestartRequested(Exception):
@@ -60,6 +63,9 @@ class TelegramPasswordGate(HistoryPanels):
         self.pending = set()
         self.chats = {}
         self._command_menu_synced = set()
+        self._app_pin_locks = {}
+        self._app_pin_audit_task = None
+        self._app_pin_audit_cursor = 0
         self.history_messages = {}
         self.history_hidden = set()
         self._history_locks = {}
@@ -181,6 +187,8 @@ class TelegramPasswordGate(HistoryPanels):
         for user_id in list(self.authorized):
             if user_id in self.chats:
                 await self.ensure_private_history(user_id)
+        if self.redis is not None:
+            self._app_pin_audit_task = asyncio.create_task(self._audit_app_pins())
 
         try:
             while True:
@@ -233,6 +241,11 @@ class TelegramPasswordGate(HistoryPanels):
             await self.close()
 
     async def close(self):
+        task = self._app_pin_audit_task
+        self._app_pin_audit_task = None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         notices = getattr(self, "notification_queue", None)
         if notices is not None:
             await notices.close()
@@ -1135,21 +1148,96 @@ class TelegramPasswordGate(HistoryPanels):
         except (httpx.HTTPError, RuntimeError):
             log.warning("Could not restore Telegram commands button for chat_id=%s", chat_id)
 
-    async def _ensure_app_pin(self, chat_id):
-        """Keep the Mini App launch button in ONE pinned private-chat message."""
-        # A Redis marker is required to avoid generating duplicate pins on
-        # restarts. The production app always uses Redis.
+    async def _audit_app_pins(self):
+        """Check existing known private chats without sending repeated posts."""
+        while True:
+            await asyncio.sleep(APP_PIN_AUDIT_SECONDS)
+            if self.redis is None:
+                continue
+            known = {chat_id for chat_id in self.chats.values() if chat_id > 0}
+            if self.admin_chat_id and self.admin_chat_id > 0:
+                known.add(self.admin_chat_id)
+            # Include chats with a saved launcher even after Premium is revoked.
+            try:
+                saved = await self.redis.hkeys(APP_PIN_KEY)
+                known.update(int(x) for x in saved if str(x).isdigit() and int(x) > 0)
+            except (httpx.HTTPError, RuntimeError, ValueError, TypeError):
+                log.warning("Pinned Mini App audit could not read chat list")
+                continue
+            chats = sorted(known)
+            if not chats:
+                continue
+            offset = self._app_pin_audit_cursor % len(chats)
+            selection = (chats[offset:] + chats[:offset])[:APP_PIN_AUDIT_BATCH]
+            self._app_pin_audit_cursor = (offset + len(selection)) % len(chats)
+            for chat_id in selection:
+                try:
+                    await self._ensure_app_pin(chat_id)
+                except (httpx.HTTPError, RuntimeError):
+                    log.warning("Pinned Mini App audit failed for chat_id=%s", chat_id)
+                await asyncio.sleep(0.15)
+
+    @staticmethod
+    def _pin_error_invalid_message(exc):
+        """Only a confirmed missing/deleted message justifies replacement."""
+        try:
+            description = str(exc.response.json().get("description", "")).lower()
+            return exc.response.status_code == 400 and (
+                "message to pin not found" in description
+                or "message_id_invalid" in description
+                or "message not found" in description
+                or "message identifier is not specified" in description
+            )
+        except (AttributeError, ValueError, TypeError):
+            return False
+
+    async def _ensure_app_pin(self, chat_id, *, force_new=False):
+        """Verify Telegram's actual pin, then restore a missing launcher.
+
+        A saved Redis message ID proves only what was sent previously, NOT that
+        Telegram still displays it after a user deletes or clears the dialog.
+        """
         if chat_id is None or chat_id <= 0 or self.redis is None:
-            return
-        key = "luckyjet:pinned_app_messages"
-        known = None
-        if self.redis is not None:
-            known = await self.redis.hget(key, str(chat_id))
-        if known:
-            # A previous run already created the launch message. Never
-            # create duplicates; repinning an existing message is safe.
-            message_id = self._to_int(known)
-        else:
+            return False
+        lock = self._app_pin_locks.setdefault(chat_id, asyncio.Lock())
+        async with lock:
+            known = self._to_int(await self.redis.hget(APP_PIN_KEY, str(chat_id)))
+            observed = False
+            pinned = None
+            try:
+                info = await self.request("getChat", {"chat_id": chat_id})
+                detail = info.get("result") if isinstance(info, dict) else None
+                if isinstance(detail, dict):
+                    observed = True
+                    message = detail.get("pinned_message")
+                    if isinstance(message, dict):
+                        pinned = self._to_int(message.get("message_id"))
+            except (httpx.HTTPError, RuntimeError) as exc:
+                # A temporary Telegram API failure is not proof of deletion.
+                log.warning("Could not inspect pinned message for chat_id=%s: %s",
+                            chat_id, type(exc).__name__)
+
+            if known and not force_new:
+                if observed and pinned == known:
+                    return True
+                if not observed:
+                    # If getChat is unavailable, re-pin the existing post
+                    # without creating another one unless Telegram confirms it
+                    # was deleted.
+                    try:
+                        await self.request("pinChatMessage", {
+                            "chat_id": chat_id,
+                            "message_id": known,
+                            "disable_notification": True,
+                        })
+                        return True
+                    except httpx.HTTPStatusError as exc:
+                        if not self._pin_error_invalid_message(exc):
+                            return False
+                    except (httpx.HTTPError, RuntimeError):
+                        return False
+
+            # Missing, deleted or intentionally refreshed (via /start).
             try:
                 sent = await self.request("sendMessage", {
                     "chat_id": chat_id,
@@ -1159,27 +1247,42 @@ class TelegramPasswordGate(HistoryPanels):
                         "web_app": {"url": app_url()},
                     }]]},
                 })
-                payload = sent.get("result") if isinstance(sent, dict) else None
-                message_id = self._to_int(payload.get("message_id")) if isinstance(payload, dict) else None
-                if message_id is None:
-                    return
-                if self.redis is not None:
-                    await self.redis.hsetnx(key, str(chat_id), str(message_id))
+                detail = sent.get("result") if isinstance(sent, dict) else None
+                fresh_id = self._to_int(detail.get("message_id")) if isinstance(detail, dict) else None
+                if fresh_id is None:
+                    log.warning("Pinned launcher send returned no message_id for chat_id=%s", chat_id)
+                    return False
+                try:
+                    await self.request("pinChatMessage", {
+                        "chat_id": chat_id,
+                        "message_id": fresh_id,
+                        "disable_notification": True,
+                    })
+                except (httpx.HTTPError, RuntimeError):
+                    # Don't overwrite a saved good ID if the new pin failed.
+                    log.warning("New launcher could not be pinned for chat_id=%s", chat_id)
+                    return False
+                await self.redis.hset(APP_PIN_KEY, str(chat_id), str(fresh_id))
+                if known and known != fresh_id:
+                    # Remove only OUR obsolete launcher; never touch other
+                    # user-pinned messages or clear all chat pins.
+                    try:
+                        await self.request("unpinChatMessage", {
+                            "chat_id": chat_id, "message_id": known,
+                        })
+                    except (httpx.HTTPError, RuntimeError):
+                        pass
+                    try:
+                        await self.request("deleteMessage", {
+                            "chat_id": chat_id, "message_id": known,
+                        })
+                    except (httpx.HTTPError, RuntimeError):
+                        pass
+                log.info("Mini App launcher restored: chat_id=%s message_id=%s", chat_id, fresh_id)
+                return True
             except (httpx.HTTPError, RuntimeError):
-                log.warning("Cannot create pinned Mini App launcher for chat_id=%s", chat_id)
-                return
-        if message_id is None:
-            return
-        try:
-            await self.request("pinChatMessage", {
-                "chat_id": chat_id,
-                "message_id": message_id,
-                "disable_notification": True,
-            })
-        except (httpx.HTTPError, RuntimeError):
-            # If already pinned or user removed the message, avoid spamming
-            # replacements. /start can retry pinning the same message later.
-            log.warning("Could not pin Mini App launcher for chat_id=%s", chat_id)
+                log.warning("Could not restore pinned Mini App launcher for chat_id=%s", chat_id)
+                return False
 
     async def _prepare_start(self, user_id, chat_id):
         """Explicit /start recovers panels even after a locally cleared chat."""
@@ -1203,7 +1306,9 @@ class TelegramPasswordGate(HistoryPanels):
                 await self._safe_delete(chat_id, message_id)
             await self._persist_user(user_id)
         await self._register_commands_button(chat_id)
-        await self._ensure_app_pin(chat_id)
+        # /start is used to reopen the bot after clearing local Telegram
+        # history, which the Bot API does not expose as a deletion event.
+        await self._ensure_app_pin(chat_id, force_new=True)
 
     async def _request_restart(self, user_id, chat_id):
         """Any unblocked private-chat user can request a confirmed full restart."""

@@ -20,6 +20,8 @@ VIEWPORT_WIDTH = 430
 VIEWPORT_HEIGHT = 932
 IDLE_SECONDS = 120
 MAX_SESSION_SECONDS = 540
+MAX_POINTER_SECONDS = 8
+POINTER_IDLE_SECONDS = 3
 
 
 class RemoteSession:
@@ -30,13 +32,27 @@ class RemoteSession:
         self.started = 0.0
         self.last_seen = 0.0
         self.watchdog = None
+        self.pointer_active = False
+        self.pointer_id = None
+        self.pointer_started = 0.0
+        self.pointer_last = 0.0
 
     def _active(self):
         now = time.monotonic()
         return bool(self.driver and now - self.started < MAX_SESSION_SECONDS
                     and now - self.last_seen < IDLE_SECONDS)
 
+    async def _release_pointer(self):
+        if self.pointer_active and self.driver:
+            try:
+                await self.driver.page.mouse.up()
+            except BrowserError:
+                pass
+        self.pointer_active = False
+        self.pointer_id = None
+
     async def _stop_unlocked(self):
+        await self._release_pointer()
         driver, self.driver = self.driver, None
         if driver:
             try:
@@ -54,8 +70,11 @@ class RemoteSession:
     async def _expire(self):
         try:
             while True:
-                await asyncio.sleep(10)
+                await asyncio.sleep(1)
                 async with self.lock:
+                    if (self.pointer_active
+                            and time.monotonic() - self.pointer_last > POINTER_IDLE_SECONDS):
+                        await self._release_pointer()
                     if not self._active():
                         await self._stop_unlocked()
                         return
@@ -91,17 +110,19 @@ class RemoteSession:
                 "active": True, "saved_session": self.account.store.load() is not None,
                 "seconds_remaining": int(MAX_SESSION_SECONDS - (time.monotonic() - self.started)),
                 "width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT,
+                "dragging": self.pointer_active,
             }
-            if capture:
-                page = self.driver.page
-                # Never show typed secrets inside screenshots.
-                frame = await page.screenshot(
-                    type="jpeg", quality=60, scale="css", timeout=7000,
-                    mask=[page.locator('input, textarea, [contenteditable="true"]')],
-                    mask_color="#1b1823",
-                )
-                result["image"] = base64.b64encode(frame).decode("ascii")
-            return result
+            page = self.driver.page
+        # Screenshot is intentionally OUTSIDE the input lock. A slow image
+        # capture must never block finger events sent to Playwright.
+        if capture:
+            frame = await page.screenshot(
+                type="jpeg", quality=43, scale="css", timeout=4000,
+                mask=[page.locator('input, textarea, [contenteditable="true"]')],
+                mask_color="#1b1823",
+            )
+            result["image"] = base64.b64encode(frame).decode("ascii")
+        return result
 
     async def action(self, payload):
         async with self.lock:
@@ -110,8 +131,41 @@ class RemoteSession:
                 return {"error": "Браузер закрыт или время вышло. Открой заново."}
             page = self.driver.page
             if not trusted_origin(page.url, self.driver.login_url):
+                await self._release_pointer()
                 return {"error": "Сайт перенаправил на другой домен. Вход приостановлен."}
             op = payload["action"]
+            if self.pointer_active and op != "pointer":
+                return {"error": "Сначала отпусти ползунок."}
+            if op == "pointer" and set(payload) == {"action", "phase", "gesture", "x", "y"}:
+                phase, gesture = payload["phase"], payload["gesture"]
+                x, y = payload["x"], payload["y"]
+                if (phase not in {"down", "move", "up"}
+                        or type(gesture) is not int or not 1 <= gesture <= 2147483647
+                        or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in (x, y))):
+                    return {"error": "Некорректное движение пальца."}
+                mouse = page.mouse
+                if phase == "down":
+                    if self.pointer_active:
+                        return {"error": "Ползунок уже удерживается."}
+                    await mouse.move(float(x) * VIEWPORT_WIDTH, float(y) * VIEWPORT_HEIGHT)
+                    await mouse.down()
+                    self.pointer_active = True
+                    self.pointer_id = gesture
+                    self.pointer_started = self.pointer_last = time.monotonic()
+                else:
+                    if not self.pointer_active or gesture != self.pointer_id:
+                        return {"error": "Перетаскивание не начато или завершилось."}
+                    if time.monotonic() - self.pointer_started > MAX_POINTER_SECONDS:
+                        await self._release_pointer()
+                        return {"error": "Превышено время удержания ползунка."}
+                    try:
+                        await mouse.move(float(x) * VIEWPORT_WIDTH, float(y) * VIEWPORT_HEIGHT)
+                    finally:
+                        self.pointer_last = time.monotonic()
+                        if phase == "up":
+                            await self._release_pointer()
+                self.last_seen = time.monotonic()
+                return {"message": "Движение передано."}
             if op == "tap" and set(payload) == {"action", "x", "y"}:
                 x, y = payload["x"], payload["y"]
                 if any(type(v) not in (int, float) for v in (x, y)) or not (0 <= x <= 1 and 0 <= y <= 1):

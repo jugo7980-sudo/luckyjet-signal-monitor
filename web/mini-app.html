@@ -68,7 +68,13 @@ async function loadOverview(manual=false){
   const headers=premium&&app?.initData?{Authorization:'tma '+app.initData}:{};
   const response=await fetch(route+'?limit='+encodeURIComponent(chosenLimit),{headers,cache:'no-store',signal:abort.signal,credentials:'same-origin'});
   const data=await response.json();allowed=![401,403].includes(response.status);
-  if(!response.ok)throw new Error(data.error||'Не удалось обновить данные.');
+  if(!response.ok){
+    if(premium && !allowed && window.refreshAccessState){
+      await window.refreshAccessState();
+      allowed=!window.accessState?.premium;
+    }
+    throw new Error(data.error||'Не удалось обновить данные.');
+  }
   if(premium!==Boolean(window.accessState?.premium))return;
   failedPolls=0;succeeded=true;hasData=true;
   const coefficientKey=chosenLimit+':'+JSON.stringify(data.coefficients);

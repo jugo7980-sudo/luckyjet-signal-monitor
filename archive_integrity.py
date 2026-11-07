@@ -18,6 +18,15 @@ MAX_DAY_EVENTS = 20000
 
 async def archive_day_evidence(redis, day: str, *, legacy_total=None):
     """Summarize append-only stream evidence without claiming impossible certainty."""
+    if not all(hasattr(redis, action) for action in ("xrange", "xrevrange")):
+        # A degraded Redis adapter must never crash the history page or
+        # cause a legacy counter to masquerade as verified.
+        return {
+            "day": day, "status": "unverified",
+            "archived_rounds": None,
+            "legacy_total": int(legacy_total) if legacy_total is not None else None,
+            "counts_match": None, "reasons": ["проверка архива недоступна"],
+        }
     start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=TZ)
     end = start + timedelta(days=1)
     first_ms = int(start.timestamp() * 1000)

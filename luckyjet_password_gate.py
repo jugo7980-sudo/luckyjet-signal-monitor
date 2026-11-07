@@ -1306,11 +1306,6 @@ class TelegramPasswordGate(HistoryPanels):
         if user_id is None or chat_id is None:
             return
 
-        # Users with a pre-existing per-chat Web App override are recovered
-        # on their first interaction, even when they use /restart rather than /start.
-        if chat_id not in self._command_menu_synced:
-            await self._register_commands_button(chat_id)
-
         value = (msg.get("text") or "").strip()
         command = value.split("@", 1)[0].split(" ", 1)[0].lower()
 
@@ -1320,6 +1315,7 @@ class TelegramPasswordGate(HistoryPanels):
             return
 
         if command == "/restart":
+            await self._register_commands_button(chat_id)
             await self._safe_delete(chat_id, message_id)
             await self._request_restart(user_id, chat_id)
             return
@@ -1327,6 +1323,9 @@ class TelegramPasswordGate(HistoryPanels):
         if await self.is_authorized(user_id):
             if self.site_account is not None and await self.site_account.handle_message(msg):
                 return
+            # Never make Telegram API calls before processing sensitive
+            # website-login inputs. Restore legacy menu after that check.
+            await self._register_commands_button(chat_id)
             if command in {"/start", "/menu", "/settings", "/status", "/help"}:
                 self.history_open.discard(user_id)
                 self.demo_pending_inputs.pop(user_id, None)

@@ -208,7 +208,7 @@
     const target = document.getElementById('high-gap-target').value.trim();
     const waitText = document.getElementById('high-gap-wait').value.trim();
     const stake = document.getElementById('high-gap-stake').value.trim();
-    if (!/^\\d{1,6}$/.test(waitText) || !reference || !target || !stake) {
+    if (!/^\d{1,6}$/.test(waitText) || !reference || !target || !stake) {
       message('Проверь коэффициенты, число раундов и сумму ставки.', true); return;
     }
     action('high_gap_config', {reference, wait_rounds: Number(waitText), target, stake});

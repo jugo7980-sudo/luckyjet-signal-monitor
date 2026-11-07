@@ -31,7 +31,8 @@ def test_navigation_date_input_reset_and_persistence():
     async def run():
         gate, request = setup()
         ledger=gate._demo_ledger(42)
-        ledger.daily_max_steps['2026-01-02']=7
+        ledger.daily_max_low_streak['2026-01-02']=7
+        ledger.daily_max_steps['2026-01-02']=99  # Old DEMO metric must not appear in source streaks.
         await click(gate,'demo_menu')
         mid=gate.menu_messages[42]
         await click(gate,'demo_daily:2026-01-02')
@@ -46,9 +47,11 @@ def test_navigation_date_input_reset_and_persistence():
         await storage.save(redis,42,ledger)
         import json
         restored=DemoLedger(**json.loads(await redis.hget('luckyjet:demo_sessions','42')))
-        assert restored.daily_max_steps['2026-01-02']==7
+        assert restored.daily_max_low_streak['2026-01-02']==7
+        assert restored.daily_max_steps['2026-01-02']==99
         await click(gate,'demo_reset'); await click(gate,'demo_reset_confirm')
         assert ledger.daily_max_steps == {}
+        assert ledger.daily_max_low_streak['2026-01-02'] == 7
         await redis.aclose(); await gate.close()
     asyncio.run(run())
 

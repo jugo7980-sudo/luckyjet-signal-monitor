@@ -438,6 +438,7 @@ async def health_server(gate=None, bot_token=None) -> None:
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         request = b""
+        extra_headers = {}
         try:
             request = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=3)
             if len(request) > 16384:
@@ -447,17 +448,25 @@ async def health_server(gate=None, bot_token=None) -> None:
                 status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
             else:
                 path, _, query = line[1].partition('?')
-                if line[0] == 'POST' and path not in {'/api/controls', '/api/admin', '/api/site'}:
+                if line[0] == 'POST' and path not in {'/api/controls', '/api/admin', '/api/site', '/api/access'}:
                     status, content_type, body = '405 Method Not Allowed', 'text/plain', b'Method not allowed'
-                elif path in {'/api/overview', '/api/history', '/api/controls', '/api/admin', '/api/site'}:
+                elif path in {'/api/public', '/api/access', '/api/overview', '/api/history', '/api/controls', '/api/admin', '/api/site'}:
                     pairs = [header.split(':', 1) for header in request.decode('ascii').split('\r\n')[1:] if ':' in header]
                     auth = [value.strip() for key, value in pairs if key.lower() == 'authorization']
                     if len(auth) > 1:
                         raise ValueError('Duplicate authorization')
-                    if path == '/api/history':
+                    cookies = [value.strip() for key, value in pairs if key.lower() == 'cookie']
+                    if len(cookies) > 1:
+                        raise ValueError('Duplicate cookies')
+                    from mini_app_access import effective_auth
+                    auth_header = await effective_auth(auth[0] if auth else '', cookies[0] if cookies else '', gate, bot_token)
+                    if path == '/api/public':
+                        from mini_app_access import guest_overview
+                        status, content_type, body = await guest_overview(gate, query)
+                    elif path == '/api/history':
                         from mini_app_history import history
-                        status, content_type, body = await history(auth[0] if auth else '', gate, bot_token, query)
-                    elif path in {'/api/controls', '/api/admin', '/api/site'}:
+                        status, content_type, body = await history(auth_header, gate, bot_token, query)
+                    elif path in {'/api/controls', '/api/admin', '/api/site', '/api/access'}:
                         payload = None
                         if line[0] == 'POST':
                             contents = [value.strip() for key, value in pairs if key.lower() == 'content-length']
@@ -468,9 +477,20 @@ async def health_server(gate=None, bot_token=None) -> None:
                             if size < 2 or size > 2048 or any(key.lower() == 'transfer-encoding' for key, _ in pairs):
                                 raise ValueError('Invalid request body length')
                             payload = await asyncio.wait_for(reader.readexactly(size), timeout=3)
-                        auth_header = auth[0] if auth else ''
                         method = 'GET' if line[0] == 'HEAD' else line[0]
-                        if path == '/api/admin':
+                        if method == 'POST' and not auth[0:1]:
+                            origins = [value.strip() for key, value in pairs if key.lower() == 'origin']
+                            host = [value.strip() for key, value in pairs if key.lower() == 'host']
+                            if len(origins) != 1 or len(host) != 1 or origins[0] != 'https://' + host[0]:
+                                raise ValueError('Invalid request origin')
+                        if path == '/api/access':
+                            from mini_app_access import access
+                            result = await access(auth_header if auth[0:1] else '',
+                                cookies[0] if cookies else '', gate, bot_token, method, payload)
+                            status, content_type, body = result[:3]
+                            if len(result) == 4:
+                                extra_headers = result[3]
+                        elif path == '/api/admin':
                             from mini_app_admin import admin
                             status, content_type, body = await admin(auth_header, gate, bot_token, method, payload, query)
                         elif path == '/api/site':
@@ -481,13 +501,14 @@ async def health_server(gate=None, bot_token=None) -> None:
                             status, content_type, body = await controls(auth_header, gate, bot_token, method, payload)
                     else:
                         from mini_app_api import overview
-                        status, content_type, body = await overview(auth[0] if auth else '', gate, bot_token, query)
+                        status, content_type, body = await overview(auth_header, gate, bot_token, query)
                 else:
                     status, content_type, body = mini_app_response(line[1])
         except Exception:
             status, content_type, body = '400 Bad Request', 'text/plain', b'Bad request'
+        extra = ''.join(f'{k}: {v}\\r\\n' for k, v in extra_headers.items())
         writer.write(
-            f"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Length: ".encode()
+            f"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{extra}Content-Length: ".encode()
             + str(len(body)).encode()
             + b"\r\nConnection: close\r\n\r\n"
             + (b"" if request.startswith(b"HEAD ") else body)

@@ -1,4 +1,4 @@
-"""Telegram /restart is public, confirmed, globally rate-limited, and data-safe."""
+"""Personal /restart must never restart the service or disturb other users."""
 import asyncio
 import json
 import sys
@@ -8,87 +8,118 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from luckyjet_password_gate import (
-    TelegramPasswordGate, RestartRequested,
-    RESTART_COOLDOWN_KEY, RESTART_COOLDOWN_SECONDS,
+    TelegramPasswordGate, RESTART_COOLDOWN_KEY, RESTART_COOLDOWN_SECONDS,
 )
 
 
 def incoming(uid, message_id=123):
     return {"message": {
         "message_id": message_id, "chat": {"id": uid, "type": "private"},
-        "from": {"id": uid}, "text": "/restart"
+        "from": {"id": uid}, "text": "/restart",
     }}
 
 
 def confirmation(uid, callback_data, message_id=124):
-    return {"id": "cb-" + str(uid), "from": {"id": uid},
-            "message": {"message_id": message_id,
-                        "chat": {"id": uid, "type": "private"}},
-            "data": callback_data}
+    return {
+        "id": "cb-" + str(uid), "from": {"id": uid},
+        "message": {"message_id": message_id, "chat": {"id": uid, "type": "private"}},
+        "data": callback_data,
+    }
 
 
-def test_public_restart_confirmation_cooldown_preserves_history_demo_settings():
+def test_personal_restart_stops_only_own_demo_and_preserves_balances_histories_and_settings():
     from fakeredis.aioredis import FakeRedis
 
     async def run():
         calls = []
+        next_id = 124
+
         async def request(method, payload):
+            nonlocal next_id
             calls.append((method, payload))
-            return {"ok": True, "result": {"message_id": 124}}
+            next_id += 1
+            return {"ok": True, "result": {"message_id": next_id}}
 
-        gate = TelegramPasswordGate(request, password="fixture", admin_chat_id=1)
+        gate = TelegramPasswordGate(request, password="fixture", admin_chat_id=1, history_provider=lambda: [])
         gate.redis = FakeRedis(decode_responses=True)
-        # Non-admin unregistered users are authorized to request a restart.
+        gate.authorized.update({22, 44})
+        gate.chats.update({22: 22, 44: 44})
+        gate.notifications_disabled.add(22)
+        gate.history_hidden.add(22)
+
+        first = gate._demo_ledger(22)
+        first.enabled = True
+        first.active = True
+        first.balance_cents = 1_050_000
+        first.cycle_start_balance_cents = 1_055_000
+        first.cycle_stake_cents = 5_000
+        first.cycle_rounds = ["1.25x", "1.50x"]
+        first.cycle_started_at = "2026-11-07T00:00:00+00:00"
+        first.history = [{"outcome": "recovered", "net_cents": 1000}]
+        first.daily_max_steps = {"2026-11-06": 7}
+
+        second = gate._demo_ledger(44)
+        second.enabled = True
+        second.active = True
+        second.balance_cents = 1_200_000
+        second.history = [{"outcome": "recovered", "net_cents": 2000}]
+        before_other = second.dump().copy()
+
+        await gate._persist_demo(22)
+        await gate._persist_demo(44)
         await gate.redis.set("luckyjet:state", "history and coefficients")
-        await gate.redis.hset("luckyjet:demo_sessions", "22",
-                              '{"balance_cents":1050000,"enabled":true,"history":[{"win":1}]}')
         await gate.redis.hset("luckyjet:thresholds", "22", "8")
-        await gate.redis.sadd("luckyjet:authorized_users", "1")
+        await gate.redis.sadd("luckyjet:authorized_users", 22, 44)
+
         await gate.handle_update(incoming(22))
-        messages = [body for method, body in calls if method == "sendMessage"]
-        prompt = messages[-1]
-        nonce_button = prompt["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
-        cancel_button = prompt["reply_markup"]["inline_keyboard"][1][0]["callback_data"]
-        assert nonce_button.startswith("restart_confirm:")
-        assert cancel_button.startswith("restart_cancel:")
-        assert not gate._restart_requested.is_set()
-        assert await gate.redis.get(RESTART_COOLDOWN_KEY) is None
-
-        # Wrong user cannot replay another person's confirmation.
-        await gate.handle_callback(confirmation(99, nonce_button))
-        assert not gate._restart_requested.is_set()
-        assert await gate.redis.get(RESTART_COOLDOWN_KEY) is None
-
-        # Cancellation does not spend the global cooldown.
-        await gate.handle_callback(confirmation(22, cancel_button))
-        assert not gate._restart_requested.is_set()
-        assert await gate.redis.get(RESTART_COOLDOWN_KEY) is None
-
+        prompt = [body for method, body in calls if method == "sendMessage"][-1]
+        assert "только твой интерфейс" in prompt["text"]
+        assert "Mini App и другие пользователи не затрагиваются" in prompt["text"]
+        confirm = prompt["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        cancel = prompt["reply_markup"]["inline_keyboard"][1][0]["callback_data"]
+        await gate.handle_callback(confirmation(44, confirm))
+        assert await gate.redis.get(f"{RESTART_COOLDOWN_KEY}:22") is None
+        await gate.handle_callback(confirmation(22, cancel))
+        assert first.active and first.enabled
         await gate.handle_update(incoming(22, 130))
-        fresh = [body for method, body in calls if method == "sendMessage"][-1]
-        confirm = fresh["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        confirm = [body for method, body in calls if method == "sendMessage"][-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
         await gate.handle_callback(confirmation(22, confirm))
-        assert gate._restart_requested.is_set()
-        assert await gate.redis.get(RESTART_COOLDOWN_KEY) == "22"
-        assert 0 < await gate.redis.ttl(RESTART_COOLDOWN_KEY) <= RESTART_COOLDOWN_SECONDS
+
+        assert first.enabled is False
+        assert first.active is False
+        assert first.balance_cents == 1_050_000
+        assert first.history[0]["outcome"] == "stopped_by_user"
+        assert first.history[0]["balance_after_cents"] == 1_050_000
+        assert first.history[1]["outcome"] == "recovered"
+        assert first.daily_max_steps["2026-11-06"] == 7
+        assert second.dump() == before_other
+        assert gate.history_hidden == {22}
+        assert 22 in gate.notifications_disabled
+        assert gate.authorized == {22, 44}
+        assert gate.redis is not None
         assert await gate.redis.get("luckyjet:state") == "history and coefficients"
         assert await gate.redis.hget("luckyjet:thresholds", "22") == "8"
-        assert json.loads(await gate.redis.hget("luckyjet:demo_sessions", "22"))["balance_cents"] == 1050000
-        assert await gate.redis.sismember("luckyjet:authorized_users", "1")
-        # A distinct user is also blocked by the global cooldown.
-        other = TelegramPasswordGate(request, password="fixture", admin_chat_id=1)
-        other.redis = gate.redis
-        await other.handle_update(incoming(44))
-        after = [body for method, body in calls if method == "sendMessage"][-1]["text"]
-        assert "через" in after and "мин." in after
-        assert not other._restart_pending and not other._restart_requested.is_set()
+        saved = json.loads(await gate.redis.hget("luckyjet:demo_sessions", "22"))
+        assert saved["enabled"] is False and saved["active"] is False
+        assert saved["balance_cents"] == 1_050_000
+        assert saved["history"][0]["outcome"] == "stopped_by_user"
+        assert json.loads(await gate.redis.hget("luckyjet:demo_sessions", "44"))["enabled"] is True
+        assert 0 < await gate.redis.ttl(f"{RESTART_COOLDOWN_KEY}:22") <= RESTART_COOLDOWN_SECONDS
+        assert await gate.redis.get(f"{RESTART_COOLDOWN_KEY}:44") is None
+
+        # A second user can restart immediately: cooldown is not global.
+        await gate.handle_update(incoming(44))
+        user44_prompt = [p for m, p in calls if m == "sendMessage"][-1]
+        assert user44_prompt["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("restart_confirm:")
+        # The first user remains stopped when new rounds are received.
+        await gate.on_round("1.25x")
+        assert first.enabled is False and first.balance_cents == 1_050_000
         await gate.close()
-        other.redis = None
 
     asyncio.run(run())
 
 
-def test_public_restart_expiration_blocked_user_and_no_redis(monkeypatch):
+def test_personal_restart_expiration_blocked_user_and_no_redis(monkeypatch):
     from fakeredis.aioredis import FakeRedis
     import luckyjet_password_gate
 
@@ -103,36 +134,32 @@ def test_public_restart_expiration_blocked_user_and_no_redis(monkeypatch):
         gate.blocked.add(33)
         await gate.handle_update(incoming(33))
         assert 33 not in gate._restart_pending
-        assert not gate._restart_requested.is_set()
 
         await gate.handle_update(incoming(42))
         token = gate._restart_pending[42][0]
-        expired_instant = gate._restart_pending[42][1] + 1
-        monkeypatch.setattr(luckyjet_password_gate.time, "monotonic",
-                            lambda: expired_instant)
+        expired = gate._restart_pending[42][1] + 1
+        monkeypatch.setattr(luckyjet_password_gate.time, "monotonic", lambda: expired)
         await gate.handle_callback(confirmation(42, "restart_confirm:" + token))
-        assert not gate._restart_requested.is_set()
-        assert await gate.redis.get(RESTART_COOLDOWN_KEY) is None
+        assert await gate.redis.get(f"{RESTART_COOLDOWN_KEY}:42") is None
 
         await gate.close()
-        gate = TelegramPasswordGate(request, password="fixture")
-        await gate.handle_update(incoming(42))
-        assert "нет подключения к Redis" in [body for method, body in calls if method == "sendMessage"][-1]["text"]
+        new_gate = TelegramPasswordGate(request, password="fixture")
+        await new_gate.handle_update(incoming(42))
+        assert "нет подключения к Redis" in [b for m, b in calls if m == "sendMessage"][-1]["text"]
+
     asyncio.run(run())
 
 
-def test_restart_bubbles_out_of_poller_and_registers_command(monkeypatch):
+def test_personal_restart_does_not_stop_polling(monkeypatch):
     from fakeredis.aioredis import FakeRedis
     from release_reset import MARKER_KEY, RELEASE_ID, ACCESS_MARKER_KEY, ACCESS_RESET_ID
     import redis.asyncio
 
     async def run():
         fake = FakeRedis(decode_responses=True)
-        # This is a routine restart; earlier release migrations must not fire again.
         await fake.set(MARKER_KEY, RELEASE_ID)
         await fake.set(ACCESS_MARKER_KEY, ACCESS_RESET_ID)
         await fake.set("luckyjet:state", "retain")
-        await fake.hset("luckyjet:demo_sessions", "55", '{"balance_cents":204000}')
         monkeypatch.setattr(redis.asyncio, "from_url", lambda *args, **kwargs: fake)
 
         sent = []
@@ -143,22 +170,22 @@ def test_restart_bubbles_out_of_poller_and_registers_command(monkeypatch):
                 polls[0] += 1
                 if polls[0] == 1:
                     return {"result": [{"update_id": 1, **incoming(55)}]}
-                buttons = [v["reply_markup"]["inline_keyboard"] for m, v in sent
-                           if m == "sendMessage" and "reply_markup" in v]
-                callback = buttons[-1][0][0]["callback_data"]
-                return {"result": [{"update_id": 2,
-                                    "callback_query": confirmation(55, callback)}]}
+                if polls[0] == 2:
+                    buttons = [v["reply_markup"]["inline_keyboard"] for m, v in sent
+                               if m == "sendMessage" and "reply_markup" in v]
+                    callback = buttons[-1][0][0]["callback_data"]
+                    return {"result": [{"update_id": 2, "callback_query": confirmation(55, callback)}]}
+                raise asyncio.CancelledError()
             return {"ok": True, "result": {"message_id": 150}}
 
         gate = TelegramPasswordGate(request, password="fixture")
         gate.redis_url = "redis://fixture"
-        with pytest.raises(RestartRequested):
+        with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(gate.start(), timeout=3)
         commands = [body["commands"] for name, body in sent if name == "setMyCommands"]
         assert any(x["command"] == "restart" for x in commands[0])
-        assert polls[0] == 2
-        assert gate._restart_requested.is_set()
+        assert polls[0] == 3
         assert await fake.get("luckyjet:state") == "retain"
-        assert await fake.hget("luckyjet:demo_sessions", "55") == '{"balance_cents":204000}'
+        assert await fake.get(f"{RESTART_COOLDOWN_KEY}:55") == "1"
 
     asyncio.run(run())

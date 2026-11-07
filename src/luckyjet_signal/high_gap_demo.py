@@ -11,12 +11,12 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
 def parse_multiplier(raw):
-    """Game-style multipliers: finite, >= 1.01, at most two decimal places."""
+    """Game-style multipliers: finite, >= 1.00, at most two decimal places."""
     try:
         value = Decimal(str(raw).strip().lower().replace('x', '').replace(',', '.'))
     except (InvalidOperation, ValueError, TypeError):
         return None
-    if (not value.is_finite() or value < Decimal('1.01')
+    if (not value.is_finite() or value < Decimal('1.00')
             or value.as_tuple().exponent < -2
             or value.adjusted() > 8):
         return None

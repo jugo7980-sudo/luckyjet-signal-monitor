@@ -142,6 +142,10 @@ def test_admin_mobile_screen_and_hidden_non_admin():
             actions = []
 
             async def route(request):
+                if request.request.url.endswith('/access.js'):
+                    await request.fulfill(content_type='application/javascript',
+                        body="window.accessState={premium:true,registered:true,username:'tester'};document.body.dataset.access='premium';window.canUsePremium=()=>true;window.refreshAccessOverview?.();")
+                    return
                 url = request.request.url
                 if url.endswith(('/history.js', '/controls.js', '/admin.js')):
                     path = url.split('/')[-1]

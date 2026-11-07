@@ -251,8 +251,11 @@ def test_timeout_with_open_login_form_reports_unconfirmed_submission(caplog):
         async with SiteLoginBrowser('https://example.test/login', result_timeout=.15) as driver:
             await driver.context.route('**/*', lambda route: route.fulfill(
                 status=200, content_type='text/html', body=html))
-            with pytest.raises(LoginProblem, match='Форма входа осталась открыта'):
+            with pytest.raises(LoginProblem, match='Форма входа осталась открыта') as failure:
                 await driver.login('private@example.test', 'secret789', None)
+            assert isinstance(failure.value.page_screenshot, bytes)
+            assert len(failure.value.page_screenshot) > 100
+            assert failure.value.page_screenshot_stage == 'after_submission'
     asyncio.run(run())
     assert 'secret789' not in caplog.text
     assert 'private@example.test' not in caplog.text

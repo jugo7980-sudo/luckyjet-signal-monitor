@@ -166,9 +166,10 @@
     '<div class="remote-line"><input id="remote-secret" type="password" autocomplete="new-password" placeholder="Пароль"><button id="remote-send-secret" type="button">Ввести пароль</button></div>',
     '<div class="remote-line"><input id="remote-code" type="text" inputmode="numeric" autocomplete="off" placeholder="Код из почты (если потребуется)"><button id="remote-send-code" type="button">Ввести код</button></div>',
     '<div class="remote-line"><button id="remote-enter" type="button">Enter</button><button id="remote-tab" type="button">Tab</button><button id="remote-backspace" type="button">⌫</button><button id="remote-up" type="button">↑</button><button id="remote-down" type="button">↓</button></div>',
+    '<div class="remote-line"><button id="remote-drag-mode" type="button" aria-pressed="false">CAPTCHA: включить перетаскивание</button></div>',
     '</div>',
     '<img id="remote-browser-image" alt="Экран удалённого браузера. Нажми на поле, затем введи текст выше." width="430" height="932" draggable="false">',
-    '<p style="font-size:12px;color:#bcb0cd;margin:10px 3px">Почта и пароль вводятся сразу в соответствующие поля сайта, независимо от нажатий на снимок. Для кода сначала выбери поле кода на сайте. Время сессии ограничено.</p>',
+    '<p style="font-size:12px;color:#bcb0cd;margin:10px 3px">Для CAPTCHA прокрути снимок до ползунка, включи «CAPTCHA: перетаскивание», затем проведи пальцем от ползунка до выбранной точки. Жест выполняется после отпускания пальца. В остальном — обычные касания. Время сессии ограничено.</p>',
   ].join('');
   document.body.appendChild(overlay);
   const remoteStatus = overlay.querySelector('#remote-browser-status');
@@ -176,13 +177,16 @@
   const remoteText = overlay.querySelector('#remote-text');
   const remoteSecret = overlay.querySelector('#remote-secret');
   const remoteCode = overlay.querySelector('#remote-code');
+  const remoteDragButton = overlay.querySelector('#remote-drag-mode');
+  let remoteDragMode = false;
+  let remoteDragTrace = null;
   let remoteTimer = null;
   let remoteBusy = false;
   let remoteActive = false;
   function remoteNotice(message) { remoteStatus.textContent = message; }
   function remoteSchedule() {
     clearTimeout(remoteTimer);
-    if (remoteActive && !overlay.hidden && !document.hidden)
+    if (remoteActive && !overlay.hidden && !document.hidden && !remoteDragTrace)
       remoteTimer = setTimeout(remoteFrame, 1800);
   }
   async function remoteAPI(method, data, timeoutMs = 12000) {
@@ -203,7 +207,7 @@
     } finally { clearTimeout(timer); }
   }
   async function remoteFrame() {
-    if (remoteBusy || !remoteActive || overlay.hidden) return;
+    if (remoteBusy || !remoteActive || overlay.hidden || remoteDragTrace) return;
     remoteBusy = true;
     try {
       const result = await remoteAPI('GET');
@@ -260,14 +264,74 @@
     remoteSecret.value = '';
     remoteCode.value = '';
     remoteImage.removeAttribute('src');
+    remoteDragTrace = null;
     try { await remoteAPI('POST', {action:'close'}); } catch (_) {}
   });
+  function remotePoint(event) {
+    const rect = remoteImage.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    return [Number(x.toFixed(4)), Number(y.toFixed(4))];
+  }
+  remoteDragButton.addEventListener('click', () => {
+    remoteDragMode = !remoteDragMode;
+    remoteDragTrace = null;
+    remoteImage.style.touchAction = remoteDragMode ? 'none' : 'manipulation';
+    remoteDragButton.setAttribute('aria-pressed', String(remoteDragMode));
+    remoteDragButton.textContent = remoteDragMode
+      ? 'CAPTCHA: перетаскивание ВКЛ · выключить'
+      : 'CAPTCHA: включить перетаскивание';
+    remoteNotice(remoteDragMode
+      ? 'Двигай пальцем по изображению от бегунка к нужному месту и отпускай.'
+      : 'Обычные касания включены.');
+  });
   remoteImage.addEventListener('click', event => {
-    if (!remoteActive || remoteBusy || !remoteImage.src) return;
-    const r = remoteImage.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (event.clientX - r.left) / r.width));
-    const y = Math.max(0, Math.min(1, (event.clientY - r.top) / r.height));
+    if (!remoteActive || remoteBusy || !remoteImage.src || remoteDragMode) return;
+    const [x, y] = remotePoint(event);
     remoteAction({action:'tap', x, y});
+  });
+  remoteImage.addEventListener('pointerdown', event => {
+    if (!remoteDragMode || !remoteActive || remoteBusy || !remoteImage.src) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    clearTimeout(remoteTimer);
+    remoteImage.setPointerCapture(event.pointerId);
+    remoteDragTrace = {id: event.pointerId, started: performance.now(), points: [remotePoint(event)]};
+  });
+  remoteImage.addEventListener('pointermove', event => {
+    const trace = remoteDragTrace;
+    if (!trace || trace.id !== event.pointerId) return;
+    event.preventDefault();
+    const point = remotePoint(event);
+    const prev = trace.points[trace.points.length - 1];
+    if ((Math.abs(point[0] - prev[0]) + Math.abs(point[1] - prev[1])) < .005) return;
+    if (trace.points.length < 31) trace.points.push(point);
+    else trace.points[trace.points.length - 1] = point;
+  });
+  remoteImage.addEventListener('pointerup', event => {
+    const trace = remoteDragTrace;
+    if (!trace || trace.id !== event.pointerId) return;
+    event.preventDefault();
+    remoteDragTrace = null;
+    if (remoteImage.hasPointerCapture(event.pointerId))
+      remoteImage.releasePointerCapture(event.pointerId);
+    const end = remotePoint(event);
+    trace.points.push(end);
+    const start = trace.points[0];
+    const delta = Math.abs(end[0] - start[0]) * 430 + Math.abs(end[1] - start[1]) * 932;
+    if (delta < 12) {
+      remoteNotice('Жест слишком короткий. Протяни ползунок дальше.');
+      remoteSchedule();
+      return;
+    }
+    const duration = Math.max(100, Math.min(4000, Math.round(performance.now() - trace.started)));
+    remoteAction({action:'drag', points:trace.points, duration_ms:duration});
+  });
+  remoteImage.addEventListener('pointercancel', event => {
+    if (!remoteDragTrace || remoteDragTrace.id !== event.pointerId) return;
+    remoteDragTrace = null;
+    remoteNotice('Перетаскивание отменено.');
+    remoteSchedule();
   });
   async function remoteWrite(field, operation) {
     const value = field.value;

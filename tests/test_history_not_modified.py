@@ -3,6 +3,7 @@ import asyncio
 import httpx
 
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
+from history_panels import HISTORY_PANEL_TITLE
 
 
 class NotModifiedRequest:
@@ -42,7 +43,7 @@ def test_unchanged_history_is_success_not_recreated():
     result = asyncio.run(gate.ensure_private_history(42))
 
     assert request.calls[0][0] == "editMessageText"
-    assert request.calls[0][1]["text"] == "📊"
+    assert request.calls[0][1]["text"] == HISTORY_PANEL_TITLE
     assert result is True
     assert gate.history_messages[42] == 555
     assert not any(method == "sendMessage" for method, _ in request.calls)

@@ -201,6 +201,8 @@ def test_config_validation_and_no_changes_when_invalid():
     assert high.dump() == before
     assert not high.configure('100', 100, '0.9', 1000, min_stake=1000)
     assert high.dump() == before
+    assert high.configure('100', 1, '1.00', 1000, min_stake=1000)
+    assert high.target == parse_multiplier('1.00')
     assert high.configure('25.50', 130, '1.50', 1000, min_stake=1000)
     assert high.reference == parse_multiplier('25.50')
     assert high.target == parse_multiplier('1.50')

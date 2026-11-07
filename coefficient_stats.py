@@ -11,7 +11,7 @@ UNDER2_FIX_DAY = '2026-11-03'
 UNDER2_FIX_MARKER = 'luckyjet:coef:lt2-single-count-fixed-v1'
 SCRIPT = """
 if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
-redis.call('SET', KEYS[1], '1', 'EX', 7948800)
+redis.call('SET', KEYS[1], '1')
 local day_existed = redis.call('EXISTS', KEYS[2]) == 1
 if day_existed and redis.call('HEXISTS', KEYS[2], 'lt2_tracking') == 0 then redis.call('HSET', KEYS[2], 'lt2_partial', '1') end
 redis.call('HSET', KEYS[2], 'lt2_tracking', '1')
@@ -26,7 +26,6 @@ for i=2,16 do
   redis.call('HINCRBY', KEYS[2], ARGV[i], 1)
  end
 end
-redis.call('EXPIRE', KEYS[2], 7948800)
 redis.call('ZADD', KEYS[3], ARGV[17], ARGV[18])
 local last = tonumber(redis.call('HGET', KEYS[4], 'stamp') or '-1')
 local stamp = tonumber(ARGV[17])
@@ -56,7 +55,7 @@ if raw then
   redis.call('HSET', KEYS[2], 'lt2', math.floor(count / 2))
  end
 end
-redis.call('SET', KEYS[1], '1', 'EX', 7948800)
+redis.call('SET', KEYS[1], '1')
 return 1
 """
 
@@ -174,12 +173,12 @@ class CoefficientStats:
     async def days(self, page=0):
         if self.redis is None:
             return [], 0
-        cutoff=(datetime.now(TZ)-timedelta(days=90)).timestamp()
+        # Historical daily counters must not vanish after a fixed horizon.
+        # Exact archive source IDs also remain deduplicated indefinitely.
         pipe = self.redis.pipeline()
-        pipe.zremrangebyscore('luckyjet:coef:days', '-inf', cutoff)
         pipe.zcard('luckyjet:coef:days')
         pipe.zrevrange('luckyjet:coef:days', page * 10, page * 10 + 9)
-        _, total, values = await pipe.execute()
+        total, values = await pipe.execute()
         return [v.decode() if isinstance(v, bytes) else v for v in values], total
 
     async def summary(self, day):

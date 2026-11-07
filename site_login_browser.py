@@ -8,6 +8,7 @@ import re
 import time
 
 import httpx
+import logging
 from urllib.parse import urlsplit
 from playwright.async_api import Error as BrowserError, TimeoutError as BrowserTimeout
 
@@ -249,7 +250,23 @@ class SiteLoginBrowser:
         # request. Give that submission the whole result window before retrying.
         if after_code and await self._field('code') is not None and await self._field('error') is not None:
             return 'code'
-        raise LoginProblem('Вход на сайте не подтверждён. Проверь доступность сайта и повтори попытку.')
+        email_visible = await self._field('email') is not None
+        password_visible = await self._field('password') is not None
+        code_visible = await self._field('code') is not None
+        error_visible = await self._field('error') is not None
+        logging.getLogger('luckyjet.site_login_browser').warning(
+            'Site login result timeout: login_form=%s code=%s error=%s after_code=%s',
+            email_visible and password_visible, code_visible, error_visible, after_code,
+        )
+        if email_visible and password_visible:
+            raise LoginProblem(
+                'Форма входа осталась открыта. Сайт не подтвердил авторизацию '
+                'после отправки данных. Проверь сообщение под формой.'
+            )
+        raise LoginProblem(
+            'Форма входа изменилась, но сайт не показал подтверждение аккаунта. '
+            'Нужна проверка интерфейса сайта.'
+        )
 
     async def _fill_code(self, code):
         self._check_origin()

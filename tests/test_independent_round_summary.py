@@ -136,3 +136,90 @@ def test_frontend_not_connected_to_demo_or_live_tile_limit():
     assert "/api/round-summary" in script
     assert "demo_ledgers" not in backend and "history_provider" not in backend
     assert "chosenLimit" not in script
+
+
+def test_browser_summary_independent_from_recent_tiles_and_demo():
+    from playwright.async_api import async_playwright
+    from urllib.parse import parse_qs, urlparse
+    from mini_app import response
+
+    async def case():
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 390, "height": 844})
+            errors, requests = [], []
+            page.on("pageerror", lambda err: errors.append(str(err)))
+
+            async def intercept(route):
+                url = route.request.url
+                if url.startswith("https://example.test/app"):
+                    await route.fulfill(content_type="text/html", body=response("/app")[2])
+                elif url.endswith("/access.js"):
+                    await route.fulfill(content_type="application/javascript", body=(
+                        "window.accessState={premium:true,registered:true};"
+                        "document.body.dataset.access='premium';"
+                        "window.canUsePremium=()=>true;"
+                        "window.refreshAccessOverview?.();"
+                    ))
+                elif url.endswith("/summary.js"):
+                    await route.fulfill(content_type="application/javascript",
+                                        body=response("/summary.js")[2])
+                elif url.endswith(("/history.js", "/controls.js", "/admin.js", "/site.js")):
+                    await route.fulfill(content_type="application/javascript", body="")
+                elif "/api/round-summary" in url:
+                    requests.append(parse_qs(urlparse(url).query))
+                    count = int(requests[-1]["rounds"][0])
+                    await route.fulfill(content_type="application/json", body=json.dumps({
+                        "rounds_requested": count, "rounds_available": count,
+                        "target": float(requests[-1]["target"][0]),
+                        "since_threshold": float(requests[-1]["since"][0]),
+                        "current": {
+                            "count": 3, "longest_wait": 47, "average_interval": 59,
+                            "minimum_interval": 21, "maximum_interval": 97,
+                            "average": 5.5, "maximum": 305.54, "below_two": 83,
+                        },
+                        "previous": {"count": 2}, "rounds_since_target": 47,
+                        "rounds_since_since": 47, "matches": [{
+                            "round_id": "r1", "coefficient": 305.54,
+                            "observed_at": "1794000000000", "source_time": None,
+                            "rounds_ago": 47, "interval_to_previous": 21,
+                        }], "match_rows_limited": False,
+                        "quality": {
+                            "complete_window": True, "complete_comparison": True,
+                            "window_has_discontinuities": False,
+                            "comparison_has_discontinuities": False,
+                            "duplicate_entries": 0, "unverified_source_timing": True,
+                        },
+                    }))
+                elif "/api/overview" in url or "/api/public" in url:
+                    await route.fulfill(content_type="application/json", body=json.dumps({
+                        "coefficients": ["1.50x", "3.00x"], "limit": 20,
+                        "last_round_at": 1794000000,
+                        "status": {"age_seconds": 1, "fresh": True,
+                                   "uptime_seconds": 123, "threshold": 3, "streak_count": 1},
+                        "demo": {},
+                    }))
+                else:
+                    await route.fulfill(content_type="application/javascript",
+                                        body="window.Telegram={WebApp:{initData:'fixture',ready(){},expand(){},setHeaderColor(){},setBackgroundColor(){}}};")
+
+            await page.route("**/*", intercept)
+            await page.goto("https://example.test/app")
+            await page.locator("#summary-accordion summary").click()
+            await page.wait_for_function("document.querySelector('#ind-found').textContent==='3'")
+            assert requests[0] == {"rounds": ["150"], "target": ["150"], "since": ["150"]}
+            assert await page.locator("#ind-since-count").inner_text() == "47"
+            assert await page.locator("#ind-compare").inner_text() == "+1"
+            assert await page.locator("#ind-summary-matches .ind-summary-match").count() == 1
+            await page.locator("#ind-rounds").fill("250")
+            await page.locator("#ind-target").fill("200")
+            await page.locator("#ind-since").fill("100")
+            await page.locator("#ind-summary-apply").click()
+            await page.wait_for_function("document.querySelector('#summary-heading').textContent.includes('250')")
+            assert requests[-1] == {"rounds": ["250"], "target": ["200"], "since": ["100"]}
+            await page.locator("#recent-limit").select_option("50")
+            assert "250 раундов" in await page.locator("#summary-heading").inner_text()
+            assert not errors, errors
+            await browser.close()
+
+    run(case())

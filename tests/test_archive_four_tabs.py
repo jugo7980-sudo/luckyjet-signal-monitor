@@ -53,8 +53,13 @@ def test_cycles_archived_across_demo_reset_and_user_reset_and_currencies():
         finish(original)
         await gate._demo_storage.save(redis, 42, original)
         first_id = (await redis.zrevrange(ARCHIVE_CYCLES + '42', 0, 0))[0]
-        original.reset(currency='KRW', balance_cents=100_000, base_stake_cents=100)
-        await gate._demo_storage.save(redis, 42, original)
+        reset = json.dumps({'action': 'demo_reset', 'confirm': True, 'value': {
+            'currency': 'KRW', 'balance': '100000', 'stake': '100',
+            'revision': original.reset_revision,
+        }}).encode()
+        status, _, raw = await controls(signed(42), gate, 'fixture', 'POST', reset)
+        assert status == '200 OK', raw
+        original = gate._demo_ledger(42)
         assert original.history == []
         assert await redis.zcard(ARCHIVE_CYCLES + '42') == 1
         finish(original)

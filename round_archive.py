@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import math
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 STREAM_KEY = "luckyjet:archive:v1:events"
@@ -20,6 +22,9 @@ SEEN_KEY = "luckyjet:archive:v1:seen"
 CURSOR_KEY = "luckyjet:archive:v1:last_id"
 HEALTH_KEY = "luckyjet:archive:v1:health"
 COLLECTOR_HEALTH_PREFIX = "luckyjet:archive:v1:collector:"
+COVERAGE_PREFIX = "luckyjet:archive:v1:coverage:"
+COVERAGE_STARTED_KEY = "luckyjet:archive:v1:coverage:started_at"
+COVERAGE_TZ = ZoneInfo("Asia/Vladivostok")
 
 # No MAXLEN or expiration: archival retention must not silently discard history.
 APPEND_LUA = r"""
@@ -27,6 +32,12 @@ local snapshots = cjson.decode(ARGV[1])
 local source = ARGV[2]
 local now = ARGV[3]
 local previous = redis.call('GET', KEYS[3])
+-- Track a successful, validated source snapshot (including duplicates).
+-- One field per collector and Vladivostok minute, with no key expiry.
+local function record_coverage()
+    redis.call('HSETNX', KEYS[5], ARGV[4], now)
+    redis.call('SET', KEYS[6], now, 'NX')
+end
 local anchor = 0
 for i=1,#snapshots do
     if previous and snapshots[i].id == previous then anchor = i; break end
@@ -49,6 +60,7 @@ for i=1,#snapshots do
 end
 if novel == 0 then
     redis.call('HSET',KEYS[4],'last_polled_at',now,'last_collector',source)
+    record_coverage()
     return {0, 0, 0, 1}
 end
 
@@ -88,6 +100,7 @@ if inserted > 0 then
         'last_collector',source)
 end
 redis.call('HSET',KEYS[4],'last_polled_at',now)
+record_coverage()
 return {inserted, gap and 1 or 0, first and 1 or 0, 0}
 """
 
@@ -135,10 +148,15 @@ class RoundArchive:
 
     async def append_snapshot(self, rounds, *, observed_at_ms=None) -> dict:
         snapshot = normalize_snapshot(rounds)
-        now = str(int(time.time() * 1000 if observed_at_ms is None else observed_at_ms))
+        timestamp_ms = int(time.time() * 1000 if observed_at_ms is None else observed_at_ms)
+        now = str(timestamp_ms)
+        minute = datetime.fromtimestamp(timestamp_ms / 1000, COVERAGE_TZ)
+        coverage_key = COVERAGE_PREFIX + minute.strftime("%Y-%m-%d")
+        minute_field = f"{self.name}:{minute.hour * 60 + minute.minute}"
         result = await self.redis.eval(
-            APPEND_LUA, 4, STREAM_KEY, SEEN_KEY, CURSOR_KEY, HEALTH_KEY,
-            json.dumps(snapshot, separators=(",", ":")), self.name, now,
+            APPEND_LUA, 6, STREAM_KEY, SEEN_KEY, CURSOR_KEY, HEALTH_KEY,
+            coverage_key, COVERAGE_STARTED_KEY,
+            json.dumps(snapshot, separators=(",", ":")), self.name, now, minute_field,
         )
         added, gap, baseline, duplicate = map(int, result)
         await self.redis.hset(

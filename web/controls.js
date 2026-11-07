@@ -59,16 +59,16 @@
     );
   }
   async function request(method = 'GET', payload) {
-    if (!tg || !tg.initData) throw new Error('Открой приложение через Telegram-бота.');
+    if (!window.canUsePremium?.()) throw new Error('Требуется Premium.');
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), 8000);
     try {
       const result = await fetch('/api/controls', {
         method,
-        headers: {Authorization: 'tma ' + tg.initData,
+        headers: {...(tg?.initData ? {Authorization: 'tma ' + tg.initData} : {}),
           ...(method === 'POST' ? {'Content-Type': 'application/json'} : {})},
         ...(method === 'POST' ? {body: JSON.stringify(payload)} : {}),
-        credentials: 'omit', cache: 'no-store', signal: abort.signal,
+        credentials: 'same-origin', cache: 'no-store', signal: abort.signal,
       });
       const data = await result.json();
       if (!result.ok) throw new Error(data.error || 'Ошибка сохранения.');

@@ -108,9 +108,8 @@ def test_mobile_full_site_design_navigation_and_explanations():
 
                 await page.locator('nav [data-tab="demo"]').click()
                 await page.locator("#demo-controls").wait_for(state="visible")
-                assert "виртуальными" in (
-                    await page.locator("#page-demo .screen-subtitle").inner_text()
-                ).replace("виртуального", "виртуальными")
+                assert "виртуальным балансом" in await page.locator(
+                    "#page-demo .screen-subtitle").inner_text()
                 assert await page.locator("#high-gap-panel").is_hidden()
                 await page.locator("#demo-high-accordion summary").click()
                 await page.locator("#high-gap-panel").wait_for(state="visible")

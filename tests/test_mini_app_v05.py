@@ -81,9 +81,15 @@ def test_v05_compact_refresh_summary_and_throttled_polling():
             assert await page.locator('#coef-grid .coef').count() == 7
             assert '0,1 с' in await page.locator('#live-status').inner_text()
             await page.wait_for_function("document.querySelector('#refresh-data').dataset.state==='idle'")
-            await button.click()
-            await page.wait_for_function("document.querySelector('#refresh-data').dataset.state==='loading'")
-            assert await button.get_attribute('aria-busy') == 'true'
+            # Inspect the synchronous click handler before the 70ms mocked
+            # response can complete. Waiting separately for the transient
+            # loading state is flaky on a busy CI runner.
+            feedback = await page.evaluate("""() => {
+                const button = document.querySelector('#refresh-data');
+                button.click();
+                return {state: button.dataset.state, busy: button.getAttribute('aria-busy')};
+            }""")
+            assert feedback == {'state': 'loading', 'busy': 'true'}
             await page.wait_for_function("document.querySelector('#refresh-data').dataset.state==='success'")
             assert await button.locator('svg.refresh-check').count() == 1
 

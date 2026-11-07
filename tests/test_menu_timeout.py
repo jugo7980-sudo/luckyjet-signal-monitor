@@ -24,7 +24,7 @@ def test_inactivity_closes_only_menu_clears_pending_input_and_preserves_demo(mon
         assert 42 not in gate.menu_messages and 42 not in gate.demo_pending_inputs
         assert gate.history_messages[42] == 10
         assert ledger.enabled and ledger.balance_cents == 1234500
-        assert any(b['callback_data'] == 'menu_open' for row in gate._history_markup(42)['inline_keyboard'] for b in row)
+        assert any(b.get('callback_data') == 'menu_open' for row in gate._history_markup(42)['inline_keyboard'] for b in row)
         deleted = [p['message_id'] for m, p in request.calls if m == 'deleteMessage']
         assert deleted == [menu_id]
         await gate.close()

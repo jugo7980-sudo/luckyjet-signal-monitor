@@ -217,9 +217,9 @@
       }
       case 'high_days':
         heading('Интервалы >100x', 'По дням · Владивосток, UTC+10');
-        if (!archive && data.last_high && !data.view_reset)
+        if (!archive && data.last_high)
           info('Последний >100x', String(data.last_high.value) + 'x', formatTime(data.last_high.stamp));
-        if (!archive && !data.view_reset)
+        if (!archive && data.last_high)
           info('Раундов после >100x', data.gap ? 'Неполные данные' : data.since_high);
         datePicker('high_days');
         if (!data.days.length) note('Нет сохранённых дней.');

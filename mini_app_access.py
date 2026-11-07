@@ -7,6 +7,7 @@ Telegram Mini Apps use server-verified Telegram initData.
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -112,12 +113,14 @@ async def guest_overview(gate, query=''):
     except ValueError:
         return json_response('400 Bad Request', {'error': 'Доступно 20, 30, 50 или 100 коэффициентов.'})
     source = gate.history_provider() if gate.history_provider else []
-    from main import format_history_coefficient
     coefficients = []
     for value in list(source or [])[:int(limit)]:
-        formatted = format_history_coefficient(value)
-        if formatted is not None:
-            coefficients.append(formatted)
+        try:
+            number = float(str(value).strip().rstrip('xX').replace(',', '.'))
+        except (ValueError, TypeError):
+            continue
+        if math.isfinite(number) and 1 <= number <= 100000:
+            coefficients.append(f'{number:.2f}x')
     return json_response('200 OK', {
         'coefficients': coefficients,
         'last_round_at': gate.last_round_at,

@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 from .demo_money import CURRENCIES, valid_amount, format_money
+from .high_gap_demo import HighGapStrategy
 
 
 DEFAULT_BALANCE_CENTS = 1_000_000  # $10,000.00
@@ -60,6 +61,12 @@ class DemoLedger:
         self.cycle_started_at = state.get("cycle_started_at")
         self.cycle_rounds = list(state.get("cycle_rounds", []))[-100:]
         self.history = list(state.get("history", []))
+        self.high_history = list(state.get("high_history") or [])[:MAX_HISTORY]
+        self.pending_archive_cycles = list(state.get("pending_archive_cycles") or [])
+        self.high_gap = HighGapStrategy(
+            state.get("high_gap"), min_stake=self.minimum_stake_cents,
+            default_stake=self.base_stake_cents,
+        )
         self.daily_max_steps = dict(state.get("daily_max_steps", {}))
         # Source-based streak statistics are independent of DEMO trigger,
         # balances and completed cycles. Do not migrate the legacy
@@ -133,6 +140,9 @@ class DemoLedger:
             "cycle_started_at": self.cycle_started_at,
             "cycle_rounds": self.cycle_rounds,
             "history": self.history,
+            "high_history": self.high_history,
+            "pending_archive_cycles": self.pending_archive_cycles,
+            "high_gap": self.high_gap.dump(),
             "daily_max_steps": self.daily_max_steps,
             "daily_max_low_streak": self.daily_max_low_streak,
             "consecutive_below_two": self.consecutive_below_two,
@@ -196,7 +206,26 @@ class DemoLedger:
             return None, False
         before_reset = (position is not None and self.demo_after_stream_id
                         and position <= self._stream_position(self.demo_after_stream_id))
+        high_committed = self.high_gap.enabled and self.high_gap.phase == 'betting'
+        # Both virtual stakes are resolved from one pre-result balance. The
+        # established <2x strategy has priority if funds cannot cover both.
+        legacy_commit = (
+            self.next_stake_cents if self.enabled and self.active
+            and self.balance_cents >= self.next_stake_cents else 0
+        )
+        high_funded = (
+            not high_committed or
+            self.balance_cents >= legacy_commit + self.high_gap.stake_cents
+        )
         event = self.process_round(coefficient, now=now) if self.enabled and not before_reset else None
+        if not before_reset:
+            self.balance_cents, high_cycle = self.high_gap.on_round(
+                coefficient, round_id=identifier, currency=self.currency,
+                balance=self.balance_cents, now=now, allow_funding=high_funded,
+            )
+            if high_cycle is not None:
+                self.high_history.insert(0, high_cycle)
+                self.high_history = self.high_history[:MAX_HISTORY]
         self.last_archived_round_id = identifier
         if position is not None:
             self.last_archived_stream_id = str(stream_id)
@@ -272,6 +301,34 @@ class DemoLedger:
         last_stream_id = self.last_archived_stream_id
         enabled = self.enabled
         trigger = self.trigger_streak
+        old_currency = self.currency
+        high_was_enabled = self.high_gap.enabled
+        high_settings = self.high_gap.dump()
+        # Preserve every available pre-reset cycle, including any that was
+        # open at the moment of reset. The saved current journal still clears.
+        if self.active:
+            self._finish_cycle(outcome="stopped_by_user")
+        if self.high_gap.rounds:
+            closed = self.high_gap.stop(
+                currency=self.currency, balance=self.balance_cents,
+            )
+            if closed:
+                self.high_history.insert(0, closed)
+                self.high_history = self.high_history[:MAX_HISTORY]
+        pending = self.pending_archive_cycles + self.history + self.high_history
+        # Reset never silently changes the user's on/off preference.
+        high_settings["enabled"] = high_was_enabled
+        high_settings["phase"] = "waiting_reference"
+        high_settings["reference_id"] = ""
+        high_settings["reference_value"] = ""
+        high_settings["reference_at"] = None
+        high_settings["elapsed"] = 0
+        high_settings["rounds"] = []
+        high_settings["started_at"] = None
+        high_settings["balance_before_cents"] = None
+        high_settings["total_stake_cents"] = 0
+        if currency != old_currency:
+            high_settings["stake_cents"] = base_stake_cents
         self.__init__(
             enabled=enabled,
             trigger_streak=trigger,
@@ -282,6 +339,9 @@ class DemoLedger:
             reset_revision=reset_revision or self.reset_revision,
             daily_max_low_streak=streak_maxima,
             consecutive_below_two=ongoing_streak,
+            high_gap=high_settings,
+            high_history=[],
+            pending_archive_cycles=pending,
             last_archived_round_id=last_round_id,
             last_archived_stream_id=last_stream_id,
             balance_verified=True,
@@ -296,8 +356,10 @@ class DemoLedger:
         financial_complete: bool = True,
         now=None,
     ):
+        # The other strategy may change the shared balance in this cycle.
+        # A global balance delta would falsify this strategy's net result.
         net_cents = (
-            self.balance_cents - self.cycle_start_balance_cents
+            int(payout_cents or 0) - self.cycle_stake_cents
             if financial_complete
             else None
         )

@@ -11,6 +11,30 @@
   let loadedAt = 0;
   let latest = null;
   const all = [...document.querySelectorAll('[data-control]')];
+  const highPanel = document.getElementById('high-gap-panel');
+  function renderHighGap(high, currency = 'USD', balanceVerified = true) {
+    high = high || {};
+    const phase = high.phase || 'waiting_reference';
+    const enabled = Boolean(high.enabled);
+    const state = phase === 'paused_gap' ? 'Остановлено: пропуск данных'
+      : phase === 'paused_funds' ? 'Остановлено: недостаточно баланса'
+      : !enabled ? 'Выключена'
+      : phase === 'waiting_reference' ? 'Ожидает коэффициент выше x' + high.reference
+      : phase === 'waiting' ? 'Ожидает ' + high.remaining + ' раундов'
+      : 'Делает фиксированные виртуальные ставки каждый раунд';
+    document.getElementById('demo-high-preview').textContent = state;
+    document.getElementById('high-gap-state').textContent = state;
+    const progress = high.reference_value
+      ? 'Последний >x' + high.reference + ': x' + high.reference_value +
+        ' · Раундов после: ' + high.elapsed + ' / ' + high.wait_rounds : 'Нет подтверждённого опорного раунда';
+    document.getElementById('high-gap-progress').textContent = progress;
+    const money = window.formatDemoMoney;
+    const output = high.steps ? ('Ставок: ' + high.steps + ' · Сумма: ' +
+      money(high.total_stake_cents, currency)) : (high.last_outcome ? 'Последний итог: ' + high.last_outcome : '');
+    document.getElementById('high-gap-outcome').textContent =
+      (balanceVerified === false ? 'Общий баланс не подтверждён. ' : '') + output;
+  }
+  window.renderHighGapSnapshot = renderHighGap;
   function message(text, error = false) {
     const target = !document.getElementById('page-demo').hidden ? demoStatus : settingsStatus;
     target.textContent = String(text || '');
@@ -40,6 +64,7 @@
     window.renderDemoBalance?.(data.demo);
     const demo = data.demo, settings = data.settings;
     demoPanel.hidden = false;
+    highPanel.hidden = false;
     settingsPanel.hidden = false;
     probeArea.hidden = !data.admin;
     if (data.probe) showProbe(data.probe);
@@ -60,6 +85,23 @@
     document.getElementById('demo-low-streak').textContent =
       demo.active ? 'Цикл активен · шаг ' + demo.step :
         'Текущая серия <2x: ' + demo.low_streak + ' из ' + demo.trigger;
+    const high = data.high_gap || {};
+    renderHighGap(high, demo.currency, demo.balance_verified);
+    document.getElementById('high-gap-toggle').textContent = high.enabled ?
+      'Выключить стратегию №2' : 'Включить стратегию №2';
+    const fields = {
+      'high-gap-reference': high.reference || '100',
+      'high-gap-wait': high.wait_rounds ?? 100,
+      'high-gap-target': high.target || '100',
+      'high-gap-stake': ((high.stake_cents ?? demo.base_stake_cents) / 100)
+        .toFixed(demo.currency === 'KRW' ? 0 : 2),
+    };
+    for (const [id, val] of Object.entries(fields)) {
+      const field = document.getElementById(id);
+      if (document.activeElement !== field) field.value = String(val);
+    }
+    document.getElementById('high-gap-stake-label').textContent =
+      'Фиксированная ставка, ' + (demo.currency || 'USD');
     document.getElementById('settings-notifications').textContent = settings.notifications ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-sound').textContent = settings.sound ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-threshold').value = String(settings.threshold);
@@ -68,7 +110,8 @@
     for (const node of all) node.disabled = busy || (
       demo.active && (node.id === 'demo-trigger-select' || node.id === 'demo-stake-input' ||
         node.id === 'demo-stake-save' || (node.id === 'demo-toggle' && demo.enabled))
-    );
+    ) || (high.active && ['high-gap-reference', 'high-gap-wait',
+      'high-gap-target', 'high-gap-stake', 'high-gap-save'].includes(node.id));
   }
   async function request(method = 'GET', payload) {
     if (!window.canUsePremium?.()) throw new Error('Требуется Premium.');
@@ -159,6 +202,21 @@
   document.getElementById('demo-stake-save').addEventListener('click', () =>
     action('demo_stake', document.getElementById('demo-stake-input').value));
   document.getElementById('demo-probe-start').addEventListener('click', () => action('demo_probe_start'));
+  document.getElementById('high-gap-toggle').addEventListener('click', () => action('high_gap_toggle'));
+  document.getElementById('high-gap-save').addEventListener('click', () => {
+    const reference = document.getElementById('high-gap-reference').value.trim();
+    const target = document.getElementById('high-gap-target').value.trim();
+    const waitText = document.getElementById('high-gap-wait').value.trim();
+    const stake = document.getElementById('high-gap-stake').value.trim();
+    if (!/^\d{1,6}$/.test(waitText) || !reference || !target || !stake) {
+      message('Проверь коэффициенты, число раундов и сумму ставки.', true); return;
+    }
+    action('high_gap_config', {reference, wait_rounds: Number(waitText), target, stake});
+  });
+  document.getElementById('high-gap-history').addEventListener('click', () => {
+    document.querySelector('nav [data-tab="history"]').click();
+    window.openHighGapHistory?.();
+  });
   const resetModal = document.getElementById('demo-reset-modal');
   const resetForm = document.getElementById('demo-reset-form');
   const resetCurrency = document.getElementById('demo-reset-currency');
@@ -225,7 +283,7 @@
     generation++;
     latest = null; loadedAt = 0;
     resetModal.hidden = true;
-    demoPanel.hidden = true; settingsPanel.hidden = true;
+    demoPanel.hidden = true; highPanel.hidden = true; settingsPanel.hidden = true;
     probeArea.hidden = true;
     demoStatus.textContent = 'Нет доступа';
     settingsStatus.textContent = 'Нет доступа';

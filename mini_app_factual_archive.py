@@ -199,24 +199,28 @@ async def _archive_demo_stats(redis, uid, day=None):
         page += 1
     groups = {}
     for record in records:
+        strategy = record.get('strategy', 'classic')
         code = record.get('currency') or 'USD'
-        group = groups.setdefault(code, [])
-        group.append(record)
-    result = {}
-    for code, group in groups.items():
-        good = [r for r in group if r.get('net_cents') is not None
-                and r.get('outcome') in {'recovered', 'insufficient_balance'}]
-        result[code] = {
-            'total': len(group),
-            'recovered': sum(r.get('outcome') == 'recovered' for r in group),
-            'lost': sum(r.get('outcome') == 'insufficient_balance' for r in group),
-            'incomplete': sum(r.get('outcome') == 'incomplete_data' for r in group),
-            'stopped': sum(r.get('outcome') == 'stopped_by_user' for r in group),
-            'history_net_cents': sum(int(r['net_cents']) for r in good),
-            'average_steps': round(sum(int(r.get('steps') or 0) for r in good) / len(good), 1) if good else 0,
-        }
+        groups.setdefault(strategy, {}).setdefault(code, []).append(record)
+    by_strategy = {}
+    for strategy, currencies in groups.items():
+        by_strategy[strategy] = {}
+        for code, group in currencies.items():
+            good = [r for r in group if r.get('net_cents') is not None
+                    and r.get('outcome') not in {'incomplete_data'}]
+            by_strategy[strategy][code] = {
+                'total': len(group),
+                'recovered': sum(r.get('outcome') == 'recovered' for r in group),
+                'lost': sum(r.get('outcome') == 'insufficient_balance' for r in group),
+                'incomplete': sum(r.get('outcome') == 'incomplete_data' for r in group),
+                'stopped': sum(r.get('outcome') == 'stopped_by_user' for r in group),
+                'reference_changed': sum(r.get('outcome') == 'reference_changed' for r in group),
+                'history_net_cents': sum(int(r['net_cents']) for r in good),
+                'average_steps': round(sum(int(r.get('steps') or 0) for r in good) / len(good), 1) if good else 0,
+            }
     return {'view': 'archive_demo_stats', 'day': day,
-            'total': len(records), 'currencies': result, 'truncated': False}
+            'total': len(records), 'currencies': by_strategy.get('classic', {}),
+            'strategies': by_strategy, 'truncated': False}
 
 
 async def archive_history(redis, uid, view, *, day=None, page=0, item_id=None):

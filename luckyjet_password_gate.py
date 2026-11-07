@@ -2151,6 +2151,15 @@ class TelegramPasswordGate(HistoryPanels):
                 if ledger.enabled and not before_reset:
                     ledger.balance_verified = False
                 entry = ledger.finish_active("incomplete_data") if ledger.enabled and ledger.active and not before_reset else None
+                if ledger.high_gap.enabled and not before_reset:
+                    high_entry, had_unverified_bets = ledger.high_gap.on_gap(
+                        currency=ledger.currency, balance=ledger.balance_cents,
+                    )
+                    if high_entry is not None:
+                        ledger.high_history.insert(0, high_entry)
+                        ledger.high_history = ledger.high_history[:MAX_HISTORY]
+                    if had_unverified_bets:
+                        ledger.balance_verified = False
                 await self._persist_demo(user_id)
             if entry is not None and not silent:
                 await self._send_demo_warning(

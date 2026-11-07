@@ -21,7 +21,7 @@ async def seed(redis, coefficients, *, gap_at=None):
             await redis.xadd(STREAM_KEY, {"type": "gap", "previous_round_id": "unknown"})
         await redis.xadd(STREAM_KEY, {
             "type": "round", "round_id": "r" + str(i),
-            "coefficient": value, "observed_at": str(1794000000000 + i),
+            "coefficient": str(value), "observed_at": str(1794000000000 + i),
             "source_time": "2026-11-08T00:00:00+10:00",
         })
 

@@ -1,5 +1,8 @@
-FROM ghcr.io/xtls/xray-core:26.10.29 AS xray\n\nFROM python:3.12-slim
-COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray\nWORKDIR /app
+FROM ghcr.io/xtls/xray-core:26.10.29 AS xray
+
+FROM python:3.12-slim
+COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
+WORKDIR /app
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

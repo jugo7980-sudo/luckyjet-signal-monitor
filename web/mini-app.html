@@ -251,6 +251,87 @@ nav button:focus-visible{outline-offset:1px}
 }
 @media(prefers-reduced-motion:reduce){.history-outline,.history-date-button,.refresh-compact{transition:none}}
 
+
+/* v0.2.4: compact home screen; keep other screens/DEMO and API unchanged. */
+.wrap{padding-bottom:calc(160px + env(safe-area-inset-bottom))}
+html{scroll-padding-bottom:calc(118px + env(safe-area-inset-bottom))}
+#page-home .home-heading{margin:10px 0 2px}
+#page-home .home-heading h1{font-size:25px;line-height:1.2}
+#page-home .screen-subtitle{font-size:11px;line-height:1.4;margin:0 0 9px;color:#ada2bd}
+#page-home #live-home{background:none;border:0;box-shadow:none;margin:8px 0 0;padding:0;border-radius:0}
+#page-home .recent-results-card{background:linear-gradient(155deg,#282034,#211b2e);border:1px solid #58446c;border-radius:19px;padding:13px 13px 10px;box-shadow:0 6px 24px #06010e1c}
+#page-home .recent-results-card .home-row{margin:0 0 10px}
+#page-home .recent-results-card .live-label{font-size:14px;font-weight:650;margin:0;color:#ddd1eb}
+#page-home .recent-results-card #recent-limit{min-height:37px;min-width:70px;padding:6px 9px;font-size:13px}
+#page-home .recent-results-card .coef-grid{gap:5px}
+#page-home .recent-results-card .coef{min-height:39px;display:flex;align-items:center;justify-content:center;padding:5px 2px;border-radius:10px;font-size:11px;line-height:1.1}
+#page-home .recent-results-card .below-tiles{margin:11px 0 0}
+#page-home .recent-results-card .refresh-compact{height:43px;min-height:43px;margin:0;border-radius:12px;font-size:13px}
+#page-home #last-round{font-size:11px;margin:7px 0 0;padding:0;color:#aa9eba}
+#page-home #private-overview{display:grid;gap:11px;margin-top:11px}
+#page-home #summary-accordion{margin:0;padding:0;border:1px solid #71518b;border-radius:17px;background:linear-gradient(150deg,#32253f,#271e34);box-shadow:0 7px 25px #0002;overflow:hidden}
+#page-home #summary-accordion>.summary-trigger{min-height:57px;border:0;background:transparent;box-shadow:none;border-radius:0;padding:11px 12px}
+#page-home #summary-accordion .summary-trigger-text{min-width:0}
+#page-home #summary-accordion .summary-trigger-text>strong{font-size:14px;line-height:1.35}
+#page-home #summary-accordion .summary-preview{font-size:11px;line-height:1.45;gap:5px;margin-top:4px;color:#bcacd0}
+#page-home #summary-accordion #summary-preview-results:not([hidden]){display:flex;flex-wrap:wrap;gap:4px 12px}
+#page-home #summary-accordion .summary-details{padding:8px 12px 14px}
+#page-home #summary-accordion .field-help{font-size:11px;margin:3px 0 9px}
+#page-home #summary-accordion .ind-summary-controls{gap:5px;margin:7px 0}
+#page-home #summary-accordion .ind-summary-controls label{margin-top:4px;font-size:12px}
+#page-home #summary-accordion .ind-summary-controls label small{font-size:10px}
+#page-home #summary-accordion .ind-summary-controls input,
+#page-home #summary-accordion .ind-summary-controls select{min-height:41px;font-size:13px}
+#page-home #summary-accordion #ind-summary-apply{margin:8px 0 2px;min-height:43px}
+#page-home #summary-accordion .result-context{font-size:11px;margin:11px 0 6px;padding:9px 10px}
+#page-home #summary-accordion #ind-summary-status{font-size:11px;line-height:1.45;margin:5px 0 9px}
+#page-home #summary-accordion .insight-heading{font-size:13px;margin:11px 0 8px}
+#page-home #summary-accordion .ind-summary-cards{gap:7px}
+#page-home #summary-accordion .ind-summary-cards>.ind-stat{min-height:111px;padding:10px;border-radius:13px}
+#page-home #summary-accordion .ind-summary-cards .ind-stat-icon{font-size:13px;width:18px;height:18px;margin-bottom:3px}
+#page-home #summary-accordion .ind-summary-cards .ind-stat-label{font-size:11px;line-height:1.27;margin-bottom:4px}
+#page-home #summary-accordion .ind-summary-cards .ind-stat strong{font-size:20px;margin:0 0 5px}
+#page-home #summary-accordion .ind-summary-cards .ind-stat-hint{font-size:10px;line-height:1.35}
+#page-home #summary-accordion .ind-summary-cards .ind-stat[data-missing="true"] strong{font-size:17px}
+#page-home #summary-accordion .ind-summary-title{font-size:13px;margin:16px 0 7px}
+#page-home #summary-accordion .ind-summary-match{padding:9px;border-radius:11px;margin:5px 0;font-size:11px}
+#page-home #summary-accordion .ind-summary-match b{font-size:13px}
+.section-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #694a80;background:#352642;color:#e6c9ff;font:600 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:left;min-height:42px;border-radius:12px;padding:11px 13px;margin:10px 0 0}
+.section-toggle[aria-expanded="true"]{background:#453052;border-color:#8c62aa}
+.section-toggle span{color:#c99cee;font-size:15px;transition:transform .18s}
+.section-toggle[aria-expanded="true"] span{transform:rotate(180deg)}
+#page-home #summary-extra-stats{margin-top:8px}
+#page-home #summary-explainer{margin:12px 0 0;border:0;background:transparent;border-radius:0;overflow:visible}
+#page-home #summary-explainer .summary-help-btn{margin:0;background:#2e223d;min-height:42px;border-color:#614778}
+#page-home #summary-help-body{border:1px solid #604773;border-top:0;background:#251d32;border-radius:0 0 12px 12px;padding:9px 11px}
+#page-home #summary-help-body p{font-size:11px;line-height:1.52;margin:6px 0}
+#page-home #monitoring-accordion{display:block;margin:0;padding:0;border:1px solid #5b456f;border-radius:17px;background:linear-gradient(160deg,#2a2137,#211a2d);overflow:hidden}
+#page-home #monitoring-accordion>.monitoring-toggle{cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:57px;padding:12px 14px;list-style:none}
+#page-home #monitoring-accordion>.monitoring-toggle::-webkit-details-marker{display:none}
+#page-home .monitoring-toggle strong{font-size:14px;color:#f4eafb}
+#page-home .monitoring-toggle small{display:block;margin-top:3px;font-size:11px;line-height:1.3;font-weight:400;color:#b9a9c9}
+#page-home .monitoring-toggle small b{font-weight:650;color:#afdfc9}
+#page-home .monitoring-chevron{color:#d1adf0;transition:transform .15s;font-size:17px}
+#page-home #monitoring-accordion[open] .monitoring-chevron{transform:rotate(180deg)}
+#page-home #monitoring-accordion .monitoring-details{padding:0 14px 9px;border-top:1px solid #4c3a5b}
+#page-home #monitoring-accordion .monitoring-details>.field-help{font-size:11px;margin:9px 0 2px}
+#page-home #monitoring-accordion .metric{padding:9px 0;align-items:start}
+#page-home #monitoring-accordion .metric span{min-width:0}
+#page-home #monitoring-accordion .metric strong{max-width:44%;overflow-wrap:anywhere}
+#page-home #monitoring-accordion .metric span small{font-size:10px}
+#page-home #private-overview>.home-disclaimer{font-size:10px;line-height:1.35;margin:0 4px 0;color:#9285a1}
+#page-home #live-status{margin:6px 0 0;font-size:11px}
+#page-home .recent-results-card,#page-home #summary-accordion,#page-home #monitoring-accordion{scroll-margin-bottom:calc(122px + env(safe-area-inset-bottom))}
+@media(max-width:350px){
+ #page-home #live-home{margin-top:6px}
+ #page-home .recent-results-card{padding:10px}
+ #page-home .recent-results-card .coef{min-height:35px;font-size:9px}
+ #page-home #summary-accordion .summary-details{padding:8px 10px 11px}
+ #page-home #summary-accordion .ind-summary-cards>.ind-stat{padding:8px;min-height:118px}
+ #page-home #summary-accordion .ind-summary-cards .ind-stat-label{font-size:10.5px}
+}
+@media(prefers-reduced-motion:reduce){.section-toggle span,#page-home .monitoring-chevron{transition:none}}
+
 </style></head><body data-access="guest">
 <svg style="display:none" aria-hidden="true"><symbol id="plane" viewBox="0 0 24 24"><path d="m21 3-6 18-4-8-8-4 18-6Z"/><path d="m11 13 10-10"/></symbol><symbol id="home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/></symbol><symbol id="demo" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4 19a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2L14 9V3M7 15h10"/></symbol><symbol id="history" viewBox="0 0 24 24"><path d="M4 4v5h5M4 9a8 8 0 1 1 0 7M12 7v5l3 2"/></symbol><symbol id="settings" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="#15131d"/><circle cx="15" cy="12" r="2" fill="#15131d"/><circle cx="9" cy="18" r="2" fill="#15131d"/></symbol><symbol id="account" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol><symbol id="rocket" viewBox="0 0 24 24"><path d="M5 16.5 3.5 21 8 19.5M9 15l-3-3 3-5c3-3 7-4 12-4 0 5-1 9-4 12l-5 3-3-3Z"/><circle cx="15.5" cy="8.5" r="2"/></symbol></svg>
 <div class="wrap"><header class="topbar"><div class="brand"><span class="mark"><svg><use href="#rocket"/></svg></span><span>Lucky Jet</span></div><div class="topbar-right"><div class="top-balance"><small id="header-premium" class="premium-only">Premium активен</small><small>DEMO</small><strong id="header-balance">—</strong></div><div class="top-actions"><button type="button" class="top-premium" id="top-premium" hidden>Premium</button><button type="button" class="top-login" id="top-login">Войти</button></div></div></header>

@@ -10,6 +10,7 @@ from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
 from archive_integrity import archive_day_evidence
+from mini_app_factual_archive import VIEWS as FACTUAL_VIEWS, archive_history
 from round_archive import STREAM_KEY
 from coefficient_stats import THRESHOLDS
 from mini_app_api import json_response, telegram_user
@@ -17,7 +18,7 @@ from luckyjet_signal.demo_ledger import DemoLedger, DEFAULT_BALANCE_CENTS, MAX_H
 
 TZ = ZoneInfo('Asia/Vladivostok')
 VIEWS = {'days', 'day', 'high_days', 'high_day', 'high_item',
-         'cycles', 'cycle', 'demo_stats', 'max_steps', 'max_step_day', 'archive'}
+         'cycles', 'cycle', 'demo_stats', 'max_steps', 'max_step_day', 'archive'} | FACTUAL_VIEWS
 DAY_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 ITEM_PATTERN = re.compile(r'^[0-9a-f]{16}$')
 CURSOR_PATTERN = re.compile(r'^\d{1,16}-\d{1,16}$')
@@ -253,14 +254,27 @@ async def history(authorization, gate, token, query=''):
         cursor = args.get('cursor', [None])[0]
         if cursor is not None and (view != 'archive' or not CURSOR_PATTERN.fullmatch(cursor)):
             raise ValueError('Invalid archive cursor')
-        if item_id is not None and not ITEM_PATTERN.fullmatch(item_id):
+        if item_id is not None and not (
+            (view == 'archive_cycle' and re.fullmatch(r'[0-9a-f]{64}', item_id)) or
+            (view != 'archive_cycle' and ITEM_PATTERN.fullmatch(item_id))
+        ):
             raise ValueError('Invalid item')
-        if (view in {'day', 'high_day', 'max_step_day'} and day is None or
-            view == 'high_item' and item_id is None or
+        if (view in {'day', 'high_day', 'max_step_day',
+                     'archive_day', 'archive_high_day', 'archive_high_item', 'archive_max_step_day'} and day is None or
+            view in {'high_item', 'archive_high_item', 'archive_cycle'} and item_id is None or
             view == 'cycle' and index is None):
             raise ValueError('Required parameter missing')
     except (ValueError, KeyError, TypeError):
         return json_response('400 Bad Request', {'error': 'Некорректные параметры истории.'})
+
+    if view in FACTUAL_VIEWS:
+        redis = getattr(gate, 'redis', None)
+        if redis is None:
+            return json_response('503 Service Unavailable', {'error': 'Хранилище архива недоступно.'})
+        result = await archive_history(redis, uid, view, day=day, page=page, item_id=item_id)
+        if result.get('not_found'):
+            return json_response('404 Not Found', {'error': 'Запись архива не найдена.'})
+        return json_response('200 OK', result)
 
     redis_for_reset = getattr(gate, 'redis', None)
     markers = {}
@@ -293,11 +307,21 @@ async def history(authorization, gate, token, query=''):
             })
         if view == 'max_steps':
             marker = markers.get('max_steps')
-            days = sorted((d for d in ledger.daily_max_low_streak
+            maxima = dict(ledger.daily_max_low_streak)
+            if marker and redis_for_reset is not None:
+                summary, steps = await _after_reset_day(redis_for_reset, marker['day'], marker)
+                if summary is not None:
+                    if summary['total']:
+                        maxima[marker['day']] = steps
+                    else:
+                        maxima.pop(marker['day'], None)
+                else:
+                    maxima[marker['day']] = None
+            days = sorted((d for d in maxima
                            if not marker or d >= marker['day']), reverse=True)
             return json_response('200 OK', {
                 'view': view, 'days': [
-                    {'day': key, 'steps': ledger.daily_max_low_streak[key]}
+                    {'day': key, 'steps': maxima[key]}
                     for key in days[page*10:page*10+10]],
                 'total': len(days), 'page': page, 'view_reset': bool(marker),
             })
@@ -332,6 +356,10 @@ async def history(authorization, gate, token, query=''):
         if marker:
             raw = await redis.zrevrange('luckyjet:coef:days', 0, -1)
             days = [_string(d) for d in raw if _string(d) >= marker['day']]
+            if marker['day'] in days:
+                summary, _ = await _after_reset_day(redis, marker['day'], marker)
+                if summary is not None and summary['total'] == 0:
+                    days.remove(marker['day'])
             total = len(days)
             days = days[page*10:page*10+10]
         else:
@@ -359,6 +387,13 @@ async def history(authorization, gate, token, query=''):
         if marker:
             raw = await redis.zrevrange('luckyjet:coef:high:days', 0, -1)
             eligible_days = [_string(d) for d in raw if _string(d) >= marker['day']]
+            if marker['day'] in eligible_days:
+                raw_ids = await redis.lrange(f'luckyjet:coef:high:{marker["day"]}', 0, -1)
+                raw_entries = await redis.hmget('luckyjet:coef:high:entries', raw_ids) if raw_ids else []
+                found = any(entry and float(entry.get('stamp') or 0)*1000 > marker['at_ms']
+                            for entry in (_entry(value) for value in raw_entries))
+                if not found:
+                    eligible_days.remove(marker['day'])
             total = len(eligible_days)
             days = eligible_days[page*10:page*10+10]
         else:
@@ -367,6 +402,8 @@ async def history(authorization, gate, token, query=''):
         state = {_string(k): _string(v) for k, v in
                  (await redis.hgetall('luckyjet:coef:high:state')).items()}
         previous = json.loads(state['last_high']) if state.get('last_high') else None
+        if marker and previous and float(previous.get('stamp') or 0) * 1000 <= marker['at_ms']:
+            previous = None
         return json_response('200 OK', {
             'view': view, 'total': total, 'page': page,
             'days': [_string(d) for d in days],

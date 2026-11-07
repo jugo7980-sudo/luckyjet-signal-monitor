@@ -8,6 +8,9 @@
   const back = document.getElementById('history-back');
   const refresh = document.getElementById('history-refresh');
   const tabs = [...document.querySelectorAll('[data-history-view]')];
+  const archiveTabs = [...document.querySelectorAll('[data-archive-view]')];
+  const isArchive = view => String(view).startsWith('archive_');
+  const viewFor = view => isArchive(args.view) ? 'archive_' + view : view;
   const PAGE_SIZE = 10;
   const LIMITS = [2, 5, 10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000];
   let current = null;
@@ -88,17 +91,26 @@
     root.appendChild(button);
   }
   function setTabs() {
-    const active = args.view === 'archive' ? 'archive' : ['days', 'day'].includes(args.view) ? 'days'
-      : ['high_days', 'high_day', 'high_item'].includes(args.view) ? 'high_days'
-      : ['cycles', 'cycle', 'demo_stats'].includes(args.view) ? 'cycles' : 'max_steps';
-    for (const button of tabs) button.setAttribute('aria-selected', String(button.dataset.historyView === active));
-    document.getElementById('history-reset-scope').hidden = active === 'archive';
+    const archive = isArchive(args.view);
+    const view = archive ? args.view.slice(8) : args.view;
+    const active = ['days', 'day'].includes(view) ? 'days'
+      : ['high_days', 'high_day', 'high_item'].includes(view) ? 'high_days'
+      : ['cycles', 'cycle', 'demo_stats'].includes(view) ? 'cycles' : 'max_steps';
+    document.getElementById('history-live-tabs').hidden = archive;
+    document.getElementById('history-archive-tabs').hidden = !archive;
+    document.getElementById('history-archive-exit').hidden = !archive;
+    document.getElementById('history-reset-panel').hidden = archive;
+    document.getElementById('history-archive-launch').hidden = archive || args.view !== 'days';
+    for (const button of tabs)
+      button.setAttribute('aria-selected', String(button.dataset.historyView === active));
+    for (const button of archiveTabs)
+      button.setAttribute('aria-selected', String(button.dataset.archiveView === 'archive_' + active));
   }
   function setPager(data) {
     const page = Number(data.page || 0);
     const total = Number(data.total || 0);
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const visible = ['days', 'high_days', 'high_day', 'cycles', 'max_steps'].includes(data.view);
+    const visible = ['days', 'high_days', 'high_day', 'cycles', 'max_steps'].includes(isArchive(data.view) ? data.view.slice(8) : data.view);
     pager.hidden = !visible;
     if (!visible) return;
     document.getElementById('history-page-number').textContent = (page + 1) + ' / ' + pages;
@@ -115,7 +127,7 @@
     button.type = 'button';
     button.addEventListener('click', () => {
       if (!input.value || input.value > input.max) { status.textContent = 'Выбери корректную дату.'; return; }
-      navigate(view === 'archive' ? 'archive' : view === 'days' ? 'day' : view === 'max_steps' ? 'max_step_day' : 'high_day', {day: input.value}, true);
+      navigate(view === 'archive' ? 'archive' : view === 'days' ? viewFor('day') : view === 'max_steps' ? viewFor('max_step_day') : view === 'cycles' ? viewFor('cycles') : viewFor('high_day'), {day: input.value}, true);
     });
     wrap.append(input, button);
     root.appendChild(wrap);
@@ -126,7 +138,9 @@
     setTabs();
     back.hidden = stack.length === 0;
     setPager(data);
-    switch (data.view) {
+    const archive = isArchive(data.view);
+    const view = archive ? data.view.slice(8) : data.view;
+    switch (view) {
       case 'archive': {
         heading('Фактический архив', 'Полученные от источника записи · Владивосток, UTC+10');
         datePicker('archive');
@@ -168,17 +182,21 @@
         break;
       }
       case 'days':
-        heading('История Кэф', 'Статистика по дням · Владивосток, UTC+10');
+        heading('История Кэф', 'По дням · Владивосток, UTC+10');
         datePicker('days');
-        if (!data.days.length) note('Пока нет сохранённых дней.');
-        for (const day of data.days) item(formatDay(day), 'Коэффициенты и количество раундов',
-          () => navigate('day', {day}, true));
+        if (!data.days.length) note('Нет сохранённых дней.');
+        for (const row of data.days) {
+          const day = typeof row === 'string' ? row : row.day;
+          item(formatDay(day), archive ? (row.has_records ? 'Неполные данные' : 'Нет записей · неполные данные')
+            : 'Коэффициенты и количество раундов',
+            () => navigate(viewFor('day'), {day}, true));
+        }
         break;
       case 'day': {
         const s = data.summary || {};
         heading(formatDay(data.day), 'История Кэф · Владивосток, UTC+10');
-        if (data.view_reset) note('Показаны новые результаты после сброса вкладки. Исходный архив не изменён.');
-        if (data.truncated) { note('Слишком много записей для точного пересчёта. Открой полный архив.'); break; }
+        if (!archive && data.view_reset) note('Данные после сброса.');
+        if (data.truncated || !data.summary) { note('Неполные данные: превышен предел проверки.'); break; }
         info('Всего раундов', s.total ?? 0);
         info('<2x', s.lt2_tracking ? (s.lt2 ?? 0) : 'Нет данных',
           s.lt2_partial ? 'С обновления' : '');
@@ -190,40 +208,36 @@
         }
         const check = data.integrity;
         if (check) {
-          info('Раундов в независимом архиве', check.archived_rounds ?? 0);
-          pollCoverage(check);
-          if (check.status === 'verified') {
-            note('Сохранённые счётчики совпали с архивом; известных разрывов нет. Полнота данных самой игры не доказана.');
-          } else if (check.status === 'sequence_checked') {
-            note('Число раундов совпадает с архивом, известных разрывов нет. ' +
-              'Время — по получению; полнота данных игры не доказана.');
-          } else {
-            note('Полнота и точность статистики не подтверждены. ' +
-              ((check.reasons || []).join('; ') || 'Недостаточно данных для проверки.') + '.');
-          }
+          if (check.status !== 'verified' || check.poll_coverage?.status !== 'full_poll_coverage')
+            note('Неполные данные · полнота истории не подтверждена.');
         } else if (s.partial || s.time_uncertain) {
           note('Статистика может быть неполной.');
         }
         break;
       }
       case 'high_days':
-        heading('Интервалы >100x', 'Число раундов между коэффициентами выше 100x');
-        if (data.view_reset) note('Показаны данные после сброса вкладки. Полная история сохранена в архиве.');
-        if (!data.view_reset && data.last_high) info('Последний >100x', String(data.last_high.value) + 'x',
-          formatTime(data.last_high.stamp));
-        if (!data.view_reset) info('Раундов после >100x', data.gap ? 'Неполные данные' : data.since_high);
+        heading('Интервалы >100x', 'По дням · Владивосток, UTC+10');
+        if (!archive && data.last_high)
+          info('Последний >100x', String(data.last_high.value) + 'x', formatTime(data.last_high.stamp));
+        if (!archive && data.last_high)
+          info('Раундов после >100x', data.gap ? 'Неполные данные' : data.since_high);
         datePicker('high_days');
-        if (!data.days.length) note('Сохранённых интервалов пока нет.');
-        for (const day of data.days) item(formatDay(day), 'Посмотреть интервалы',
-          () => navigate('high_day', {day}, true));
+        if (!data.days.length) note('Нет сохранённых дней.');
+        for (const row of data.days) {
+          const day = typeof row === 'string' ? row : row.day;
+          item(formatDay(day), archive ?
+            (row.count ? row.count + ' событий · интервалы могут быть неполными' : 'Нет подтверждённых интервалов') :
+            'Посмотреть интервалы', () => navigate(viewFor('high_day'), {day}, true));
+        }
         break;
       case 'high_day':
         heading(formatDay(data.day), 'Интервалы >100x · новые сначала');
         if (!data.items.length) note('За этот день нет сохранённых интервалов.');
+        if (data.truncated) note('Неполные данные: превышен предел проверки.');
         for (const entry of data.items) {
           const count = entry.rounds == null ? 'Данные неполные' : entry.rounds + ' раундов';
           item(String(entry.value) + 'x', count + ' · ' + formatTime(entry.stamp),
-            () => navigate('high_item', {id: entry.id}, true));
+            () => navigate(viewFor('high_item'), archive ? {day: data.day, id: entry.id} : {id: entry.id}, true));
         }
         break;
       case 'high_item': {
@@ -237,15 +251,17 @@
       }
       case 'cycles':
         heading('История DEMO', data.total + ' циклов · новые сначала');
-        item('Статистика DEMO', 'Результаты по последним сессиям',
-          () => navigate('demo_stats', {}, true));
+        if (archive) datePicker('cycles');
+        item('Статистика DEMO', 'Результаты по сохранённым сессиям',
+          () => navigate(viewFor('demo_stats'), archive && data.day ? {day: data.day} : {}, true));
         if (!data.items.length) note('Завершённых циклов пока нет.');
         for (const c of data.items) {
           currency = c.currency || 'USD';
           const result = c.outcome === 'incomplete_data' || c.net_cents == null
             ? 'Нет полных данных' : signedMoney(c.net_cents);
           item(c.steps + ' шаг. · ' + formatTime(c.ended_at || c.started_at),
-            'Цикл ' + (c.index + 1), () => navigate('cycle', {index: c.index}, true), result);
+            archive ? c.currency : 'Цикл ' + (c.index + 1),
+            () => navigate(viewFor('cycle'), archive ? {id: c.id} : {index: c.index}, true), result);
         }
         break;
       case 'cycle': {
@@ -253,7 +269,7 @@
         currency = c.currency || 'USD';
         const reasons = {recovered: 'Цель 2x достигнута', insufficient_balance: 'Недостаточно баланса',
           incomplete_data: 'Неполные данные', stopped_by_user: 'Остановлена пользователем'};
-        heading('Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
+        heading(archive ? 'Цикл DEMO' : 'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
         info('Валюта', currency);
         info('Начало', formatTime(c.started_at));
         info('Завершение', formatTime(c.ended_at));
@@ -272,6 +288,23 @@
         break;
       }
       case 'demo_stats': {
+        if (archive) {
+          heading('Статистика DEMO', data.total + ' сохранённых циклов');
+          if (data.truncated) { note('Неполные данные: слишком много записей.'); break; }
+          for (const [code, group] of Object.entries(data.currencies || {})) {
+            currency = code;
+            heading(code);
+            info('Всего сессий', group.total);
+            info('Успешных', group.recovered);
+            info('Проигрышных', group.lost);
+            info('Неполных', group.incomplete);
+            info('Остановленных', group.stopped);
+            info('По истории', signedMoney(group.history_net_cents));
+            info('Среднее шагов', group.average_steps);
+          }
+          if (!data.total) note('Нет сохранённых циклов.');
+          break;
+        }
         const s = data.stats;
         currency = s.currency || 'USD';
         heading('Статистика DEMO', 'По последним ' + s.total + ' из ' + s.maximum + ' циклов');
@@ -289,11 +322,13 @@
       }
       case 'max_steps':
         heading('Максимальный шаг', 'По дням · Владивосток, UTC+10');
-        if (data.view_reset) note('Данные после сброса вкладки; старые сохранены в исходном архиве.');
+        if (!archive && data.view_reset) note('Данные после сброса.');
         datePicker('max_steps');
-        if (!data.days.length) note('Данных пока нет.');
-        for (const d of data.days) item(formatDay(d.day), 'Показать максимум', 
-          () => navigate('max_step_day', {day: d.day}, true), d.steps + ' шаг.');
+        if (!data.days.length) note('Нет сохранённых дней.');
+        for (const d of data.days) item(formatDay(d.day),
+          archive ? 'Сохранённые раунды · полнота не подтверждена' : 'Показать максимум',
+          () => navigate(viewFor('max_step_day'), {day: d.day}, true),
+          d.steps == null ? 'Нет данных' : d.steps + ' шаг.');
         break;
       case 'max_step_day':
         heading(formatDay(data.day), 'Максимальный шаг · Владивосток, UTC+10');
@@ -349,7 +384,15 @@
     stack = []; current = null; navigate(button.dataset.historyView);
   });
   back.addEventListener('click', goBack);
-  document.getElementById('history-archive').addEventListener('click', () => navigate('archive', {}, true));
+  document.getElementById('history-archive').addEventListener('click', () => {
+    stack = []; current = null; navigate('archive_days');
+  });
+  document.getElementById('history-exit-archive').addEventListener('click', () => {
+    stack = []; current = null; navigate('days');
+  });
+  for (const button of archiveTabs) button.addEventListener('click', () => {
+    stack = []; current = null; navigate(button.dataset.archiveView);
+  });
   document.getElementById('history-reset-scope').addEventListener('click', () => {
     const scope = scopeByView(args.view);
     if (scope) resetHistory(scope);
@@ -363,7 +406,7 @@
     navigate(args.view, {...args, page: Number(args.page || 0) + 1}));
 
   const scopeByView = view => {
-    if (view === 'archive') return null;
+    if (view === 'archive' || isArchive(view)) return null;
     if (['days', 'day'].includes(view)) return 'days';
     if (['high_days', 'high_day', 'high_item'].includes(view)) return 'high_days';
     if (['cycles', 'cycle', 'demo_stats'].includes(view)) return 'cycles';
@@ -396,7 +439,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Не удалось сохранить сброс.');
       stack = []; current = null; lastLoad = 0;
-      navigate(scope === 'all' ? 'days' : (currentScope === scope ? scope : scope), {}, false);
+      navigate(scope === 'all' ? 'days' : scope, {}, false);
     } catch (error) {
       status.textContent = String(error.message);
     } finally {

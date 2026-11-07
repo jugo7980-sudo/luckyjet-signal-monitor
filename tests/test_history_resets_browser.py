@@ -29,26 +29,24 @@ def test_mobile_archive_and_reset_controls():
                     q = parse_qs(urlparse(url).query)
                     view = q.get('view', ['days'])[0]
                     reads.append(view)
-                    if view == 'archive':
-                        more = 'cursor' not in q
-                        data = {'view': 'archive', 'day': '2026-11-08',
-                                'items': [{'type': 'round', 'round_id': 'round-1', 'coefficient': '2.5',
-                                           'observed_at': '1794000000000', 'source_time': ''}],
-                                'next_cursor': '1794000000000-0' if more else None}
-                        if more:
-                            data['integrity'] = {
-                                'status': 'unverified', 'archived_rounds': 5,
-                                'gaps': 0, 'reasons': ['тестовый пропуск'],
-                                'poll_coverage': {
-                                    'status': 'poll_gaps', 'expected_minutes': 5,
-                                    'observed_minutes': 3, 'primary_minutes': 2,
-                                    'backup_minutes': 2, 'missing_minutes': 2,
-                                    'longest_missing_minutes': 2,
-                                    'missing_intervals': [{
-                                        'start': '00:02', 'end': '00:04', 'minutes': 2,
-                                    }],
-                                },
-                            }
+                    if view == 'archive_days':
+                        data = {'view': view, 'days': [{'day': '2026-11-08', 'partial': True,
+                                                       'has_records': True}],
+                                'total': 1, 'page': 0}
+                    elif view == 'archive_day':
+                        data = {'view': view, 'day': '2026-11-08',
+                                'summary': {'total': 5, 'lt2': 2, 'lt2_tracking': 1,
+                                            'new_threshold_tracking': 1},
+                                'integrity': {'status': 'unverified', 'poll_coverage': None},
+                                'truncated': False}
+                    elif view == 'archive_high_days':
+                        data = {'view': view, 'days': [{'day': '2026-11-08', 'count': 1}],
+                                'total': 1, 'page': 0}
+                    elif view == 'archive_cycles':
+                        data = {'view': view, 'items': [], 'total': 0, 'page': 0}
+                    elif view == 'archive_max_steps':
+                        data = {'view': view, 'days': [{'day': '2026-11-08', 'steps': 3}],
+                                'total': 1, 'page': 0}
                     else:
                         data = {'view': view, 'days': ['2026-11-08'] if view != 'max_steps' else [],
                                 'page': 0, 'total': 1, 'items': []}
@@ -76,13 +74,22 @@ def test_mobile_archive_and_reset_controls():
             await page.locator('[data-history-view=high_days]').click()
             await page.locator('#history-reset-scope').click()
             assert writes[1]['value'] == 'high_days'
+            await page.locator('[data-history-view=days]').click()
             await page.locator('#history-archive').click()
-            await page.get_by_text('Фактический архив', exact=True).wait_for()
-            await page.get_by_text('Минуты успешных опросов').wait_for()
-            await page.get_by_text('00:02–00:04', exact=False).wait_for()
-            assert await page.locator('#history-reset-scope').is_hidden()
-            await page.get_by_text('Показать более ранние записи').click()
-            assert reads.count('archive') >= 2
+            await page.locator('#history-archive-exit').get_by_text('Архив').wait_for()
+            assert await page.locator('#history-reset-panel').is_hidden()
+            assert await page.locator('#history-archive-launch').is_hidden()
+            assert await page.locator('#history-live-tabs').is_hidden()
+            assert await page.locator('#history-archive-tabs').is_visible()
+            assert await page.locator('[data-archive-view=archive_days]').is_visible()
+            await page.locator('[data-archive-view=archive_high_days]').click()
+            assert 'archive_high_days' in reads
+            await page.locator('[data-archive-view=archive_cycles]').click()
+            assert 'archive_cycles' in reads
+            await page.locator('[data-archive-view=archive_max_steps]').click()
+            assert 'archive_max_steps' in reads
+            await page.locator('#history-exit-archive').click()
+            assert await page.locator('#history-reset-panel').is_visible()
             await page.locator('#history-reset-all').click()
             assert writes[-1] == {'action': 'history_reset', 'value': 'all', 'confirm': True}
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')

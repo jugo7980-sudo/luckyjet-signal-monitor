@@ -32,22 +32,36 @@ async def capture_source(playwright, config, archive, *, poll_seconds=0.5):
     browser = None
     context = None
     try:
-        # Bootstrap only. Once direct source is established, closing the page
-        # must not stop the data stream or wait for owner authentication.
-        opts = {"headless": True}
-        if monitor.game_proxy:
-            opts["proxy"] = {"server": monitor.game_proxy}
-        browser = await playwright.chromium.launch(**opts)
-        context = await browser.new_context(
-            viewport={"width": 430, "height": 932}, locale="ru-RU",
-        )
-        page = await monitor.open_game(context, config, capture)
-        if page and not page.is_closed():
+        # Prefer the same completed-history gateway independently verified by
+        # the production monitor. The direct API may not require a browser.
+        gateway = os.getenv(
+            "DIRECT_HISTORY_URL",
+            "https://crash-gateway-grm-cr.gamedev-tech.cc/history",
+        ).strip()
+        if gateway.startswith("https://"):
+            capture._candidate_urls.add(gateway)
+        initial = await monitor.poll_direct_gateways(capture)
+        healthy_direct = 1 if initial else 0
+        if initial:
             rounds, _ = await capture.snapshot()
-            if rounds:
-                await archive.append_snapshot(rounds)
+            await archive.append_snapshot(rounds)
+            log.info("Collector initialized from direct completed-round endpoint")
+        else:
+            # Bootstrap in an isolated browser only if direct access failed.
+            # Owner login and bot/browser sessions are never accessed here.
+            opts = {"headless": True}
+            if monitor.game_proxy:
+                opts["proxy"] = {"server": monitor.game_proxy}
+            browser = await playwright.chromium.launch(**opts)
+            context = await browser.new_context(
+                viewport={"width": 430, "height": 932}, locale="ru-RU",
+            )
+            page = await monitor.open_game(context, config, capture)
+            if page and not page.is_closed():
+                rounds, _ = await capture.snapshot()
+                if rounds and all(r.get("id") for r in rounds):
+                    await archive.append_snapshot(rounds)
         last_good = time.monotonic()
-        healthy_direct = 0
         last_report = 0.0
         while True:
             began = time.monotonic()

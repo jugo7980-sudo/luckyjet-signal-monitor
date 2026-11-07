@@ -11,6 +11,7 @@
   let controller = null;
   let busy = false;
   let refreshTimer = null;
+  let lastLoadedAt = 0;
 
   function safeStore() {
     try {
@@ -138,6 +139,7 @@
     safeStore();
     setText('summary-heading', 'Сводка архива · ' + rounds + ' раундов');
     busy = true;
+    lastLoadedAt = Date.now();
     button.disabled = true;
     status.textContent = 'Проверяем фактический архив…';
     controller = new AbortController();
@@ -179,8 +181,9 @@
       if (refreshTimer !== null) clearInterval(refreshTimer);
       refreshTimer = setInterval(() => {
         const requested = Number(byId('ind-rounds').value);
-        if (!busy && document.body.dataset.access === 'premium') load();
-      }, 20000);
+        const refreshEvery = requested > 5000 ? 60000 : requested > 1000 ? 20000 : 5000;
+        if (!busy && document.body.dataset.access === 'premium' && Date.now() - lastLoadedAt >= refreshEvery) load();
+      }, 5000);
     } else if (refreshTimer !== null) {
       clearInterval(refreshTimer);
       refreshTimer = null;

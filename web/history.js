@@ -47,6 +47,32 @@
     if (detail) root.appendChild(el('p', 'history-subtitle', detail));
   }
   function note(value) { root.appendChild(el('p', 'history-note', value)); }
+  function pollCoverage(check) {
+    const c = check?.poll_coverage;
+    if (!c || c.status === 'not_recorded') {
+      note('Журнал успешных опросов за эту дату отсутствует. Проверка перерывов до включения контроля недоступна.');
+      return;
+    }
+    info('Минуты успешных опросов', c.observed_minutes + ' из ' + c.expected_minutes,
+      'Подтверждается хотя бы одним сборщиком');
+    info('Основной / резервный', c.primary_minutes + ' / ' + c.backup_minutes + ' мин');
+    info('Минуты без подтверждённых опросов', c.missing_minutes ?? 'Нет данных');
+    if (c.longest_missing_minutes) {
+      info('Самый длинный перерыв', c.longest_missing_minutes + ' мин');
+      for (const interval of c.missing_intervals || [])
+        note('Без подтверждения опроса: ' + interval.start + '–' + interval.end +
+          ' (' + interval.minutes + ' мин).');
+    }
+    if (c.status === 'full_poll_coverage') {
+      note('Успешные обращения к источнику зарегистрированы в каждую минуту суток. ' +
+        'Это не доказывает, что источник отдал все раунды.');
+    } else if (c.status === 'poll_gaps') {
+      note('Есть минуты без подтверждённого получения истории. Это возможные пропуски; ' +
+        'число отсутствующих раундов неизвестно.');
+    } else {
+      note('Период контроля неполный: день ещё продолжается или мониторинг включили посреди суток.');
+    }
+  }
   function item(title, subtitle, action, extra) {
     const button = el('button', 'history-item');
     button.type = 'button';
@@ -117,7 +143,8 @@
           const e = data.integrity;
           info('Записано раундов', e.archived_rounds ?? 'Нет данных');
           info('Разрывы в архиве', e.gaps ?? 'Нет данных');
-          note(e.status === 'verified' ? 'Проверка последовательности и времени пройдена.' :
+          pollCoverage(e);
+          note(e.status === 'verified' ? 'Сохранённые записи согласуются по времени и счётчикам; полнота истории самой игры не доказана.' :
             'Полнота данных источника не гарантирована. ' + ((e.reasons || []).join('; ') || 'Данные ещё не проверены.') + '.');
         }
         if (!data.items.length) note('За выбранную дату нет записей в архиве.');
@@ -164,11 +191,12 @@
         const check = data.integrity;
         if (check) {
           info('Раундов в независимом архиве', check.archived_rounds ?? 0);
+          pollCoverage(check);
           if (check.status === 'verified') {
-            note('Сверка успешна: число раундов совпадает, разрывов истории не обнаружено.');
+            note('Сохранённые счётчики совпали с архивом; известных разрывов нет. Полнота данных самой игры не доказана.');
           } else if (check.status === 'sequence_checked') {
-            note('Число раундов совпадает с архивом, разрывов не обнаружено. ' +
-              'Время — по первому получению: источник не сообщает точное окончание раунда.');
+            note('Число раундов совпадает с архивом, известных разрывов нет. ' +
+              'Время — по получению; полнота данных игры не доказана.');
           } else {
             note('Полнота и точность статистики не подтверждены. ' +
               ((check.reasons || []).join('; ') || 'Недостаточно данных для проверки.') + '.');

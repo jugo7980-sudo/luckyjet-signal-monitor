@@ -94,6 +94,9 @@ def test_v08_guest_layout_320_390_430_and_compact_tabs():
                     assert float(dimensions["navMinHeight"].replace("px", "")) <= 54
                 await page.locator('nav [data-tab="home"]').click()
                 for limit in (30, 50, 100):
+                    # Wait for the previous fetch to finish before firing another change event.
+                    # The UI deliberately ignores limit changes while a request is in flight.
+                    await page.wait_for_function("!document.querySelector('#refresh-data').disabled")
                     await page.locator("#recent-limit").select_option(str(limit))
                     await page.wait_for_function(f"document.querySelectorAll('#coef-grid .coef').length === {limit}")
                     grid_state = await page.evaluate("""() => {

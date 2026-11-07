@@ -450,7 +450,7 @@ async def health_server(gate=None, bot_token=None) -> None:
                 path, _, query = line[1].partition('?')
                 if line[0] == 'POST' and path not in {'/api/controls', '/api/admin', '/api/site', '/api/access', '/api/browser'}:
                     status, content_type, body = '405 Method Not Allowed', 'text/plain', b'Method not allowed'
-                elif path in {'/api/public', '/api/access', '/api/overview', '/api/history', '/api/controls', '/api/admin', '/api/site', '/api/browser'}:
+                elif path in {'/api/public', '/api/access', '/api/overview', '/api/history', '/api/round-summary', '/api/controls', '/api/admin', '/api/site', '/api/browser'}:
                     pairs = [header.split(':', 1) for header in request.decode('ascii').split('\r\n')[1:] if ':' in header]
                     auth = [value.strip() for key, value in pairs if key.lower() == 'authorization']
                     if len(auth) > 1:

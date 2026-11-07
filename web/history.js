@@ -66,6 +66,7 @@
       : ['high_days', 'high_day', 'high_item'].includes(args.view) ? 'high_days'
       : ['cycles', 'cycle', 'demo_stats'].includes(args.view) ? 'cycles' : 'max_steps';
     for (const button of tabs) button.setAttribute('aria-selected', String(button.dataset.historyView === active));
+    document.getElementById('history-reset-scope').hidden = active === 'archive';
   }
   function setPager(data) {
     const page = Number(data.page || 0);
@@ -141,6 +142,8 @@
       case 'day': {
         const s = data.summary || {};
         heading(formatDay(data.day), 'История Кэф · Владивосток, UTC+10');
+        if (data.view_reset) note('Показаны новые результаты после сброса вкладки. Исходный архив не изменён.');
+        if (data.truncated) { note('Слишком много записей для точного пересчёта. Открой полный архив.'); break; }
         info('Всего раундов', s.total ?? 0);
         info('<2x', s.lt2_tracking ? (s.lt2 ?? 0) : 'Нет данных',
           s.lt2_partial ? 'С обновления' : '');
@@ -169,9 +172,10 @@
       }
       case 'high_days':
         heading('Интервалы >100x', 'Число раундов между коэффициентами выше 100x');
-        if (data.last_high) info('Последний >100x', String(data.last_high.value) + 'x',
+        if (data.view_reset) note('Показаны данные после сброса вкладки. Полная история сохранена в архиве.');
+        if (!data.view_reset && data.last_high) info('Последний >100x', String(data.last_high.value) + 'x',
           formatTime(data.last_high.stamp));
-        info('Раундов после >100x', data.gap ? 'Неполные данные' : data.since_high);
+        if (!data.view_reset) info('Раундов после >100x', data.gap ? 'Неполные данные' : data.since_high);
         datePicker('high_days');
         if (!data.days.length) note('Сохранённых интервалов пока нет.');
         for (const day of data.days) item(formatDay(day), 'Посмотреть интервалы',
@@ -235,19 +239,21 @@
         const s = data.stats;
         currency = s.currency || 'USD';
         heading('Статистика DEMO', 'По последним ' + s.total + ' из ' + s.maximum + ' циклов');
+        if (s.view_reset) note('Счётчики циклов — после сброса вкладки; баланс DEMO не менялся.');
         info('Валюта', currency);
         info('Всего сессий', s.total);
         info('Успешных', s.recovered);
         info('Проигрышных', s.lost);
         info('Неполных', s.incomplete);
         info('Остановленных', s.stopped);
-        info('С последнего сброса', signedMoney(s.since_reset_cents));
+        info('С последнего сброса DEMO', signedMoney(s.since_reset_cents));
         info('По истории', signedMoney(s.history_net_cents));
         info('Среднее шагов', s.average_steps);
         break;
       }
       case 'max_steps':
         heading('Максимальный шаг', 'По дням · Владивосток, UTC+10');
+        if (data.view_reset) note('Данные после сброса вкладки; старые сохранены в исходном архиве.');
         datePicker('max_steps');
         if (!data.days.length) note('Данных пока нет.');
         for (const d of data.days) item(formatDay(d.day), 'Показать максимум', 
@@ -255,7 +261,8 @@
         break;
       case 'max_step_day':
         heading(formatDay(data.day), 'Максимальный шаг · Владивосток, UTC+10');
-        if (data.steps == null) note('Нет сохранённых данных за этот день.');
+        if (data.truncated) note('Недостаточно данных для точного пересчёта.');
+        else if (data.steps == null) note('Нет сохранённых данных за этот день.');
         else info('Максимальный шаг', data.steps);
         break;
     }
@@ -307,11 +314,59 @@
   });
   back.addEventListener('click', goBack);
   document.getElementById('history-archive').addEventListener('click', () => navigate('archive', {}, true));
+  document.getElementById('history-reset-scope').addEventListener('click', () => {
+    const scope = scopeByView(args.view);
+    if (scope) resetHistory(scope);
+  });
+  document.getElementById('history-reset-all').addEventListener('click', () => resetHistory('all'));
+
   refresh.addEventListener('click', () => navigate(args.view, {...args}));
   document.getElementById('history-prev').addEventListener('click', () =>
     navigate(args.view, {...args, page: Math.max(0, Number(args.page || 0) - 1)}));
   document.getElementById('history-next').addEventListener('click', () =>
     navigate(args.view, {...args, page: Number(args.page || 0) + 1}));
+
+  const scopeByView = view => {
+    if (view === 'archive') return null;
+    if (['days', 'day'].includes(view)) return 'days';
+    if (['high_days', 'high_day', 'high_item'].includes(view)) return 'high_days';
+    if (['cycles', 'cycle', 'demo_stats'].includes(view)) return 'cycles';
+    return 'max_steps';
+  };
+  async function resetHistory(scope) {
+    if (!['days', 'high_days', 'cycles', 'max_steps', 'all'].includes(scope)) return;
+    if (!window.canUsePremium?.()) { status.textContent = 'Требуется Premium.'; return; }
+    const labels = {days: 'Кэфы', high_days: '>100x', cycles: 'Циклы', max_steps: 'Шаги'};
+    const question = scope === 'all'
+      ? 'Сбросить отображение всех четырёх вкладок? Полный фактический архив сохранится.'
+      : 'Сбросить отображение вкладки «' + labels[scope] + '»? Полный архив сохранится.';
+    const confirmed = await new Promise(resolve => {
+      if (tg && typeof tg.showConfirm === 'function') tg.showConfirm(question, resolve);
+      else resolve(window.confirm(question));
+    });
+    if (!confirmed) return;
+    const currentScope = scopeByView(args.view);
+    const scopeButton = document.getElementById('history-reset-scope');
+    const allButton = document.getElementById('history-reset-all');
+    scopeButton.disabled = true; allButton.disabled = true;
+    status.textContent = 'Сохранение сброса…';
+    try {
+      const response = await fetch('/api/controls', {
+        method: 'POST', headers: {'Content-Type': 'application/json',
+          ...(tg?.initData ? {Authorization: 'tma ' + tg.initData} : {})},
+        credentials: 'same-origin', cache: 'no-store',
+        body: JSON.stringify({action: 'history_reset', value: scope, confirm: true}),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Не удалось сохранить сброс.');
+      stack = []; current = null; lastLoad = 0;
+      navigate(scope === 'all' ? 'days' : (currentScope === scope ? scope : scope), {}, false);
+    } catch (error) {
+      status.textContent = String(error.message);
+    } finally {
+      scopeButton.disabled = false; allButton.disabled = false;
+    }
+  }
   window.openHistoryTab = () => {
     if (!current || Date.now() - lastLoad > 30000) navigate(args.view, {...args});
   };

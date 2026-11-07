@@ -117,6 +117,36 @@ class RemoteSession:
                 if any(type(v) not in (int, float) for v in (x, y)) or not (0 <= x <= 1 and 0 <= y <= 1):
                     return {"error": "Неверные координаты."}
                 await page.mouse.click(float(x) * VIEWPORT_WIDTH, float(y) * VIEWPORT_HEIGHT)
+            elif op == "drag" and set(payload) == {"action", "points", "duration_ms"}:
+                points = payload["points"]
+                duration = payload["duration_ms"]
+                if (not isinstance(points, list) or not 2 <= len(points) <= 32
+                        or type(duration) is not int or not 100 <= duration <= 4000):
+                    return {"error": "Некорректный жест перетаскивания."}
+                for point in points:
+                    if (not isinstance(point, list) or len(point) != 2
+                            or any(type(n) not in (int, float) or not 0 <= n <= 1
+                                   for n in point)):
+                        return {"error": "Некорректные координаты перетаскивания."}
+                start, finish = points[0], points[-1]
+                if (abs(finish[0] - start[0]) * VIEWPORT_WIDTH
+                        + abs(finish[1] - start[1]) * VIEWPORT_HEIGHT < 12):
+                    return {"error": "Перемести ползунок дальше."}
+                # Relay the owner's gesture into Chromium. This does not
+                # identify the CAPTCHA target or solve the puzzle automatically.
+                mouse = page.mouse
+                await mouse.move(start[0] * VIEWPORT_WIDTH,
+                                 start[1] * VIEWPORT_HEIGHT)
+                await mouse.down()
+                try:
+                    delay = min(0.12, duration / 1000 / (len(points) - 1))
+                    for x, y in points[1:]:
+                        await mouse.move(x * VIEWPORT_WIDTH, y * VIEWPORT_HEIGHT)
+                        await asyncio.sleep(delay)
+                finally:
+                    await mouse.up()
+                self.last_seen = time.monotonic()
+                return {"message": "Жест выполнен. Проверь ответ CAPTCHA на экране."}
             elif op in {"fill_email", "fill_password"} and set(payload) == {"action", "text"}:
                 value = payload["text"]
                 if not isinstance(value, str) or not 1 <= len(value) <= 512:

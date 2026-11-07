@@ -22,8 +22,8 @@ def test_repeated_round_id_not_counted_twice_even_after_collector_restart():
 
 
 def test_event_time_and_midnight():
- a=event_time({'finishedAt':'2026-11-02T16:59:59Z'})
- b=event_time({'finishedAt':'2026-11-02T17:00:00Z'})
+ a=event_time({'finishedAt':'2026-11-02T13:59:59Z'})
+ b=event_time({'finishedAt':'2026-11-02T14:00:00Z'})
  assert a.strftime('%Y-%m-%d')=='2026-11-02'
  assert b.strftime('%Y-%m-%d')=='2026-11-03'
  assert event_time({'timestamp':'invalid'}) is None

@@ -118,7 +118,18 @@
           info('>' + t + 'x', enabled ? (s[String(t)] ?? 0) : 'Нет данных',
             recent && s.new_threshold_partial ? 'С обновления' : '');
         }
-        if (s.partial || s.time_uncertain) note('Статистика может быть неполной.');
+        const check = data.integrity;
+        if (check) {
+          info('Раундов в независимом архиве', check.archived_rounds ?? 0);
+          if (check.status === 'verified') {
+            note('Проверка архива: счётчики совпадают, разрывов истории не обнаружено.');
+          } else {
+            note('Полнота и точность статистики не подтверждены. ' +
+              ((check.reasons || []).join('; ') || 'Недостаточно данных для проверки.') + '.');
+          }
+        } else if (s.partial || s.time_uncertain) {
+          note('Статистика может быть неполной.');
+        }
         break;
       }
       case 'high_days':

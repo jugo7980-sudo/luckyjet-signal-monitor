@@ -267,6 +267,7 @@ class DemoLedger:
         payout_cents: int | None = 0,
         coefficient=None,
         financial_complete: bool = True,
+        now=None,
     ):
         net_cents = (
             self.balance_cents - self.cycle_start_balance_cents
@@ -275,7 +276,7 @@ class DemoLedger:
         )
         entry = {
             "started_at": self.cycle_started_at,
-            "ended_at": datetime.now(timezone.utc).isoformat(),
+            "ended_at": (now or datetime.now(timezone.utc)).isoformat(),
             "rounds": self.cycle_rounds[:],
             "base_stake_cents": self.base_stake_cents,
             "balance_before_cents": self.cycle_start_balance_cents,
@@ -310,8 +311,8 @@ class DemoLedger:
             )
         return self._finish_cycle(outcome=outcome)
 
-    def _finish_insufficient(self, needed_cents: int, *, lost_stake_cents=None):
-        entry = self._finish_cycle(outcome="insufficient_balance")
+    def _finish_insufficient(self, needed_cents: int, *, lost_stake_cents=None, now=None):
+        entry = self._finish_cycle(outcome="insufficient_balance", now=now)
         self.base_stake_cents = MINIMUM_STAKE_CENTS
         self.next_stake_cents = MINIMUM_STAKE_CENTS
         event = {
@@ -348,7 +349,7 @@ class DemoLedger:
             if self.balance_cents < self.base_stake_cents:
                 return {"type": "insufficient_balance", "needed_cents": self.base_stake_cents}
             self.active = True
-            self.cycle_started_at = datetime.now(timezone.utc).isoformat()
+            self.cycle_started_at = (now or datetime.now(timezone.utc)).isoformat()
             self.next_stake_cents = self.base_stake_cents
             self.cycle_stake_cents = 0
             self.cycle_rounds = []
@@ -358,7 +359,7 @@ class DemoLedger:
 
         stake = self.next_stake_cents
         if self.balance_cents < stake:
-            return self._finish_insufficient(stake)
+            return self._finish_insufficient(stake, now=now)
 
         self._record_step(len(self.cycle_rounds) + 1, now)
         self.balance_cents -= stake
@@ -377,6 +378,7 @@ class DemoLedger:
                 return self._finish_insufficient(
                     next_stake,
                     lost_stake_cents=stake,
+                    now=now,
                 )
             self.next_stake_cents = next_stake
             self._record_step(len(self.cycle_rounds) + 1, now)
@@ -394,5 +396,5 @@ class DemoLedger:
         self.balance_cents += payout
         round_entry["payout_cents"] = payout
         round_entry["balance_after_cents"] = self.balance_cents
-        entry = self._finish_cycle(outcome="recovered", payout_cents=payout, coefficient=str(multiplier))
+        entry = self._finish_cycle(outcome="recovered", payout_cents=payout, coefficient=str(multiplier), now=now)
         return {"type": "recovered", **entry}

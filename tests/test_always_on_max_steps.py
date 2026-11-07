@@ -1,12 +1,12 @@
-"""Maximum-step history is tracked for every authorized user, DEMO on or off."""
+"""Continuous below-2x maxima are independent of DEMO and its trigger."""
 import asyncio
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from fakeredis.aioredis import FakeRedis
 
@@ -14,61 +14,89 @@ import mini_app_history
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
 from luckyjet_signal.demo_ledger import DEFAULT_BALANCE_CENTS, DemoLedger
 
-BANGKOK = timezone(timedelta(hours=7))
+
+def test_screenshot_six_rounds_are_maximum_six_not_demo_step():
+    # Exactly the recent 20 coefficients seen on 07.11.2026, in source
+    # chronological order (the UI presents them newest first).
+    newest_first = [
+        "196.94x", "1.10x", "1.17x", "1.90x", "1.18x", "1.44x",
+        "2.39x", "1.39x", "2.90x", "2.22x", "1.09x", "1.12x",
+        "1.16x", "1.01x", "1.45x", "1.06x", "2.30x", "6.73x",
+        "2.11x", "3.76x",
+    ]
+    timestamp = datetime(2026, 11, 7, 6, 46, tzinfo=timezone.utc)
+    for trigger in (2, 4, 6):
+        ledger = DemoLedger(enabled=False, trigger_streak=trigger)
+        for coefficient in reversed(newest_first):
+            assert ledger.track_max_step(coefficient, now=timestamp)
+        assert ledger.daily_max_low_streak == {"2026-11-07": 6}
+        assert ledger.consecutive_below_two == 0
+        assert ledger.balance_cents == DEFAULT_BALANCE_CENTS
+        assert ledger.history == []
+        assert ledger.daily_max_steps == {}  # DEMO steps are not invented.
 
 
-def test_offline_demo_tracks_steps_without_bets_and_crosses_midnight():
-    ledger = DemoLedger(enabled=False, trigger_streak=3)
-    late = datetime(2026, 11, 7, 16, 59, tzinfo=timezone.utc)
-    next_day = late + timedelta(minutes=3)
-    day1, day2 = "2026-11-07", "2026-11-08"
-
-    for coefficient in ("1.25x", "1.12x", "1.34x"):
-        assert ledger.track_max_step(coefficient, now=late)
-    assert ledger.tracker_step == 1
-    assert ledger.daily_max_steps[day1] == 1
-
-    assert ledger.track_max_step("1.40x", now=next_day)
-    assert ledger.tracker_step == 2
-    assert ledger.daily_max_steps[day1] == 1
-    assert ledger.daily_max_steps[day2] == 2
-
-    ledger.track_max_step("2.40x", now=next_day)
-    assert ledger.tracker_step == 0
-    assert ledger.tracker_low_streak == 0
-    assert ledger.daily_max_steps[day2] == 2
-
-    assert not ledger.track_max_step("not-a-coefficient", now=next_day)
-    assert ledger.balance_cents == DEFAULT_BALANCE_CENTS
-    assert ledger.history == []
-    assert ledger.active is False
-    assert ledger.enabled is False
-    assert ledger.cycle_rounds == []
+def test_records_every_step_one_two_and_six_across_bangkok_midnight():
+    ledger = DemoLedger(enabled=False, trigger_streak=6)
+    before = datetime(2026, 11, 7, 16, 59, tzinfo=timezone.utc)
+    after = before + timedelta(minutes=3)
+    for coefficient, expected in [("1.25", 1), ("1.12x", 2), ("1.34", 3)]:
+        assert ledger.track_max_step(coefficient, now=before)
+        assert ledger.daily_max_low_streak["2026-11-07"] == expected
+    assert ledger.track_max_step("1.40x", now=after)
+    assert ledger.daily_max_low_streak["2026-11-08"] == 4  # Series spans days.
+    ledger.track_max_step("1.1x", now=after)
+    ledger.track_max_step("1.2x", now=after)
+    assert ledger.daily_max_low_streak["2026-11-08"] == 6
+    assert ledger.track_max_step("2.00x", now=after)
+    assert ledger.consecutive_below_two == 0
+    assert ledger.track_max_step("1.05x", now=after)
+    assert ledger.consecutive_below_two == 1
+    assert ledger.daily_max_low_streak["2026-11-08"] == 6
+    for bad in ("not-a-coefficient", "NaN", "Infinity", "0.75", None):
+        assert not ledger.track_max_step(bad, now=after)
+        assert ledger.consecutive_below_two == 1
 
     restored = DemoLedger(**ledger.dump())
-    assert restored.daily_max_steps == ledger.daily_max_steps
-    assert restored.tracker_step == 0
-    assert restored.tracker_low_streak == 0
+    assert restored.daily_max_low_streak == ledger.daily_max_low_streak
+    assert restored.consecutive_below_two == 1
+    assert not restored.active
+    assert restored.history == []
 
 
-def test_low_balance_does_not_disable_maximum_step_tracking():
-    ledger = DemoLedger(enabled=False, balance_cents=0, trigger_streak=2)
-    for coefficient in ("1.18", "1.30", "1.10", "1.40", "2.5"):
-        assert ledger.track_max_step(coefficient)
-    assert max(ledger.daily_max_steps.values()) == 3
-    assert ledger.balance_cents == 0
-    assert not ledger.active
+def test_demo_data_and_old_max_steps_cannot_contaminate_live_streak():
+    ledger = DemoLedger(
+        enabled=False,
+        trigger_streak=4,
+        daily_max_steps={"2026-11-07": 99},
+        tracker_step=12,
+        tracker_low_streak=3,
+        history=[{"started_at": "2026-11-07T01:00:00+00:00",
+                  "ended_at": "2026-11-07T01:05:00+00:00",
+                  "rounds": [{}] * 7, "outcome": "recovered"}],
+    )
+    assert ledger.daily_max_low_streak == {}
+    ledger.track_max_step("1.23x", now=datetime(2026, 11, 7, 3, tzinfo=timezone.utc))
+    assert ledger.daily_max_low_streak == {"2026-11-07": 1}
+    assert ledger.daily_max_steps["2026-11-07"] == 99
+    assert ledger.consecutive_below_two == 1
+    ledger.reset()
+    assert ledger.daily_max_low_streak == {"2026-11-07": 1}
+    assert ledger.consecutive_below_two == 1
+    assert ledger.daily_max_steps == {}
+    assert ledger.history == []
+    assert ledger.balance_cents == DEFAULT_BALANCE_CENTS
 
 
-def test_always_on_tracking_across_rounds_reload_gap_and_history_api(monkeypatch):
+def test_live_streak_without_demo_survives_reload_and_gap_and_api(monkeypatch):
     async def run():
-        fake = FakeRedis(decode_responses=True)
+        redis = FakeRedis(decode_responses=True)
 
         async def request(method, payload):
             return {"ok": True, "result": {"message_id": 123}}
 
         gate = ReliableTelegramPasswordGate(request, history_provider=lambda: [])
-        gate.redis = fake
+        gate.redis = redis
         gate.authorized.update({42, 43})
 
         class Notices:
@@ -85,7 +113,6 @@ def test_always_on_tracking_across_rounds_reload_gap_and_history_api(monkeypatch
 
         gate.notification_queue = Notices()
         gate.live_panels = Panels()
-
         demo_off = gate._demo_ledger(42)
         demo_off.enabled = False
         demo_off.trigger_streak = 2
@@ -96,53 +123,47 @@ def test_always_on_tracking_across_rounds_reload_gap_and_history_api(monkeypatch
         for coefficient in ("1.14x", "1.25x", "1.34x", "2.11x"):
             await gate.on_round(coefficient)
 
-        assert max(demo_off.daily_max_steps.values()) == 2
-        assert max(demo_on.daily_max_steps.values()) == 1
+        day = next(iter(demo_off.daily_max_low_streak))
+        assert demo_off.daily_max_low_streak[day] == 3
+        assert demo_on.daily_max_low_streak[day] == 3
+        assert demo_off.daily_max_steps == {}  # No DEMO started for user 42.
+        assert demo_on.daily_max_steps[day] == 1
         assert demo_off.balance_cents == DEFAULT_BALANCE_CENTS
-        assert demo_off.history == []
-        assert not demo_off.enabled and not demo_off.active
-        assert demo_on.enabled and not demo_on.active
+        assert demo_off.history == [] and not demo_off.enabled and not demo_off.active
 
-        raw = json.loads(await fake.hget("luckyjet:demo_sessions", "42"))
-        assert raw["tracker_step"] == 0
-        assert raw["tracker_low_streak"] == 0
-        assert raw["daily_max_steps"] == demo_off.daily_max_steps
-        assert "history" not in raw  # ReliableGate split storage
+        raw = json.loads(await redis.hget("luckyjet:demo_sessions", "42"))
+        assert raw["consecutive_below_two"] == 0
+        assert raw["daily_max_low_streak"] == demo_off.daily_max_low_streak
+        assert "history" not in raw  # ReliableGate split storage.
 
-        day = next(iter(raw["daily_max_steps"]))
         monkeypatch.setattr(mini_app_history, "telegram_user", lambda *args: 42)
         status, _, body = await mini_app_history.history(
             "tma fixture", gate, "token", "view=max_steps",
         )
-        response = json.loads(body)
         assert status == "200 OK"
-        assert response["days"] == [{"day": day, "steps": 2}]
+        assert json.loads(body)["days"] == [{"day": day, "steps": 3}]
 
         status, _, body = await mini_app_history.history(
             "tma fixture", gate, "token", f"view=max_step_day&day={day}",
         )
         assert status == "200 OK"
-        assert json.loads(body)["steps"] == 2
+        assert json.loads(body)["steps"] == 3
 
-        # Source gaps invalidate only continuity, not previously saved maxima.
-        for coefficient in ("1.15x", "1.16x"):
-            await gate.on_round(coefficient)
-        assert demo_off.tracker_step == 1
+        # A gap ends the current run, not the historical daily maximum.
+        await gate.on_round("1.15x")
+        await gate.on_round("1.16x")
+        assert demo_off.consecutive_below_two == 2
         await gate.on_history_gap()
-        assert demo_off.tracker_step == 0
-        assert demo_off.tracker_low_streak == 0
-        assert max(demo_off.daily_max_steps.values()) == 2
-
-        # Following an outage, a single below-2x round is not enough to
-        # create a new simulated step with a trigger threshold of 2.
+        assert demo_off.consecutive_below_two == 0
+        assert demo_off.daily_max_low_streak[day] == 3
         await gate.on_round("1.05x")
-        assert demo_off.tracker_step == 0
-        assert demo_off.tracker_low_streak == 1
-        assert demo_off.balance_cents == DEFAULT_BALANCE_CENTS
+        assert demo_off.consecutive_below_two == 1
 
-        state = json.loads(await fake.hget("luckyjet:demo_sessions", "42"))
-        reloaded = DemoLedger(**state)
-        assert reloaded.tracker_low_streak == 1
-        assert reloaded.daily_max_steps == demo_off.daily_max_steps
+        saved = json.loads(await redis.hget("luckyjet:demo_sessions", "42"))
+        restored = DemoLedger(**saved)
+        assert restored.consecutive_below_two == 1
+        assert restored.daily_max_low_streak == demo_off.daily_max_low_streak
+        assert restored.balance_cents == DEFAULT_BALANCE_CENTS
         await gate.close()
+
     asyncio.run(run())

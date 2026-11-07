@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 
 
@@ -10,6 +11,7 @@ MINIMUM_STAKE_CENTS = 1_000  # $10.00
 DEFAULT_STAKE_CENTS = MINIMUM_STAKE_CENTS
 TRIGGER_OPTIONS = (2, 3, 4, 5, 6)
 MAX_HISTORY = 100
+VLADIVOSTOK_TZ = ZoneInfo('Asia/Vladivostok')
 
 
 def parse_dollars(value) -> int | None:
@@ -72,8 +74,8 @@ class DemoLedger:
                 end = datetime.fromisoformat(entry['ended_at'])
                 if start.tzinfo is None or end.tzinfo is None:
                     continue
-                day = start.astimezone(timezone(timedelta(hours=7))).date().isoformat()
-                if day == end.astimezone(timezone(timedelta(hours=7))).date().isoformat():
+                day = start.astimezone(VLADIVOSTOK_TZ).date().isoformat()
+                if day == end.astimezone(VLADIVOSTOK_TZ).date().isoformat():
                     steps = len(entry.get('rounds', []))
                     if entry.get('outcome') in {'stopped_by_user', 'incomplete_data'}:
                         steps += 1
@@ -85,14 +87,14 @@ class DemoLedger:
         if self.active and self.cycle_started_at:
             try:
                 started = datetime.fromisoformat(self.cycle_started_at)
-                today = datetime.now(timezone(timedelta(hours=7))).date()
-                if started.tzinfo is not None and started.astimezone(timezone(timedelta(hours=7))).date() == today:
+                today = datetime.now(VLADIVOSTOK_TZ).date()
+                if started.tzinfo is not None and started.astimezone(VLADIVOSTOK_TZ).date() == today:
                     self._record_step(len(self.cycle_rounds) + 1)
             except (TypeError, ValueError):
                 pass
 
     def _record_step(self, step, now=None):
-        day = (now or datetime.now(timezone.utc)).astimezone(timezone(timedelta(hours=7))).date().isoformat()
+        day = (now or datetime.now(timezone.utc)).astimezone(VLADIVOSTOK_TZ).date().isoformat()
         self.daily_max_steps[day] = max(self.daily_max_steps.get(day, 0), step)
 
     @staticmethod
@@ -125,7 +127,7 @@ class DemoLedger:
         """Count every consecutive completed round below 2x, independent of DEMO.
 
         A 2x-or-higher result ends the run. Daily maxima record the observed
-        run length in Asia/Bangkok, with the run continuing across midnight.
+        run length in Asia/Vladivostok, with the run continuing across midnight.
         No bets, DEMO counters, balances or cycle histories are touched.
         """
         try:
@@ -140,7 +142,7 @@ class DemoLedger:
             return True
         self.consecutive_below_two += 1
         day = (now or datetime.now(timezone.utc)).astimezone(
-            timezone(timedelta(hours=7))
+            VLADIVOSTOK_TZ
         ).date().isoformat()
         self.daily_max_low_streak[day] = max(
             self.daily_max_low_streak.get(day, 0), self.consecutive_below_two

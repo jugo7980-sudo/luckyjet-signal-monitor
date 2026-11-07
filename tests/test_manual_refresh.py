@@ -58,7 +58,7 @@ def test_history_buttons_refresh_without_chat_messages_or_streak_button_side_eff
         gate.chats[42] = 42
         gate.history_messages[42] = 100
         buttons = gate._history_markup()["inline_keyboard"]
-        assert all(b["callback_data"] == "history_refresh" for row in buttons[:4] for b in row)
+        assert all(b["callback_data"] == "history_refresh" for row in buttons[1:5] for b in row)
         def callback(data, mid=100):
             return {"id": "cb", "data": data, "from": {"id": 42},
                     "message": {"message_id": mid, "chat": {"id": 42, "type": "private"}}}

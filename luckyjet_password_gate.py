@@ -156,8 +156,8 @@ class TelegramPasswordGate(HistoryPanels):
                 "setMyCommands",
                 {
                     "commands": [
+                        {"command": "app", "description": "🚀 ОТКРЫТЬ ПРИЛОЖЕНИЕ"},
                         {"command": "start", "description": "Открыть бота"},
-                        {"command": "app", "description": "Открыть приложение"},
                         {"command": "menu", "description": "Открыть меню"},
                         {"command": "status", "description": "Статус мониторинга"},
                         {"command": "settings", "description": "Настройки"},
@@ -375,6 +375,15 @@ class TelegramPasswordGate(HistoryPanels):
     def user_history_size(self, user_id):
         value = int(self.history_sizes.get(int(user_id), 20))
         return value if value in {20, 30, 50, 100} else 20
+
+    @staticmethod
+    def _app_launch_button():
+        """The primary blue Web App action used in existing chat panels."""
+        return {
+            "text": "Открыть приложение",
+            "web_app": {"url": app_url()},
+            "style": "primary",
+        }
 
     def _navigation_rows(self, back=None, back_label="⬅️ Назад"):
         return footer(back) if back else footer("menu_main")[1:]
@@ -877,12 +886,16 @@ class TelegramPasswordGate(HistoryPanels):
             pass
 
     async def _replace_prompt(self, user_id, chat_id, text):
+        # Guests don't have a coefficient history yet; make the Mini App
+        # available on their existing authorization prompt instead.
+        app_markup = {"inline_keyboard": [[self._app_launch_button()]]}
         message_id = self.prompt_messages.get(user_id)
         if message_id is not None:
             try:
                 await self.request(
                     "editMessageText",
-                    {"chat_id": chat_id, "message_id": message_id, "text": text},
+                    {"chat_id": chat_id, "message_id": message_id,
+                     "text": text, "reply_markup": app_markup},
                 )
                 return
             except (httpx.HTTPError, RuntimeError) as exc:
@@ -897,7 +910,9 @@ class TelegramPasswordGate(HistoryPanels):
                 if "message to edit not found" not in description and "message_id_invalid" not in description:
                     raise
                 self.prompt_messages.pop(user_id, None)
-        result = await self.request("sendMessage", {"chat_id": chat_id, "text": text})
+        result = await self.request("sendMessage", {
+            "chat_id": chat_id, "text": text, "reply_markup": app_markup,
+        })
         message_id = result.get("result", {}).get("message_id")
         if message_id is not None:
             self.prompt_messages[user_id] = int(message_id)
@@ -1211,10 +1226,7 @@ class TelegramPasswordGate(HistoryPanels):
         result = await self.request("sendMessage", {
             "chat_id": chat_id,
             "text": "Открыть Lucky Jet:",
-            "reply_markup": {"inline_keyboard": [[{
-                "text": "Открыть приложение",
-                "web_app": {"url": app_url()},
-            }]]},
+            "reply_markup": {"inline_keyboard": [[self._app_launch_button()]]},
         })
         payload = result.get("result") if isinstance(result, dict) else None
         message_id = self._to_int(payload.get("message_id")) if isinstance(payload, dict) else None
@@ -2026,7 +2038,9 @@ class TelegramPasswordGate(HistoryPanels):
     def _history_markup(self, user_id=None):
         limit = self.user_history_size(user_id) if user_id is not None else 20
         values = list(self.history_provider() if self.history_provider else [])[:limit]
-        rows = []
+        # This one persistent history message doubles as the Mini App entry.
+        # Keeping the app button here avoids additional chat messages or pins.
+        rows = [[self._app_launch_button()]]
         for start in range(0, len(values), 5):
             rows.append(
                 [

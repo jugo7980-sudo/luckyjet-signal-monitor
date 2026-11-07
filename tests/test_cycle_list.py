@@ -69,7 +69,7 @@ def test_history_menu_button_hides_across_sections_and_returns_on_close():
     gate, request = setup()
     gate.history_provider = lambda: ['1.20x'] * 20
     def menu_button():
-        return any(b['callback_data'] == 'menu_open' for row in gate._history_markup(42)['inline_keyboard'] for b in row)
+        return any(b.get('callback_data') == 'menu_open' for row in gate._history_markup(42)['inline_keyboard'] for b in row)
     async def run():
         assert menu_button()
         await click(gate, 'menu_open')

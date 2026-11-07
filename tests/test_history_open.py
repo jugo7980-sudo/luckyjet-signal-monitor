@@ -5,6 +5,7 @@ import pytest
 
 from luckyjet_password_gate import TelegramPasswordGate
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
+from history_panels import HISTORY_PANEL_TITLE
 
 
 class Telegram:
@@ -61,7 +62,7 @@ def test_history_toggle_on_live_update_off_stays_off_then_on(gate_class):
     assert not any(m == "deleteMessage" and p["message_id"] == 102 for m, p in request.calls)
     sends = [p for m, p in request.calls if m == "sendMessage"]
     assert len(sends) == 2
-    assert [len(row) for row in sends[0]["reply_markup"]["inline_keyboard"][:4]] == [5, 5, 5, 5]
+    assert [len(row) for row in sends[0]["reply_markup"]["inline_keyboard"][1:5]] == [5, 5, 5, 5]
 
 
 def test_toggle_and_background_update_are_serialized():
@@ -169,7 +170,7 @@ def test_explicit_start_reopens_hidden_panels_for_recovery():
 
     asyncio.run(run())
     assert any(m == "deleteMessage" and p["message_id"] == 200 for m, p in request.calls)
-    assert any(m == "sendMessage" and p.get("text") == "📊" for m, p in request.calls)
+    assert any(m == "sendMessage" and p.get("text") == HISTORY_PANEL_TITLE for m, p in request.calls)
 
 
 def test_hidden_history_and_disabled_notifications_never_create_new_messages():

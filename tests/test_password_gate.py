@@ -3,6 +3,7 @@ import asyncio
 import httpx
 
 from luckyjet_password_gate import TelegramPasswordGate
+from history_panels import HISTORY_PANEL_TITLE
 
 
 class FakeRequest:
@@ -13,7 +14,7 @@ class FakeRequest:
 
     async def __call__(self, method, payload):
         self.calls.append((method, payload))
-        if method == "editMessageText" and payload.get("text") == "📊" and self.fail_edit_history_once:
+        if method == "editMessageText" and payload.get("text") == HISTORY_PANEL_TITLE and self.fail_edit_history_once:
             self.fail_edit_history_once = False
             raise httpx.HTTPError("message missing")
         if method == "sendMessage":
@@ -71,7 +72,7 @@ def test_password_unlocks_into_clean_history_panel():
     assert gate.chats[42] == 42
     assert gate.history_messages[42] == 102
     sent = sent_messages(request)
-    assert sent[-2]["text"] == "📊"
+    assert sent[-2]["text"] == HISTORY_PANEL_TITLE
     assert sent[-1]["text"].startswith("☰")
     buttons = sent[-2]["reply_markup"]["inline_keyboard"]
     assert buttons[-1][0]["callback_data"] == "menu_open"
@@ -225,7 +226,7 @@ def test_notifications_disabled_suppresses_new_streak_but_not_history():
 
     asyncio.run(run())
 
-    assert any(p["text"] == "📊" for p in sent_messages(request))
+    assert any(p["text"] == HISTORY_PANEL_TITLE for p in sent_messages(request))
     assert not any(p["text"] == "🎰 Lucky Jet | Серия <2x" for p in sent_messages(request))
 
 
@@ -264,7 +265,7 @@ def test_history_panel_recreates_if_saved_message_was_deleted():
     asyncio.run(run())
 
     assert gate.history_messages[42] == 102
-    history_sends = [p for p in sent_messages(request) if p["text"] == "📊"]
+    history_sends = [p for p in sent_messages(request) if p["text"] == HISTORY_PANEL_TITLE]
     assert len(history_sends) == 2
 
 
@@ -324,10 +325,10 @@ def test_authorized_user_gets_live_history_panel_and_updates_same_message():
     methods = [method for method, _ in request.calls]
     assert methods == ["sendMessage", "editMessageText"]
     sent = request.calls[0][1]
-    assert sent["text"] == "📊"
+    assert sent["text"] == HISTORY_PANEL_TITLE
     rows = sent["reply_markup"]["inline_keyboard"]
-    assert rows[0][0]["text"] == "🟦1.10x"
+    assert rows[0][0]["style"] == "primary" and rows[1][0]["text"] == "🟦1.10x"
     assert rows[-1][0]["callback_data"] == "menu_open"
     updated = request.calls[1][1]["reply_markup"]["inline_keyboard"]
-    assert updated[0][0]["text"] == "🟪3.30x"
+    assert updated[0][0]["style"] == "primary" and updated[1][0]["text"] == "🟪3.30x"
     assert updated[-1][0]["callback_data"] == "menu_open"

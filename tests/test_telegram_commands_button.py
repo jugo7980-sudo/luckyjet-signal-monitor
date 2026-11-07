@@ -44,7 +44,8 @@ def test_global_and_existing_private_menu_overrides_reset_on_boot(monkeypatch):
         assert not [x for x in calls if x[0] == "pinChatMessage"]
         assert not [x for x in calls if x[0] == "sendMessage"]
         cmd_list = [p["commands"] for m,p in calls if m == "setMyCommands"][0]
-        assert [x["command"] for x in cmd_list] == ["start", "app", "menu", "status", "settings", "restart"]
+        assert [x["command"] for x in cmd_list] == ["app", "start", "menu", "status", "settings", "restart"]
+        assert cmd_list[0]["description"] == "🚀 ОТКРЫТЬ ПРИЛОЖЕНИЕ"
         assert any(m == "getChatMenuButton" and p == {"chat_id":42} for m,p in calls)
     asyncio.run(run())
 

@@ -1664,7 +1664,7 @@ async def poll_direct_gateways(
 
     # Only the game data source uses Xray; all other HTTP clients are direct.
     client_options = {"timeout": 8, "follow_redirects": True}
-    proxy = getattr(__import__(__name__, fromlist=["game_proxy"]), "game_proxy", None)
+    proxy = globals().get("game_proxy")
     if proxy:
         client_options["proxy"] = proxy
     async with httpx.AsyncClient(**client_options) as client:

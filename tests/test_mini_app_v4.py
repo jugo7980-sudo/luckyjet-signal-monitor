@@ -227,6 +227,8 @@ def test_home_colors_removed_quick_access_and_site_web_form():
             assert await page.locator('.coef.mid').count() == 1
             assert await page.locator('.coef.high').count() == 1
             assert await page.locator('#summary-heading').inner_text() == 'Сводка архива · 150 раундов'
+            await page.locator('#monitoring-accordion summary').click()
+            await page.wait_for_function("document.querySelector('#monitor-uptime').textContent === '01:01:40'")
             assert await page.locator('#monitor-uptime').inner_text() == '01:01:40'
             assert await page.locator('.coef.high').evaluate('(e)=>getComputedStyle(e).color') != await page.locator('.coef.mid').evaluate('(e)=>getComputedStyle(e).color')
             await page.locator('#recent-limit').select_option('50')

@@ -99,6 +99,8 @@
     setText('ind-summary-match-total', String(curr.count ?? 0));
     setText('summary-preview-count', curr.count);
     setText('summary-preview-since', countText(data.rounds_since_since));
+    byId('summary-preview-placeholder').hidden = true;
+    byId('summary-preview-results').hidden = false;
     setText('ind-found', curr.count);
     setText('ind-since-count', countText(data.rounds_since_since));
     setText('ind-target-count', countText(data.rounds_since_target));
@@ -209,6 +211,17 @@
       if (preset.value) byId('ind-' + suffix).value = preset.value;
     });
   }
+  function bindDisclosure(buttonId, contentId) {
+    const control = byId(buttonId), content = byId(contentId);
+    if (!control || !content) return;
+    control.addEventListener('click', () => {
+      const expanded = control.getAttribute('aria-expanded') === 'true';
+      control.setAttribute('aria-expanded', String(!expanded));
+      content.hidden = expanded;
+    });
+  }
+  bindDisclosure('summary-stats-toggle', 'summary-extra-stats');
+  bindDisclosure('summary-help-toggle', 'summary-help-body');
   button.addEventListener('click', load);
   fields.forEach(id => byId(id).addEventListener('change', safeStore));
   accordion.addEventListener('toggle', () => {

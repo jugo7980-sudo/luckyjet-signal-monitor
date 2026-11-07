@@ -93,17 +93,19 @@ async def analyze(redis, count, target, since):
     seen_ids = set()
     duplicates = 0
     cursor = "+"
-    first_event = True
     scanned = 0
+    limited_search = False
+    search_budget = max(40000, 2 * count + 5000)
     last_target = last_since = None
     exhausted = False
     while len(rows) < 2 * count or last_target is None or last_since is None:
+        if scanned >= search_budget:
+            limited_search = True
+            break
         batch = await redis.xrevrange(STREAM_KEY, max=cursor, min="-", count=BATCH)
         if not batch:
             exhausted = True
             break
-        if first_event:
-            first_event = False
         for stream_id, raw_fields in batch:
             scanned += 1
             fields = {_decode(k): _decode(v) for k, v in raw_fields.items()}
@@ -169,8 +171,8 @@ async def analyze(redis, count, target, since):
         })
     full_window = len(current_rows) == count
     full_comparison = len(previous_rows) == count
-    window_gaps = any(pos <= count for pos in markers)
-    comparison_gaps = any(pos <= 2 * count for pos in markers)
+    window_gaps = any(pos < count for pos in markers)
+    comparison_gaps = any(pos < 2 * count for pos in markers)
     since_reliable = last_since is not None and not any(pos <= last_since for pos in markers)
     target_reliable = last_target is not None and not any(pos <= last_target for pos in markers)
 
@@ -194,6 +196,7 @@ async def analyze(redis, count, target, since):
             "complete_window": full_window and not window_gaps,
             "complete_comparison": full_comparison and not comparison_gaps,
             "archive_exhausted": exhausted,
+            "history_search_limited": limited_search,
             "unverified_source_timing": any(not r["source_time"] for r in current_rows),
         },
         "notice": "Статистика по сохранённым раундам, не прогноз и не доказательство полноты данных игрового сайта.",

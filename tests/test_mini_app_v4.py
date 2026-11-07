@@ -274,3 +274,33 @@ def test_web_login_flow_shows_safe_site_diagnostics_without_exposing_secrets():
         assert flow.error == 'Форма входа осталась открыта. Сайт не подтвердил авторизацию.'
         assert 'private@example.test' not in flow.error and 'secret789' not in flow.error
     asyncio.run(run())
+
+
+def test_web_login_flow_delivers_precredential_screenshot_only_to_owner():
+    from mini_app_site import WebLoginFlow
+    from site_account import LoginProblem
+    calls = []
+    class Driver:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): pass
+        async def login(self, email, password, code_callback):
+            error = LoginProblem('Сайт не дал нажать кнопку открытия входа.')
+            error.page_screenshot = b'PNG'
+            raise error
+    class Account:
+        attempt_timeout = 4
+        browser_lock = asyncio.Lock()
+        owner_id = 42
+        status = 'disconnected'
+        def driver_factory(self): return Driver()
+        async def request(self, method, payload):
+            calls.append((method, payload))
+    async def run():
+        flow = WebLoginFlow(Account())
+        await flow.login('owner@example.test', 'never-store-this',)
+        assert flow.phase == 'error'
+        assert len(calls) == 1 and calls[0][0] == 'sendPhoto'
+        assert calls[0][1]['chat_id'] == 42
+        assert calls[0][1]['protect_content'] is True
+        assert 'never-store-this' not in str(calls)
+    asyncio.run(run())

@@ -7,6 +7,7 @@ import os
 import httpx
 
 from archive_consumer import consume_archive
+from archive_integrity import archive_day_evidence
 from history_refresh import HistoryRefresh
 from telegram_delivery import TelegramDelivery
 from live_panel_updates import LivePanelUpdates
@@ -283,6 +284,25 @@ async def _main_async() -> None:
             "Archive migration preflight: legacy_cursor_present=%s cursor_in_archive=%s archive_has_last=%s",
             bool(prior_id), archived_match, bool(archived_latest),
         )
+        # Read-only, bounded audit: never modifies balances, round IDs, or
+        # historical counters. Verification statuses are evidence, not guesses.
+        from datetime import datetime as _dt, timedelta as _td
+        from coefficient_stats import TZ as _audit_tz
+        audit_today = _dt.now(_audit_tz).date()
+        for days_ago in (2, 1, 0):
+            audit_day = (audit_today - _td(days=days_ago)).isoformat()
+            raw_total = await redis.hget(f"luckyjet:coef:{audit_day}", "total")
+            report = await archive_day_evidence(
+                redis, audit_day, legacy_total=raw_total,
+            )
+            log.info(
+                "Archive daily audit: day=%s status=%s archived_rounds=%s "
+                "legacy_total=%s gaps=%s missing_time=%s reasons=%s",
+                audit_day, report["status"], report["archived_rounds"],
+                report["legacy_total"], report["gaps"],
+                report["source_time_missing"], len(report["reasons"]),
+            )
+
         panel.history = [base.format_history_coefficient(value) for value in state.previous][:panel.limit]
         seed_private_streak(password_gate, state.previous)
         async with asyncio.TaskGroup() as owned:

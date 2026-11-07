@@ -1127,7 +1127,8 @@ class TelegramPasswordGate(HistoryPanels):
             if chat_id == self.admin_chat_id:
                 try:
                     current = await self.request("getChatMenuButton", {"chat_id": chat_id})
-                    actual = (current.get("result") or {}).get("type")
+                    data = current.get("result") if isinstance(current, dict) else None
+                    actual = data.get("type") if isinstance(data, dict) else None
                     log.info("Admin chat menu button verified: %s", actual)
                 except (httpx.HTTPError, RuntimeError):
                     log.warning("Could not verify admin chat menu button")
@@ -1136,7 +1137,9 @@ class TelegramPasswordGate(HistoryPanels):
 
     async def _ensure_app_pin(self, chat_id):
         """Keep the Mini App launch button in ONE pinned private-chat message."""
-        if chat_id is None or chat_id <= 0:
+        # A Redis marker is required to avoid generating duplicate pins on
+        # restarts. The production app always uses Redis.
+        if chat_id is None or chat_id <= 0 or self.redis is None:
             return
         key = "luckyjet:pinned_app_messages"
         known = None
@@ -1156,7 +1159,8 @@ class TelegramPasswordGate(HistoryPanels):
                         "web_app": {"url": app_url()},
                     }]]},
                 })
-                message_id = self._to_int((sent.get("result") or {}).get("message_id"))
+                payload = sent.get("result") if isinstance(sent, dict) else None
+                message_id = self._to_int(payload.get("message_id")) if isinstance(payload, dict) else None
                 if message_id is None:
                     return
                 if self.redis is not None:

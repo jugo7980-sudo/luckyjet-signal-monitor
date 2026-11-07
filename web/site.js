@@ -162,18 +162,20 @@
     '<div class="remote-bar">',
     '<div class="remote-line"><button id="remote-close" type="button">Закрыть</button><button id="remote-save" type="button">Сохранить вход</button></div>',
     '<div id="remote-browser-status" role="status">Браузер подключается…</div>',
-    '<div class="remote-line"><input id="remote-text" type="text" autocomplete="off" spellcheck="false" placeholder="Почта или код"><button id="remote-send-text" type="button">Ввести текст</button></div>',
+    '<div class="remote-line"><input id="remote-text" type="email" autocomplete="off" spellcheck="false" placeholder="Почта"><button id="remote-send-text" type="button">Ввести почту</button></div>',
     '<div class="remote-line"><input id="remote-secret" type="password" autocomplete="new-password" placeholder="Пароль"><button id="remote-send-secret" type="button">Ввести пароль</button></div>',
+    '<div class="remote-line"><input id="remote-code" type="text" inputmode="numeric" autocomplete="off" placeholder="Код из почты (если потребуется)"><button id="remote-send-code" type="button">Ввести код</button></div>',
     '<div class="remote-line"><button id="remote-enter" type="button">Enter</button><button id="remote-tab" type="button">Tab</button><button id="remote-backspace" type="button">⌫</button><button id="remote-up" type="button">↑</button><button id="remote-down" type="button">↓</button></div>',
     '</div>',
     '<img id="remote-browser-image" alt="Экран удалённого браузера. Нажми на поле, затем введи текст выше." width="430" height="932" draggable="false">',
-    '<p style="font-size:12px;color:#bcb0cd;margin:10px 3px">Нажимай на экран как на обычном сайте. Поля в изображении скрыты; ввод выполняется через строку сверху. Время сессии ограничено.</p>',
+    '<p style="font-size:12px;color:#bcb0cd;margin:10px 3px">Почта и пароль вводятся сразу в соответствующие поля сайта, независимо от нажатий на снимок. Для кода сначала выбери поле кода на сайте. Время сессии ограничено.</p>',
   ].join('');
   document.body.appendChild(overlay);
   const remoteStatus = overlay.querySelector('#remote-browser-status');
   const remoteImage = overlay.querySelector('#remote-browser-image');
   const remoteText = overlay.querySelector('#remote-text');
   const remoteSecret = overlay.querySelector('#remote-secret');
+  const remoteCode = overlay.querySelector('#remote-code');
   let remoteTimer = null;
   let remoteBusy = false;
   let remoteActive = false;
@@ -256,6 +258,7 @@
     document.body.style.overflow = '';
     remoteText.value = '';
     remoteSecret.value = '';
+    remoteCode.value = '';
     remoteImage.removeAttribute('src');
     try { await remoteAPI('POST', {action:'close'}); } catch (_) {}
   });
@@ -266,13 +269,14 @@
     const y = Math.max(0, Math.min(1, (event.clientY - r.top) / r.height));
     remoteAction({action:'tap', x, y});
   });
-  async function remoteWrite(field) {
+  async function remoteWrite(field, operation) {
     const value = field.value;
     field.value = '';
-    if (value) await remoteAction({action:'type', text:value});
+    if (value) await remoteAction({action:operation, text:value});
   }
-  overlay.querySelector('#remote-send-text').addEventListener('click', () => remoteWrite(remoteText));
-  overlay.querySelector('#remote-send-secret').addEventListener('click', () => remoteWrite(remoteSecret));
+  overlay.querySelector('#remote-send-text').addEventListener('click', () => remoteWrite(remoteText, 'fill_email'));
+  overlay.querySelector('#remote-send-secret').addEventListener('click', () => remoteWrite(remoteSecret, 'fill_password'));
+  overlay.querySelector('#remote-send-code').addEventListener('click', () => remoteWrite(remoteCode, 'type'));
   overlay.querySelector('#remote-enter').addEventListener('click', () => remoteAction({action:'key', key:'Enter'}));
   overlay.querySelector('#remote-tab').addEventListener('click', () => remoteAction({action:'key', key:'Tab'}));
   overlay.querySelector('#remote-backspace').addEventListener('click', () => remoteAction({action:'key', key:'Backspace'}));

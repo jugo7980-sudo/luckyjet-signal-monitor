@@ -105,6 +105,14 @@
         heading('Фактический архив', 'Полученные от источника записи · Владивосток, UTC+10');
         datePicker('archive');
         info('Выбранная дата', formatDay(data.day));
+        if (data.aggregate) {
+          const a = data.aggregate;
+          info('Раундов по архиву', a.total);
+          info('<2x', a.lt2);
+          for (const t of LIMITS) info('>' + t + 'x', a[String(t)] ?? 0);
+          info('Максимальная серия <2x', data.max_low_streak ?? 'Нет данных');
+          note('Подсчёт по времени получения записей, а не по неподтверждённому времени игры.');
+        } else if (data.truncated) note('Слишком много событий для полного подсчёта за один запрос. Записи ниже доступны постранично.');
         if (data.integrity) {
           const e = data.integrity;
           info('Записано раундов', e.archived_rounds ?? 'Нет данных');

@@ -93,6 +93,42 @@ class SiteLoginBrowser:
         self.context = None
         self.page = None
         self._stack = None
+        self._submit_requests = None
+        self._submit_telemetry = None
+
+    def _watch_submission_requests(self):
+        """Track counts/status classes only; never capture URL, payload or response body."""
+        pending = set()
+        data = {'observed': 0, 'finished': 0, 'failed': 0, 'http4xx': 0, 'http5xx': 0}
+        self._submit_requests = pending
+        self._submit_telemetry = data
+
+        def started(req):
+            if req.method.upper() == 'POST' and req.resource_type in {'xhr', 'fetch', 'document'}:
+                data['observed'] += 1
+                pending.add(req)
+
+        def finished(req):
+            if req in pending:
+                data['finished'] += 1
+                pending.discard(req)
+
+        def failed(req):
+            if req in pending:
+                data['failed'] += 1
+                pending.discard(req)
+
+        def responded(resp):
+            if resp.request in pending:
+                if 400 <= resp.status < 500:
+                    data['http4xx'] += 1
+                elif resp.status >= 500:
+                    data['http5xx'] += 1
+
+        self.page.on('request', started)
+        self.page.on('requestfinished', finished)
+        self.page.on('requestfailed', failed)
+        self.page.on('response', responded)
 
     async def __aenter__(self):
         self._stack = AsyncExitStack()
@@ -333,9 +369,16 @@ class SiteLoginBrowser:
         password_visible = await self._field('password') is not None
         code_visible = await self._field('code') is not None
         error_visible = await self._field('error') is not None
+        telemetry = self._submit_telemetry or {}
         logging.getLogger('luckyjet.site_login_browser').warning(
-            'Site login result timeout: login_form=%s code=%s error=%s after_code=%s',
+            'Site login result timeout: login_form=%s code=%s error=%s after_code=%s '
+            'post_observed=%s post_pending=%s post_failed=%s post_4xx=%s post_5xx=%s',
             email_visible and password_visible, code_visible, error_visible, after_code,
+            telemetry.get('observed', 0),
+            len(self._submit_requests or ()),
+            telemetry.get('failed', 0),
+            telemetry.get('http4xx', 0),
+            telemetry.get('http5xx', 0),
         )
         if email_visible and password_visible:
             problem = LoginProblem(
@@ -383,6 +426,7 @@ class SiteLoginBrowser:
         self._check_origin()
         await password_field.fill(password)
         password = None
+        self._watch_submission_requests()
         await self._submit(password_field)
         result = await self._wait_result()
         for attempt in range(3):

@@ -62,7 +62,7 @@
     root.appendChild(button);
   }
   function setTabs() {
-    const active = ['days', 'day'].includes(args.view) ? 'days'
+    const active = args.view === 'archive' ? 'archive' : ['days', 'day'].includes(args.view) ? 'days'
       : ['high_days', 'high_day', 'high_item'].includes(args.view) ? 'high_days'
       : ['cycles', 'cycle', 'demo_stats'].includes(args.view) ? 'cycles' : 'max_steps';
     for (const button of tabs) button.setAttribute('aria-selected', String(button.dataset.historyView === active));
@@ -88,7 +88,7 @@
     button.type = 'button';
     button.addEventListener('click', () => {
       if (!input.value || input.value > input.max) { status.textContent = 'Выбери корректную дату.'; return; }
-      navigate(view === 'days' ? 'day' : view === 'max_steps' ? 'max_step_day' : 'high_day', {day: input.value}, true);
+      navigate(view === 'archive' ? 'archive' : view === 'days' ? 'day' : view === 'max_steps' ? 'max_step_day' : 'high_day', {day: input.value}, true);
     });
     wrap.append(input, button);
     root.appendChild(wrap);
@@ -100,6 +100,37 @@
     back.hidden = stack.length === 0;
     setPager(data);
     switch (data.view) {
+      case 'archive': {
+        heading('Фактический архив', 'Полученные от источника записи · Владивосток, UTC+10');
+        datePicker('archive');
+        info('Выбранная дата', formatDay(data.day));
+        if (data.integrity) {
+          const e = data.integrity;
+          info('Записано раундов', e.archived_rounds ?? 'Нет данных');
+          info('Разрывы в архиве', e.gaps ?? 'Нет данных');
+          note(e.status === 'verified' ? 'Проверка последовательности и времени пройдена.' :
+            'Полнота данных источника не гарантирована. ' + ((e.reasons || []).join('; ') || 'Данные ещё не проверены.') + '.');
+        }
+        if (!data.items.length) note('За выбранную дату нет записей в архиве.');
+        for (const record of data.items) {
+          const received = Number(record.observed_at);
+          const time = Number.isFinite(received) && received > 0 ? formatTime(received / 1000) : 'Время неизвестно';
+          const recorded = record.type === 'round';
+          const title = recorded ? String(record.coefficient) + 'x' :
+            record.type === 'gap' ? 'Разрыв истории' : 'Начало сбора';
+          const details = time + ' · ' + (recorded ? 'Раунд ' + record.round_id : 'Служебная запись');
+          item(title, details, null, record.source_time ? 'Время игры: ' + record.source_time : 'Время получения');
+        }
+        if (data.next_cursor) {
+          const more = el('button', 'history-outline', 'Показать более ранние записи');
+          more.type = 'button';
+          more.style.width = '100%';
+          more.style.marginTop = '14px';
+          more.addEventListener('click', () => navigate('archive', {day: data.day, cursor: data.next_cursor}, true));
+          root.appendChild(more);
+        }
+        break;
+      }
       case 'days':
         heading('История Кэф', 'Статистика по дням · Владивосток, UTC+10');
         datePicker('days');
@@ -275,6 +306,7 @@
     stack = []; current = null; navigate(button.dataset.historyView);
   });
   back.addEventListener('click', goBack);
+  document.getElementById('history-archive').addEventListener('click', () => navigate('archive', {}, true));
   refresh.addEventListener('click', () => navigate(args.view, {...args}));
   document.getElementById('history-prev').addEventListener('click', () =>
     navigate(args.view, {...args, page: Math.max(0, Number(args.page || 0) - 1)}));

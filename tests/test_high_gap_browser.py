@@ -113,7 +113,8 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
                 'target': '1.50', 'stake': '1000',
             }}
             await page.locator('#high-gap-toggle').click()
-            await page.get_by_text('Ожидает 27 раундов', exact=False).first.wait_for()
+            await page.locator('#high-gap-state').wait_for(state='visible')
+            assert 'Ожидает 27 раундов' in await page.locator('#high-gap-state').text_content()
             assert posted[1] == {'action': 'high_gap_toggle'}
             await page.locator('#high-gap-history').click()
             await page.get_by_text('Стратегия №2 · история').wait_for()

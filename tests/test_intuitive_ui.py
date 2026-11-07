@@ -121,7 +121,7 @@ def test_all_fifty_cycles_can_be_read_without_new_messages_or_mutating_ledger():
             await click(gate, f"demo_history:{page}")
             rendered = screen(request)
             assert f"Демо-цикл {page + 1} из 50" in rendered["text"]
-            assert "23:00:00" in rendered["text"]
+            assert "02:00:00" in rendered["text"]
             assert len(rendered["text"]) < 4096
             assert gate.menu_messages[42] == message_id
         await click(gate, "demo_history:9999")

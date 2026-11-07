@@ -59,7 +59,7 @@ def test_owner_drag_delivers_live_pointer_events_before_finger_release():
             await page.route("**/*", route)
             await page.goto("https://example.test/index")
             await page.locator("#remote-browser-overlay").wait_for(state="hidden")
-            await page.locator("#site-section > button").last.click()
+            await page.get_by_role("button", name="Открыть удалённый браузер · Япония").click()
             await page.locator("#remote-browser-overlay").wait_for(state="visible")
             await page.locator("#remote-drag-mode").click()
             assert await page.locator("#remote-drag-mode").get_attribute("aria-pressed") == "true"

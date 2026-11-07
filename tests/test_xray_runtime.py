@@ -5,10 +5,11 @@ import json
 from pathlib import Path
 
 import pytest
+import httpx
 
 from xray_runtime import (
     XrayConfigError, XrayManager, fetch_node, first_compatible_node,
-    make_config, parse_node_link,
+    make_config, parse_node_link, verify_japan_egress,
 )
 
 
@@ -189,3 +190,33 @@ def test_failed_xray_subprocess_does_not_activate_proxy(monkeypatch):
     asyncio.run(run())
     assert len(calls) == 1
     assert calls[0][0] == "/missing/xray"
+
+
+def test_japan_egress_probe_uses_second_endpoint_when_first_fails(monkeypatch):
+    urls = []
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            pass
+        async def get(self, url):
+            urls.append(url)
+            if len(urls) == 1:
+                raise httpx.ConnectError("check endpoint unavailable")
+            return httpx.Response(200, json={"country_code": "JP"}, request=httpx.Request("GET", url))
+    monkeypatch.setattr("xray_runtime.httpx.AsyncClient", lambda **kwargs: Client())
+    asyncio.run(verify_japan_egress("socks5://127.0.0.1:10808"))
+    assert urls == ["https://api.country.is/", "https://ipwho.is/"]
+
+
+def test_japan_egress_probe_rejects_non_japanese_exit(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            pass
+        async def get(self, url):
+            return httpx.Response(200, json={"country": "SG"}, request=httpx.Request("GET", url))
+    monkeypatch.setattr("xray_runtime.httpx.AsyncClient", lambda **kwargs: Client())
+    with pytest.raises(XrayConfigError, match="Proxy egress is not Japan"):
+        asyncio.run(verify_japan_egress("socks5://127.0.0.1:10808"))

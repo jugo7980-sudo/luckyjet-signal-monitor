@@ -95,10 +95,10 @@ def test_v05_compact_refresh_summary_and_throttled_polling():
 
             await page.locator('#recent-limit').select_option('50')
             assert await page.locator('#summary-heading').inner_text() == 'Сводка архива · 150 раундов'
-            assert await page.locator('#coef-grid .coef').count() == 50
+            await page.wait_for_function("document.querySelectorAll('#coef-grid .coef').length === 50")
             await page.locator('#recent-limit').select_option('100')
             assert await page.locator('#summary-heading').inner_text() == 'Сводка архива · 150 раундов'
-            assert await page.locator('#coef-grid .coef').count() == 100
+            await page.wait_for_function("document.querySelectorAll('#coef-grid .coef').length === 100")
             # Cached coefficient nodes should survive polls when the source data is unchanged.
             await page.evaluate("window.__firstCell = document.querySelector('#coef-grid .coef')")
             recorded = len(limits)

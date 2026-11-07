@@ -27,6 +27,6 @@ def test_cycle_button_shows_round_count_date_and_result():
     async def run():
         await click(gate, "demo_history")
         button = _cycle_buttons(screen(request))[0]
-        assert button["text"] == "7 шаг. · 02.11 23:00 · +$10.00"
+        assert button["text"] == "7 шаг. · 03.11 02:00 · +$10.00"
 
     asyncio.run(run())

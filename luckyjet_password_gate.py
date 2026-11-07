@@ -31,6 +31,7 @@ RESTART_COOLDOWN_KEY = "luckyjet:public_restart:cooldown"
 APP_PIN_KEY = "luckyjet:pinned_app_messages"
 APP_PIN_AUDIT_SECONDS = 90
 APP_PIN_AUDIT_BATCH = 20
+APP_PIN_REFRESH_KEY = "luckyjet:pinned_app_refresh_20261107_v2"
 
 
 class RestartRequested(Exception):
@@ -183,7 +184,14 @@ class TelegramPasswordGate(HistoryPanels):
             private_chat_ids.add(self.admin_chat_id)
         for chat_id in sorted(private_chat_ids):
             await self._register_commands_button(chat_id)
-            await self._ensure_app_pin(chat_id)
+            # One-time migration: renew each old pinned message. Telegram may
+            # still report the old pinned ID after the user cleared local
+            # history, while the client no longer displays that message.
+            force = bool(self.redis is not None and not await self.redis.sismember(
+                APP_PIN_REFRESH_KEY, str(chat_id)))
+            created = await self._ensure_app_pin(chat_id, force_new=force)
+            if force and created:
+                await self.redis.sadd(APP_PIN_REFRESH_KEY, str(chat_id))
         for user_id in list(self.authorized):
             if user_id in self.chats:
                 await self.ensure_private_history(user_id)
@@ -1172,7 +1180,10 @@ class TelegramPasswordGate(HistoryPanels):
             self._app_pin_audit_cursor = (offset + len(selection)) % len(chats)
             for chat_id in selection:
                 try:
-                    await self._ensure_app_pin(chat_id)
+                    force = not await self.redis.sismember(APP_PIN_REFRESH_KEY, str(chat_id))
+                    created = await self._ensure_app_pin(chat_id, force_new=force)
+                    if force and created:
+                        await self.redis.sadd(APP_PIN_REFRESH_KEY, str(chat_id))
                 except (httpx.HTTPError, RuntimeError):
                     log.warning("Pinned Mini App audit failed for chat_id=%s", chat_id)
                 await asyncio.sleep(0.15)
@@ -1259,7 +1270,14 @@ class TelegramPasswordGate(HistoryPanels):
                         "disable_notification": True,
                     })
                 except (httpx.HTTPError, RuntimeError):
-                    # Don't overwrite a saved good ID if the new pin failed.
+                    # Don't overwrite a saved good ID or leave an unpinned
+                    # duplicate if Telegram refuses the new pin.
+                    try:
+                        await self.request("deleteMessage", {
+                            "chat_id": chat_id, "message_id": fresh_id,
+                        })
+                    except (httpx.HTTPError, RuntimeError):
+                        pass
                     log.warning("New launcher could not be pinned for chat_id=%s", chat_id)
                     return False
                 await self.redis.hset(APP_PIN_KEY, str(chat_id), str(fresh_id))
@@ -1308,7 +1326,9 @@ class TelegramPasswordGate(HistoryPanels):
         await self._register_commands_button(chat_id)
         # /start is used to reopen the bot after clearing local Telegram
         # history, which the Bot API does not expose as a deletion event.
-        await self._ensure_app_pin(chat_id, force_new=True)
+        created = await self._ensure_app_pin(chat_id, force_new=True)
+        if created and self.redis is not None:
+            await self.redis.sadd(APP_PIN_REFRESH_KEY, str(chat_id))
 
     async def _request_restart(self, user_id, chat_id):
         """Any unblocked private-chat user can request a confirmed full restart."""

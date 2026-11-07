@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from coefficient_stats import event_time
+from archive_coverage import collector_minute_coverage
 from round_archive import STREAM_KEY
 
 TZ = ZoneInfo("Asia/Vladivostok")
@@ -26,6 +27,7 @@ async def archive_day_evidence(redis, day: str, *, legacy_total=None):
             "archived_rounds": None,
             "legacy_total": int(legacy_total) if legacy_total is not None else None,
             "counts_match": None, "reasons": ["проверка архива недоступна"],
+            "poll_coverage": None,
         }
     start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=TZ)
     end = start + timedelta(days=1)
@@ -80,6 +82,7 @@ async def archive_day_evidence(redis, day: str, *, legacy_total=None):
             elif parsed.date() != start.date():
                 timestamp_mismatches += 1
 
+    poll_coverage = await collector_minute_coverage(redis, day)
     archive_started_before = bool(before)
     archive_continued_after = bool(after)
     finished_day = end <= datetime.now(TZ)
@@ -92,6 +95,7 @@ async def archive_day_evidence(redis, day: str, *, legacy_total=None):
     # Only an exact timestamp match, no archive gaps, and a day that began
     # and ended while the archive was running can support day-level fidelity.
     # This does NOT independently prove the third-party game was complete.
+    # Successful source poll minutes are independently tracked in poll_coverage.
     sequence_checked = (
         observed_whole_day and rounds > 0 and timestamp_mismatches == 0
         and compares and counters_match
@@ -135,5 +139,6 @@ async def archive_day_evidence(redis, day: str, *, legacy_total=None):
         "truncated": truncated,
         "first_seen_at": first_event_at,
         "last_seen_at": last_event_at,
+        "poll_coverage": poll_coverage,
         "reasons": reasons,
     }

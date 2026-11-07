@@ -443,7 +443,6 @@ class TelegramPasswordGate(HistoryPanels):
     def menu(self, user_id=None):
         hidden = user_id in self.history_hidden
         rows = [
-            [{"text": "📱 Открыть приложение", "web_app": {"url": app_url()}, "style": "primary"}],
             [{"text": "📊 Показать историю" if hidden else "📊 Скрыть историю", "callback_data": "menu_history"}],
             [{"text": "🧪 Демо-режим", "callback_data": "demo_menu"}],
             [{"text": "⚙️ Настройки", "callback_data": "menu_settings"}],
@@ -1125,6 +1124,13 @@ class TelegramPasswordGate(HistoryPanels):
                 "menu_button": {"type": "commands"},
             })
             self._command_menu_synced.add(chat_id)
+            if chat_id == self.admin_chat_id:
+                try:
+                    current = await self.request("getChatMenuButton", {"chat_id": chat_id})
+                    actual = (current.get("result") or {}).get("type")
+                    log.info("Admin chat menu button verified: %s", actual)
+                except (httpx.HTTPError, RuntimeError):
+                    log.warning("Could not verify admin chat menu button")
         except (httpx.HTTPError, RuntimeError):
             log.warning("Could not restore Telegram commands button for chat_id=%s", chat_id)
 

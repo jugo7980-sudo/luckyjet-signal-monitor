@@ -93,6 +93,11 @@ def test_mobile_full_site_design_navigation_and_explanations():
                                  "HapticFeedback:{selectionChanged(){}}}}")
                 await page.route("**/*", route)
                 await page.goto("https://example.test/app")
+                assert not await page.locator("#summary-accordion").evaluate("(n) => n.open")
+                assert not await page.locator("#monitoring-accordion").evaluate("(n) => n.open")
+                assert await page.locator("#summary-preview-placeholder").is_visible()
+                assert await page.locator("#summary-preview-results").is_hidden()
+                assert await page.locator(".recent-results-card #coef-grid").count() == 1
                 await page.locator("#summary-accordion summary").click()
                 await page.wait_for_function(
                     "document.querySelector('#ind-found').textContent === '1'")
@@ -102,7 +107,33 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     "#ind-summary-context").inner_text()
                 assert await page.locator("#ind-summary-cards").count() == 0
                 assert await page.locator(".ind-summary-cards .ind-stat").count() == 12
-                assert await page.locator("#summary-explainer summary").count() == 1
+                assert await page.locator("#summary-help-toggle").count() == 1
+                assert await page.locator("#summary-preview-placeholder").is_hidden()
+                assert await page.locator("#summary-preview-results").is_visible()
+                assert await page.locator(".ind-summary-cards").first.locator(".ind-stat:visible").count() == 4
+                assert await page.locator("#summary-extra-stats").is_hidden()
+                await page.locator("#summary-stats-toggle").click()
+                assert await page.locator("#summary-extra-stats .ind-stat:visible").count() == 8
+                assert await page.locator("#summary-stats-toggle").get_attribute("aria-expanded") == "true"
+                await page.locator("#summary-stats-toggle").click()
+                assert await page.locator("#summary-extra-stats").is_hidden()
+                assert await page.locator("#summary-help-body").is_hidden()
+                await page.locator("#summary-help-toggle").click()
+                assert await page.locator("#summary-help-body").is_visible()
+                assert await page.locator("#summary-explainer").evaluate(
+                    "(n) => n.closest('#summary-accordion') !== null")
+                await page.locator("#summary-help-toggle").click()
+                await page.locator("#summary-accordion summary").click()
+                await page.locator("#monitoring-accordion summary").click()
+                assert await page.locator("#monitoring-accordion").evaluate("(n) => n.open")
+                assert await page.locator("#monitor-state").count() == 1
+                await page.locator("#monitor-uptime").scroll_into_view_if_needed()
+                await page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+                assert await page.evaluate("""() => {
+                    const footer = document.querySelector('nav').getBoundingClientRect();
+                    const last = document.querySelector('#live-status').getBoundingClientRect();
+                    return last.bottom < footer.top - 6;
+                }""")
                 assert await page.evaluate(
                     "document.documentElement.scrollWidth <= innerWidth")
 

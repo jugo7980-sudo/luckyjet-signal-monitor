@@ -169,17 +169,21 @@ def test_game_polling_proxy_opt_in_only(monkeypatch):
     assert observed[1]["proxy"] == "socks5://127.0.0.1:10808"
 
 
-def test_proxy_process_config_is_secret_and_probe_required(monkeypatch, tmp_path):
+def test_failed_xray_subprocess_does_not_activate_proxy(monkeypatch):
     from xray_runtime import XrayManager
-    # Subprocess is not started if there is no compatible node.
-    called = []
+    monkeypatch.setenv("XRAY_NODE_URL", VLESS)
+    monkeypatch.delenv("XRAY_SUBSCRIPTION_URL", raising=False)
+    calls = []
     async def fake_subprocess(*args, **kwargs):
-        called.append(args)
-        raise OSError("Xray executable unavailable")
+        calls.append(args)
+        raise OSError("Binary unavailable")
     monkeypatch.setattr("xray_runtime.asyncio.create_subprocess_exec", fake_subprocess)
     manager = XrayManager(binary="/missing/xray")
     async def run():
-        assert await manager.start_from_env() is False if not (
-            __import__("os").environ.get("XRAY_NODE_URL") or
-            __import__("os").environ.get("XRAY_SUBSCRIPTION_URL")) else True
-    # Not a network test; subprocess execution is covered by deployment.
+        assert not await manager.start_from_env()
+        assert manager.proxy_url is None
+        assert manager.process is None
+        await manager.stop()
+    asyncio.run(run())
+    assert len(calls) == 1
+    assert calls[0][0] == "/missing/xray"

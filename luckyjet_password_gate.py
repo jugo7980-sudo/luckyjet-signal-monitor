@@ -52,6 +52,7 @@ class TelegramPasswordGate(HistoryPanels):
         self.password = password if password is not None else os.getenv("TELEGRAM_ACCESS_PASSWORD", "").strip()
         self.redis_url = os.getenv("REDIS_URL", "").strip()
         self.redis = None
+        self.ready_event = asyncio.Event()
         self.admin_chat_id = self._to_int(admin_chat_id)
 
         self.authorized = set()
@@ -143,6 +144,7 @@ class TelegramPasswordGate(HistoryPanels):
                 await apply_access_reset(self.redis)
                 await self._load_persisted_state()
                 log.info("Telegram private state loaded from Redis")
+                self.ready_event.set()
             except Exception:
                 log.exception("Redis initialization failed; persistent login cannot start")
                 await self.redis.aclose()
@@ -150,6 +152,7 @@ class TelegramPasswordGate(HistoryPanels):
                 raise
         else:
             log.warning("REDIS_URL missing: private bot state is in-memory only")
+            self.ready_event.set()
 
         try:
             await self.request(
@@ -2115,14 +2118,19 @@ class TelegramPasswordGate(HistoryPanels):
         if chat_id is not None:
             await self._send_transient(user_id, chat_id, text, markup)
 
-    async def _handle_demo_round(self, user_id, coefficient):
+    async def _handle_demo_round(self, user_id, coefficient, *, round_id=None):
         lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
         async with lock:
             # Keep the maximum-step series even when DEMO is switched off.
             ledger = self._demo_ledger(user_id)
-            if not ledger.track_max_step(coefficient):
-                return None
-            event = ledger.process_round(coefficient) if ledger.enabled else None
+            if round_id is not None:
+                event, changed = ledger.process_archived_round(round_id, coefficient)
+                if not changed:
+                    return None
+            else:
+                if not ledger.track_max_step(coefficient):
+                    return None
+                event = ledger.process_round(coefficient) if ledger.enabled else None
             await self._persist_demo(user_id)
         if not event:
             return None
@@ -2153,6 +2161,8 @@ class TelegramPasswordGate(HistoryPanels):
                 # series: reset tracking for both DEMO and always-on steps.
                 ledger.reset_max_step_progress()
                 ledger.low_streak = 0
+                if ledger.enabled:
+                    ledger.balance_verified = False
                 entry = ledger.finish_active("incomplete_data") if ledger.enabled and ledger.active else None
                 await self._persist_demo(user_id)
             if entry is not None:
@@ -2268,7 +2278,7 @@ class TelegramPasswordGate(HistoryPanels):
             if deadline:
                 self._start_streak_deletion(user_id, message_id, deadline)
 
-    async def on_round(self, coefficient):
+    async def on_round(self, coefficient, *, round_id=None):
         value = self._format_coefficient(coefficient)
         if value is None:
             return
@@ -2298,7 +2308,10 @@ class TelegramPasswordGate(HistoryPanels):
         if panels is None:
             await self.update_private_histories()
         for user_id in list(self.authorized):
-            await self._handle_demo_round(user_id, value)
+            if round_id is None:
+                await self._handle_demo_round(user_id, value)
+            else:
+                await self._handle_demo_round(user_id, value, round_id=round_id)
             if panels is None:
                 await self._refresh_demo_panel(user_id)
         if panels is not None:

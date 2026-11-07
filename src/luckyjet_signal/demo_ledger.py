@@ -63,6 +63,8 @@ class DemoLedger:
             if isinstance(day, str) and len(day) == 10 and self._int(value, 0) > 0
         }
         self.consecutive_below_two = max(0, self._int(state.get("consecutive_below_two", 0), 0))
+        self.last_archived_round_id = str(state.get("last_archived_round_id") or "")
+        self.balance_verified = bool(state.get("balance_verified", True))
         self.backfill_daily_steps()
         self.history = self.history[:MAX_HISTORY]
 
@@ -121,6 +123,8 @@ class DemoLedger:
             "daily_max_steps": self.daily_max_steps,
             "daily_max_low_streak": self.daily_max_low_streak,
             "consecutive_below_two": self.consecutive_below_two,
+            "last_archived_round_id": self.last_archived_round_id,
+            "balance_verified": self.balance_verified,
         }
 
     def track_max_step(self, coefficient, *, now=None):
@@ -148,6 +152,24 @@ class DemoLedger:
             self.daily_max_low_streak.get(day, 0), self.consecutive_below_two
         )
         return True
+
+    def process_archived_round(self, round_id, coefficient, *, now=None):
+        """Apply an archived round to DEMO at most once per source ID.
+
+        The caller must persist this ledger snapshot before acknowledging the
+        archive consumer cursor. A crash after persistence can safely replay
+        the same round without applying a stake twice.
+        """
+        identifier = str(round_id or "").strip()
+        if not identifier:
+            raise ValueError("Archived DEMO processing requires a source round ID")
+        if identifier == self.last_archived_round_id:
+            return None, False
+        if not self.track_max_step(coefficient, now=now):
+            return None, False
+        event = self.process_round(coefficient, now=now) if self.enabled else None
+        self.last_archived_round_id = identifier
+        return event, True
 
     def reset_max_step_progress(self):
         """Source discontinuity ends only the current series, not its maxima."""
@@ -206,6 +228,7 @@ class DemoLedger:
         # A DEMO reset must not erase independent source statistics.
         streak_maxima = self.daily_max_low_streak.copy()
         ongoing_streak = self.consecutive_below_two
+        last_round_id = self.last_archived_round_id
         enabled = self.enabled
         trigger = self.trigger_streak
         self.__init__(
@@ -214,6 +237,8 @@ class DemoLedger:
             base_stake_cents=MINIMUM_STAKE_CENTS,
             daily_max_low_streak=streak_maxima,
             consecutive_below_two=ongoing_streak,
+            last_archived_round_id=last_round_id,
+            balance_verified=True,
         )
 
     def _finish_cycle(

@@ -306,3 +306,55 @@ def test_login_opener_dom_fallback_requires_visible_uncovered_enabled(monkeypatc
             await driver._click(blocked, 'открытия входа')
         assert not blocked.dispatched
     asyncio.run(run())
+
+
+def test_offscreen_duplicate_login_button_is_ignored_for_visible_header():
+    from site_login_browser import SiteLoginBrowser
+    html = """<meta charset="utf-8">
+      <button id="wrong" style="position:absolute;left:-2000px;top:5px"
+              onclick="document.body.dataset.clicked='wrong'">Вход</button>
+      <button id="real" style="position:fixed;right:12px;top:12px;z-index:2"
+              onclick="document.querySelector('#dialog').hidden=false;document.body.dataset.clicked='real'">Вход</button>
+      <div id="dialog" hidden><input type="email"><input type="password"></div>"""
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=2) as driver:
+            await driver.context.route('**/*', lambda route: route.fulfill(
+                status=200, content_type='text/html', body=html))
+            await driver.page.goto(driver.login_url)
+            assert await driver.page.locator('#wrong').is_visible()
+            email, password = await driver._open_form()
+            assert await email.is_visible() and await password.is_visible()
+            assert await driver.page.locator('body').get_attribute('data-clicked') == 'real'
+    asyncio.run(run())
+
+
+def test_visible_header_vhod_is_preferred_over_unrelated_voiti():
+    from site_login_browser import SiteLoginBrowser
+    html = """<meta charset="utf-8">
+      <button onclick="document.body.dataset.clicked='wrong'">Войти</button>
+      <button id="real" style="position:fixed;right:12px;top:12px"
+              onclick="document.querySelector('#dialog').hidden=false;document.body.dataset.clicked='real'">Вход</button>
+      <div id="dialog" hidden><input type="email"><input type="password"></div>"""
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=2) as driver:
+            await driver.context.route('**/*', lambda route: route.fulfill(
+                status=200, content_type='text/html', body=html))
+            await driver.page.goto(driver.login_url)
+            await driver._open_form()
+            assert await driver.page.locator('body').get_attribute('data-clicked') == 'real'
+    asyncio.run(run())
+
+
+def test_login_button_below_fold_scrolls_into_view_without_force_click():
+    from site_login_browser import SiteLoginBrowser
+    html = """<meta charset="utf-8"><div style="height:1200px"></div>
+      <button onclick="document.querySelector('form').hidden=false">Вход</button>
+      <form hidden><input type="email"><input type="password"></form>"""
+    async def run():
+        async with SiteLoginBrowser('https://example.test/login', result_timeout=2) as driver:
+            await driver.context.route('**/*', lambda route: route.fulfill(
+                status=200, content_type='text/html', body=html))
+            await driver.page.goto(driver.login_url)
+            email, password = await driver._open_form()
+            assert await email.is_visible() and await password.is_visible()
+    asyncio.run(run())

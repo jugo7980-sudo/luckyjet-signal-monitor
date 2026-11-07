@@ -235,6 +235,46 @@ class SiteLoginBrowser:
                     problem.page_screenshot = None
             raise problem from None
 
+    async def _login_opener(self):
+        """Choose an on-screen login control over off-screen duplicates."""
+        viewport = self.page.viewport_size or {'width': 430, 'height': 932}
+        fallback = None
+        choices = (
+            r'^\s*Вход\s*$',
+            r'^\s*(?:Log in|Login|Sign in)\s*$',
+            r'^\s*Войти\s*$',
+        )
+        for role in ('button', 'link'):
+            for name in choices:
+                candidates = self.page.get_by_role(role, name=re.compile(name, re.I))
+                for i in range(min(await candidates.count(), 20)):
+                    item = candidates.nth(i)
+                    if not await item.is_visible():
+                        continue
+                    bounds = await item.bounding_box()
+                    if bounds is None or bounds['width'] <= 0 or bounds['height'] <= 0:
+                        continue
+                    cx = bounds['x'] + bounds['width'] / 2
+                    cy = bounds['y'] + bounds['height'] / 2
+                    if 0 <= cx < viewport['width'] and 0 <= cy < viewport['height']:
+                        return item
+                    if fallback is None:
+                        fallback = item
+
+        # Scroll normally for a below-fold opener, never click through overlays.
+        if fallback is not None:
+            try:
+                await fallback.scroll_into_view_if_needed(timeout=1500)
+                bounds = await fallback.bounding_box()
+                if bounds and bounds['width'] > 0 and bounds['height'] > 0:
+                    cx = bounds['x'] + bounds['width'] / 2
+                    cy = bounds['y'] + bounds['height'] / 2
+                    if 0 <= cx < viewport['width'] and 0 <= cy < viewport['height']:
+                        return fallback
+            except BrowserError:
+                pass
+        return None
+
     async def _open_form(self):
         end = time.monotonic() + min(15, self.result_timeout)
         opened = False
@@ -255,11 +295,7 @@ class SiteLoginBrowser:
                     opened = email_tab = True
                     continue
             if not opened:
-                button = await self._visible(self.page.get_by_role(
-                    'button', name=re.compile(r'^\s*(Вход|Войти|Log in|Login|Sign in)\s*$', re.I)))
-                if button is None:
-                    button = await self._visible(self.page.get_by_role(
-                        'link', name=re.compile(r'^\s*(Вход|Войти|Log in|Login|Sign in)\s*$', re.I)))
+                button = await self._login_opener()
                 if button is not None:
                     await self._click(button, 'открытия входа')
                     opened = True

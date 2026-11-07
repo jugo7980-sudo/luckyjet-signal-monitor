@@ -12,6 +12,12 @@
   let latest = null;
   const all = [...document.querySelectorAll('[data-control]')];
   const highPanel = document.getElementById('high-gap-panel');
+  const highHelpToggle = document.getElementById('high-gap-help-toggle');
+  highHelpToggle?.addEventListener('click', () => {
+    const expanded = highHelpToggle.getAttribute('aria-expanded') === 'true';
+    highHelpToggle.setAttribute('aria-expanded', String(!expanded));
+    document.getElementById('high-gap-help-body').hidden = expanded;
+  });
   function renderHighGap(high, currency = 'USD', balanceVerified = true) {
     high = high || {};
     const phase = high.phase || 'waiting_reference';

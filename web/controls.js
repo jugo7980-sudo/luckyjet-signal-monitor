@@ -100,8 +100,13 @@
       const field = document.getElementById(id);
       if (document.activeElement !== field) field.value = String(val);
     }
-    document.getElementById('high-gap-stake-label').textContent =
-      'Фиксированная ставка, ' + (demo.currency || 'USD');
+    const highStakeLabel = document.getElementById('high-gap-stake-label');
+    highStakeLabel.replaceChildren(
+      document.createTextNode('Фиксированная ставка, ' + (demo.currency || 'USD')),
+    );
+    const stakeHelp = document.createElement('small');
+    stakeHelp.textContent = 'Одинаковая сумма каждой виртуальной ставки. Без удвоений.';
+    highStakeLabel.appendChild(stakeHelp);
     document.getElementById('settings-notifications').textContent = settings.notifications ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-sound').textContent = settings.sound ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-threshold').value = String(settings.threshold);

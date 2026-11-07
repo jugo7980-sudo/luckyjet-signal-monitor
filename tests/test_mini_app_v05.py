@@ -78,7 +78,7 @@ def test_v05_compact_refresh_summary_and_throttled_polling():
             assert await page.locator('.below-tiles #refresh-data').count() == 1
             assert await page.locator('#page-home > #refresh-data').count() == 0
             await page.wait_for_function("document.querySelector('#summary-heading').textContent.includes('150 раундов')")
-            assert await page.locator('#coef-grid .coef').count() == 7
+            await page.wait_for_function("document.querySelectorAll('#coef-grid .coef').length === 7")
             assert '0,1 с' in await page.locator('#live-status').inner_text()
             await page.wait_for_function("document.querySelector('#refresh-data').dataset.state==='idle'")
             # Inspect the synchronous click handler before the 70ms mocked

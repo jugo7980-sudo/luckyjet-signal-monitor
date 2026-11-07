@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import main as base
@@ -47,7 +47,7 @@ async def select_initial_cursor(redis, gate, last_round_id):
         latest = await redis.xrevrange(STREAM_KEY, count=1)
         if latest:
             cursor = latest[0][0]
-            await gate.on_history_gap()
+            await gate.on_history_gap(silent=True)
             await redis.set(UI_CURSOR_KEY, cursor, nx=True)
             log.warning("Archive/legacy source cursor could not be aligned; gap recorded")
             return cursor
@@ -65,11 +65,11 @@ def parse_event_timestamp(fields):
         raise ValueError("Archive event has no usable timestamp") from None
 
 
-async def process_archive_event(redis, gate, state, panel, stream_id, fields):
+async def process_archive_event(redis, gate, state, panel, stream_id, fields, *, silent=False):
     """Process one event; commit legacy cursor only after DEMO state is saved."""
     kind = fields.get("type")
     if kind == "gap":
-        await gate.on_history_gap()
+        await gate.on_history_gap(silent=silent)
         await redis.set(UI_CURSOR_KEY, stream_id)
         return
     if kind == "baseline":
@@ -83,12 +83,13 @@ async def process_archive_event(redis, gate, state, panel, stream_id, fields):
     if not rid or formatted is None:
         raise ValueError("Invalid completed round in archive")
     timestamp, uncertain = parse_event_timestamp(fields)
+    observed_datetime = datetime.fromtimestamp(timestamp, tz=timezone.utc)
     # The per-user DEMO ledger saves this source ID with each balance update,
     # so replay after a process crash cannot charge the same stake twice.
     previous_panel = list(panel.history)
     panel.history = base.prepend_history(panel.history, formatted, limit=panel.limit)
     try:
-        await gate.on_round(formatted, round_id=rid)
+        await gate.on_round(formatted, round_id=rid, stream_id=stream_id, now=observed_datetime, silent=silent)
     except Exception:
         panel.history = previous_panel
         raise
@@ -109,18 +110,35 @@ async def process_archive_event(redis, gate, state, panel, stream_id, fields):
 
 
 async def consume_archive(gate, state, panel):
-    """Follow immutable round events, independently of site login/browser."""
+    """Follow immutable events and silently catch up DEMO after UI restarts."""
     await gate.ready_event.wait()
     redis = gate.redis
     if redis is None:
         raise RuntimeError("Archive consumer requires persistent Redis")
     cursor = await select_initial_cursor(redis, gate, state.last_round_id)
-    log.info("Archive consumer active; reading append-only source events")
+    startup_head = await redis.xrevrange(STREAM_KEY, count=1)
+    catch_up_to = startup_head[0][0] if startup_head else cursor
+    head_position = tuple(map(int, catch_up_to.split("-")))
+    catch_up_finished = tuple(map(int, cursor.split("-"))) >= head_position
+    log.info(
+        "Archive consumer active: catchup_required=%s",
+        not catch_up_finished,
+    )
     while True:
         messages = await redis.xread({STREAM_KEY: cursor}, count=100, block=3000)
         if not messages:
             continue
         for _, batch in messages:
             for event_id, fields in batch:
-                await process_archive_event(redis, gate, state, panel, event_id, fields)
+                current_position = tuple(map(int, event_id.split("-")))
+                silent = not catch_up_finished and current_position <= head_position
+                await process_archive_event(
+                    redis, gate, state, panel, event_id, fields, silent=silent,
+                )
                 cursor = event_id
+                if not catch_up_finished and current_position >= head_position:
+                    catch_up_finished = True
+                    panels = getattr(gate, "live_panels", None)
+                    if panels is not None:
+                        panels.request()
+                    log.info("Archive catch-up complete; normal live notifications resumed")

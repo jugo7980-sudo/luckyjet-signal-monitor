@@ -84,6 +84,7 @@ class CoefficientStats:
     def __init__(self, redis):
         self.redis = redis
         self.seen = OrderedDict()
+        self.reset_baseline_pending = False
 
     @staticmethod
     def day(timestamp=None):
@@ -91,6 +92,20 @@ class CoefficientStats:
 
     async def ingest(self, rounds):
         if self.redis is None:
+            return
+        if self.reset_baseline_pending:
+            # Do not rebuild recently wiped daily statistics by replaying
+            # the game's pre-reset source snapshot. Future rounds count as new.
+            ids = {str(item['id']) for item in rounds
+                   if isinstance(item, dict) and item.get('id') is not None}
+            if ids:
+                pipe = self.redis.pipeline()
+                for rid in ids:
+                    pipe.set(f'luckyjet:coef:seen:{rid}', '1', ex=7948800, nx=True)
+                await pipe.execute()
+                self.reset_baseline_pending = False
+                return
+            # A snapshot with no usable IDs is not a valid baseline.
             return
         last_id = await self.redis.hget('luckyjet:coef:high:state', 'last_id')
         if isinstance(last_id, bytes): last_id = last_id.decode()

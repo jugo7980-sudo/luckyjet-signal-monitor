@@ -11,7 +11,6 @@ from telegram_delivery import TelegramDelivery
 from live_panel_updates import LivePanelUpdates
 from notification_queue import NotificationQueue
 from coefficient_stats import CoefficientStats
-from full_data_reset import apply_complete_data_reset
 from demo_probe import DemoProbe
 from site_account import SiteAccount, SessionStore
 from site_login_browser import SiteLoginBrowser
@@ -265,18 +264,14 @@ async def _main_async() -> None:
     monitor.process_network_history = process_history
 
     async def run_owned():
-        # This is the only worker that owns Telegram polling. The previous
-        # deployment is no longer writing to Redis after lease acquisition.
-        # Reset BEFORE reloading monitor history and starting either worker.
+        # The only Telegram-polling owner reloads persisted state.
+        # Never wipe historical rounds or DEMO balances on deployment.
+        # Explicit data deletion must be a separately authorized operation.
         redis = await monitor._redis(config)
         if redis is None:
-            raise RuntimeError("Full reset requires Redis persistence")
-        reset_applied = await apply_complete_data_reset(redis)
-        if reset_applied:
-            password_gate.coefficient_stats.reset_baseline_pending = True
-            log.warning("Complete data reset applied: next source snapshot is baseline only")
+            raise RuntimeError("Continuous history requires Redis persistence")
         password_gate.coefficient_stats.redis = redis
-        # Reload AFTER reset; never retain old coefficients, DEMO or user data.
+        # Resume existing data and last confirmed cursor without a reset.
         restored = await monitor.load_state(config)
         state.__dict__.update(restored.__dict__)
         panel.history = [base.format_history_coefficient(value) for value in state.previous][:panel.limit]

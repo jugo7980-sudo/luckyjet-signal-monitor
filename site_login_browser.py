@@ -288,8 +288,14 @@ class SiteLoginBrowser:
             if email is not None and password is not None:
                 return email, password
             if not email_tab and (password is not None or opened):
-                tab = await self._visible(self.page.get_by_role(
-                    'button', name=re.compile(r'^\s*(Почта|E-mail|Email)\s*$', re.I)))
+                email_choice = re.compile(
+                    r'^\s*(?:(?:Вход|Login)\s*[-—:]\s*)?'
+                    r'(?:Авторизация\s+по\s+почте|Вход\s+по\s+почте|'
+                    r'Войти\s+по\s+почте|Почта|E-?mail)\s*$', re.I
+                )
+                tab = await self._visible(self.page.get_by_role('button', name=email_choice))
+                if tab is None:
+                    tab = await self._visible(self.page.get_by_role('link', name=email_choice))
                 if tab is not None:
                     await self._click(tab, 'выбора почты')
                     opened = email_tab = True

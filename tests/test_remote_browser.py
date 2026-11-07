@@ -265,3 +265,76 @@ def test_remote_pointer_released_if_drag_goes_stale():
         assert account.last_driver.page.mouse.events[-1] == ("up",)
         await session.close()
     asyncio.run(run())
+
+
+def test_proxy_ip_check_fail_closed_and_fallback(monkeypatch):
+    import httpx
+    from mini_app_remote import check_japanese_egress
+
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs["proxy"] == "socks5://127.0.0.1:10808"
+            assert kwargs["trust_env"] is False
+            self.calls = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url):
+            self.calls.append(url)
+            if "country.is" in url:
+                return httpx.Response(503, request=httpx.Request("GET", url))
+            return httpx.Response(200, json={"country_code": "JP", "ip": "8.8.8.8"},
+                                  request=httpx.Request("GET", url))
+
+    clients = []
+    def factory(**kwargs):
+        client = Client(**kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("mini_app_remote.httpx.AsyncClient", factory)
+    async def run():
+        import pytest
+        with pytest.raises(ValueError, match="No verified local SOCKS"):
+            await check_japanese_egress(None)
+        with pytest.raises(ValueError, match="No verified local SOCKS"):
+            await check_japanese_egress("http://example.test")
+        result = await check_japanese_egress("socks5://127.0.0.1:10808")
+        assert result == {"ip": "8.8.8.8", "country": "JP", "japan_verified": True}
+        assert clients[-1].calls == ["https://api.country.is/", "https://ipwho.is/"]
+    asyncio.run(run())
+
+
+def test_remote_ip_check_requires_owner_and_active_proxy(monkeypatch):
+    from types import SimpleNamespace
+    gate = Gate()
+
+    async def fake_probe(proxy_url):
+        assert proxy_url == "socks5://127.0.0.1:10808"
+        return {"ip": "1.1.1.1", "country": "JP", "japan_verified": True}
+
+    monkeypatch.setattr("mini_app_remote.check_japanese_egress", fake_probe)
+
+    async def call(auth, action):
+        return decoded(await remote_browser(auth, gate, "fixture", "POST",
+                                             json.dumps({"action": action}).encode()))
+
+    async def run():
+        assert (await call("", "check_ip"))[0] == "401 Unauthorized"
+        assert (await call(signed(42), "check_ip"))[0] == "403 Forbidden"
+        status, body = await call(signed(99), "check_ip")
+        assert status == "503 Service Unavailable"
+        assert "Прямой запрос запрещён" in body["error"]
+        assert "ip" not in body
+        gate.site_account.driver_factory = lambda: SimpleNamespace(
+            proxy_url="socks5://127.0.0.1:10808")
+        status, body = await call(signed(99), "check_ip")
+        assert status == "200 OK"
+        assert body == {"ip": "1.1.1.1", "country": "JP", "japan_verified": True}
+        assert gate.site_account.store.load() is None
+        assert gate.site_account.generation == 0
+    asyncio.run(run())

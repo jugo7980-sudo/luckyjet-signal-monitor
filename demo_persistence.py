@@ -2,9 +2,29 @@
 import json
 import asyncio
 import logging
+import hashlib
+from datetime import datetime
 from contextlib import AsyncExitStack
 
 from luckyjet_signal.demo_ledger import MAX_HISTORY
+
+ARCHIVE_CYCLES = 'luckyjet:demo:archive:cycles:'
+ARCHIVE_ENTRIES = 'luckyjet:demo:archive:entries:'
+
+
+def _cycle_archival_record(entry):
+    if not isinstance(entry, dict):
+        return None
+    try:
+        ended = datetime.fromisoformat(str(entry['ended_at']).replace('Z', '+00:00'))
+        if ended.tzinfo is None:
+            return None
+        raw = json.dumps(entry, sort_keys=True, separators=(',', ':'))
+        identifier = hashlib.sha256(raw.encode('utf-8')).hexdigest()
+        return identifier, ended.timestamp(), raw
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
 
 
 class DemoPersistence:
@@ -25,11 +45,22 @@ class DemoPersistence:
             histories = {}
             for uid, ledger in ledgers.items():
                 state = ledger.dump()
-                history = json.dumps(state.pop('history'), separators=(',', ':'))
+                state_history = state.pop('history')
+                history = json.dumps(state_history, separators=(',', ':'))
                 raw = json.dumps(state, separators=(',', ':'))
                 pipe.hset('luckyjet:demo_sessions', uid, raw)
-                if self.saved_history.get(uid) != history:
+                if self.saved_history.get(str(uid)) != history:
                     pipe.hset('luckyjet:demo_completed_cycles', uid, history)
+                    # Use the same Redis MULTI/EXEC transaction as the DEMO
+                    # checkpoint. Archive entries are add-only and idempotent.
+                    if hasattr(pipe, 'hsetnx') and hasattr(pipe, 'zadd'):
+                        for entry in state_history:
+                            record = _cycle_archival_record(entry)
+                            if record is None:
+                                continue
+                            key, stamp, payload = record
+                            pipe.hsetnx(ARCHIVE_ENTRIES + str(uid), key, payload)
+                            pipe.zadd(ARCHIVE_CYCLES + str(uid), {key: stamp}, nx=True)
                 histories[uid] = history
             await pipe.execute()
             self.saved_history.update(histories)
@@ -52,3 +83,13 @@ class DemoPersistence:
                 # Keep the persisted raw snapshot as the comparison baseline so
                 # the next normal save compacts any oversized legacy history.
                 self.saved_history[str(uid)] = raw
+                # Existing in-memory histories from before archival support
+                # can be imported without changing current DEMO state.
+                if hasattr(redis, 'zadd') and hasattr(redis, 'hsetnx'):
+                    for entry in ledger.history:
+                        record = _cycle_archival_record(entry)
+                        if record is None:
+                            continue
+                        key, stamp, payload = record
+                        await redis.hsetnx(ARCHIVE_ENTRIES + str(uid), key, payload)
+                        await redis.zadd(ARCHIVE_CYCLES + str(uid), {key: stamp}, nx=True)

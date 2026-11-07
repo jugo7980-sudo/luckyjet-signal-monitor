@@ -26,7 +26,7 @@ from luckyjet_signal.browser_runtime import low_memory_async_playwright
 from luckyjet_signal.demo_mode import wrap_click_demo_mode
 from luckyjet_signal.settings import Config
 from luckyjet_signal.runtime_connections import RuntimeConnections
-from telegram_polling_lease import TelegramPollingLease
+from telegram_polling_lease import TelegramPollingLease\nfrom xray_runtime import XrayManager
 
 
 log = logging.getLogger("luckyjet.v1")
@@ -167,7 +167,15 @@ async def render_self_keepalive(interval_seconds=240) -> None:
 
 async def main_async() -> None:
     async with RuntimeConnections():
-        await _main_async()
+        async with XrayManager() as xray:
+            await xray.start_from_env()
+            # Only game-source requests use Xray. Telegram, Redis, and Mini
+            # App keep their direct transport even when the proxy is active.
+            monitor.game_proxy = xray.proxy_url
+            try:
+                await _main_async()
+            finally:
+                monitor.game_proxy = None
 
 
 async def _main_async() -> None:

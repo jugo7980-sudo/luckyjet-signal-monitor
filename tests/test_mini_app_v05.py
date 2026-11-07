@@ -22,6 +22,10 @@ def test_v05_compact_refresh_summary_and_throttled_polling():
             page.on('pageerror', lambda error: errors.append(str(error)))
 
             async def route(req):
+                if req.request.url.endswith('/access.js'):
+                    await req.fulfill(content_type='application/javascript',
+                        body="window.accessState={premium:true,registered:true,username:'tester'};document.body.dataset.access='premium';window.canUsePremium=()=>true;window.refreshAccessOverview?.();")
+                    return
                 url = req.request.url
                 if url.startswith('https://example.test/app'):
                     await req.fulfill(content_type='text/html', body=response('/app')[2])
@@ -71,7 +75,7 @@ def test_v05_compact_refresh_summary_and_throttled_polling():
             button = page.locator('#refresh-data')
             assert await button.count() == 1
             assert await button.locator('svg.refresh-rotate').count() == 1
-            assert await page.locator('.home-heading #refresh-data').count() == 1
+            assert await page.locator('.below-tiles #refresh-data').count() == 1
             assert await page.locator('#page-home > #refresh-data').count() == 0
             await page.wait_for_function("document.querySelector('#summary-heading').textContent.includes('7 из 20')")
             assert await page.locator('#coef-grid .coef').count() == 7

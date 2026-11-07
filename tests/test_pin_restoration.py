@@ -1,4 +1,4 @@
-"""Recover a pinned Mini App launcher after chat clearing and process restart."""
+"""Migration: remove old pinned Mini App launchers and keep command launch transient."""
 import asyncio
 import sys
 from pathlib import Path
@@ -7,185 +7,146 @@ import httpx
 from fakeredis.aioredis import FakeRedis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from luckyjet_password_gate import (
-    APP_PIN_KEY, APP_PIN_REFRESH_KEY, TelegramPasswordGate,
-)
+from luckyjet_password_gate import APP_PIN_KEY, APP_PIN_REFRESH_KEY, TelegramPasswordGate
 
 
 class FakeTelegram:
-    def __init__(self, *, current=None, next_id=900):
-        self.current = current
+    def __init__(self):
         self.calls = []
-        self.next_id = next_id
-        self.failed_get = False
-        self.invalid_old = set()
-        self.fail_next_pin = False
+        self.messages = {}
+        self.pinned = {}
+        self.last_id = 900
+        self.error_on_unpin = False
 
     async def __call__(self, method, payload):
         self.calls.append((method, payload))
+        chat_id = payload.get("chat_id")
         if method == "getChat":
-            if self.failed_get:
-                raise httpx.ConnectError("Temporary Telegram timeout")
-            info = {"id": payload["chat_id"], "type": "private"}
-            if self.current:
-                info["pinned_message"] = {"message_id": self.current}
-            return {"ok": True, "result": info}
+            message_id = self.pinned.get(chat_id)
+            pinned = self.messages.get((chat_id, message_id))
+            return {"ok": True, "result": {
+                "id": chat_id, "type": "private",
+                **({"pinned_message": {"message_id": message_id, "text": pinned}}
+                   if pinned is not None else {}),
+            }}
         if method == "sendMessage":
-            self.next_id += 1
-            return {"ok": True, "result": {"message_id": self.next_id}}
-        if method == "pinChatMessage":
-            target = payload["message_id"]
-            if target in self.invalid_old:
-                req = httpx.Request("POST", "https://api.telegram.org/botxxx/pinChatMessage")
-                resp = httpx.Response(400, request=req,
-                    json={"ok": False, "description": "Bad Request: message to pin not found"})
-                raise httpx.HTTPStatusError("old pin deleted", request=req, response=resp)
-            if self.fail_next_pin:
-                self.fail_next_pin = False
-                raise httpx.ConnectError("Telegram unavailable")
-            self.current = target
-            return {"ok": True, "result": True}
+            self.last_id += 1
+            self.messages[(chat_id, self.last_id)] = payload["text"]
+            return {"ok": True, "result": {"message_id": self.last_id}}
         if method == "unpinChatMessage":
+            if self.error_on_unpin:
+                raise httpx.ConnectError("Network unavailable")
+            if self.pinned.get(chat_id) == payload["message_id"]:
+                self.pinned.pop(chat_id, None)
             return {"ok": True, "result": True}
         if method == "deleteMessage":
+            self.messages.pop((chat_id, payload["message_id"]), None)
             return {"ok": True, "result": True}
         return {"ok": True, "result": True}
 
     def count(self, method):
-        return len([x for x in self.calls if x[0] == method])
+        return sum(method == name for name, _ in self.calls)
 
 
-def test_deleted_pin_recreated_and_saved_in_redis():
+def test_migration_removes_old_bot_pin_but_not_unrelated_pins_or_history():
     async def run():
-        tg = FakeTelegram(current=None)
-        db = FakeRedis(decode_responses=True)
-        await db.hset(APP_PIN_KEY, "42", "350")
-        gate = TelegramPasswordGate(tg, password="test")
-        gate.redis = db
-        assert await gate._ensure_app_pin(42)
-        assert tg.count("sendMessage") == 1
-        assert tg.count("pinChatMessage") == 1
-        assert tg.current == tg.next_id == 901
-        assert await db.hget(APP_PIN_KEY, "42") == "901"
-        assert await gate._ensure_app_pin(42)
-        assert tg.count("sendMessage") == 1, "Do not send duplicates after recovery"
+        redis = FakeRedis(decode_responses=True)
+        telegram = FakeTelegram()
+        telegram.messages[(42, 300)] = "Lucky Jet · приложение"
+        telegram.pinned[42] = 300
+        telegram.messages[(43, 333)] = "User's pinned personal note"
+        telegram.pinned[43] = 333
+        telegram.messages[(43, 301)] = "Lucky Jet · приложение"
+        await redis.hset(APP_PIN_KEY, mapping={"42": "300", "43": "301"})
+        await redis.sadd(APP_PIN_REFRESH_KEY, "42", "43")
+        await redis.set("luckyjet:state", "history preserved")
+        await redis.hset("luckyjet:demo_sessions", "42", '{"balance_cents":1000000}')
+        gate = TelegramPasswordGate(telegram, password="test")
+        gate.redis = redis
+        await gate._clean_legacy_pinned_launchers({42, 43})
+        assert telegram.pinned.get(42) is None
+        assert telegram.pinned[43] == 333
+        assert telegram.messages[(43, 333)] == "User's pinned personal note"
+        assert (42, 300) not in telegram.messages
+        assert (43, 301) not in telegram.messages
+        assert not await redis.hgetall(APP_PIN_KEY)
+        assert not await redis.exists(APP_PIN_REFRESH_KEY)
+        assert await redis.get("luckyjet:state") == "history preserved"
+        assert await redis.hget("luckyjet:demo_sessions", "42") == '{"balance_cents":1000000}'
+        original_count = len(telegram.calls)
+        await gate._clean_legacy_pinned_launchers({42, 43})
+        assert telegram.count("sendMessage") == 0
+        assert telegram.count("pinChatMessage") == 0
+        assert len(telegram.calls) > original_count  # only checks, no new posts
         await gate.close()
     asyncio.run(run())
 
 
-def test_clear_local_history_repaired_by_next_start_even_with_stale_telegram_pin():
+def test_unrecorded_bot_pin_is_removed_when_chat_is_known():
     async def run():
-        tg = FakeTelegram(current=300)
-        db = FakeRedis(decode_responses=True)
-        await db.hset(APP_PIN_KEY, "42", "300")
-        gate = TelegramPasswordGate(tg, password="test")
-        gate.redis = db
-        # Telegram might still report old pinned ID even after the client
-        # has locally cleared the dialog: a normal audit would do nothing.
-        assert await gate._ensure_app_pin(42)
-        assert tg.count("sendMessage") == 0
-        await gate._prepare_start(42, 42)
-        assert tg.count("sendMessage") == 1
-        assert tg.current == 901
-        assert await db.hget(APP_PIN_KEY, "42") == "901"
-        assert await db.sismember(APP_PIN_REFRESH_KEY, "42")
-        assert tg.count("unpinChatMessage") == 1
-        assert tg.count("deleteMessage") == 1
-        assert await gate._ensure_app_pin(42)
-        assert tg.count("sendMessage") == 1
+        redis = FakeRedis(decode_responses=True)
+        telegram = FakeTelegram()
+        telegram.pinned[77] = 888
+        telegram.messages[(77, 888)] = "Lucky Jet · приложение"
+        gate = TelegramPasswordGate(telegram, password="test")
+        gate.redis = redis
+        await gate._clean_legacy_pinned_launchers({77})
+        assert not telegram.pinned
+        assert (77, 888) not in telegram.messages
+        assert telegram.count("sendMessage") == 0
         await gate.close()
     asyncio.run(run())
 
 
-def test_deleted_cached_id_after_getchat_outage_is_replaced():
-    async def run():
-        tg = FakeTelegram(next_id=500)
-        tg.failed_get = True
-        tg.invalid_old.add(200)
-        db = FakeRedis(decode_responses=True)
-        await db.hset(APP_PIN_KEY, "42", "200")
-        gate = TelegramPasswordGate(tg, password="test")
-        gate.redis = db
-        assert await gate._ensure_app_pin(42)
-        assert tg.next_id == 501
-        assert await db.hget(APP_PIN_KEY, "42") == "501"
-        assert tg.count("pinChatMessage") == 2  # invalid old ID, then new ID
-        await gate.close()
-    asyncio.run(run())
-
-
-def test_network_error_does_not_create_repeated_messages():
-    async def run():
-        tg = FakeTelegram(current=222)
-        tg.failed_get = True
-        db = FakeRedis(decode_responses=True)
-        await db.hset(APP_PIN_KEY, "42", "222")
-        gate = TelegramPasswordGate(tg, password="test")
-        gate.redis = db
-        assert await gate._ensure_app_pin(42)
-        assert tg.count("sendMessage") == 0
-        tg.fail_next_pin = True
-        assert not await gate._ensure_app_pin(42)
-        assert tg.count("sendMessage") == 0
-        assert await db.hget(APP_PIN_KEY, "42") == "222"
-        await gate.close()
-    asyncio.run(run())
-
-
-def test_failed_new_pin_keeps_cached_id_and_cleans_up_message():
-    async def run():
-        tg = FakeTelegram(current=None)
-        tg.fail_next_pin = True
-        db = FakeRedis(decode_responses=True)
-        await db.hset(APP_PIN_KEY, "42", "100")
-        gate = TelegramPasswordGate(tg, password="test")
-        gate.redis = db
-        assert not await gate._ensure_app_pin(42)
-        assert await db.hget(APP_PIN_KEY, "42") == "100"
-        assert tg.count("deleteMessage") == 1
-        await gate.close()
-    asyncio.run(run())
-
-
-def test_concurrent_recovery_sends_only_one_replacement():
-    async def run():
-        tg = FakeTelegram(current=None)
-        db = FakeRedis(decode_responses=True)
-        await db.hset(APP_PIN_KEY, "42", "300")
-        gate = TelegramPasswordGate(tg, password="test")
-        gate.redis = db
-        results = await asyncio.gather(*(gate._ensure_app_pin(42) for _ in range(8)))
-        assert all(results)
-        assert tg.count("sendMessage") == 1
-        await gate.close()
-    asyncio.run(run())
-
-
-def test_periodic_audit_recovers_a_deleted_pin_without_user_message(monkeypatch):
+def test_temporary_app_button_disappears_without_pin(monkeypatch):
     import luckyjet_password_gate as module
-    monkeypatch.setattr(module, "APP_PIN_AUDIT_SECONDS", 0.015)
+    monkeypatch.setattr(module, "APP_LAUNCH_TTL_SECONDS", 0.015)
 
     async def run():
-        tg = FakeTelegram(current=None)
-        db = FakeRedis(decode_responses=True)
-        await db.hset(APP_PIN_KEY, "42", "400")
-        # This chat was already upgraded and its pin later disappeared.
-        await db.sadd(APP_PIN_REFRESH_KEY, "42")
-        gate = TelegramPasswordGate(tg, password="test")
-        gate.redis = db
-        gate.chats[42] = 42
-        task = asyncio.create_task(gate._audit_app_pins())
-        try:
-            await asyncio.wait_for(_until(lambda: tg.count("sendMessage") == 1), timeout=2)
-            assert tg.current == 901
-            assert await db.hget(APP_PIN_KEY, "42") == "901"
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-            await gate.close()
+        telegram = FakeTelegram()
+        gate = TelegramPasswordGate(telegram, password="test")
+        await gate._show_app_launcher(55)
+        assert telegram.count("sendMessage") == 1
+        assert telegram.count("pinChatMessage") == 0
+        assert telegram.messages[(55, 901)] == "Открыть Lucky Jet:"
+        await asyncio.wait_for(_until(lambda: (55, 901) not in telegram.messages), timeout=2)
+        await gate.close()
+    asyncio.run(run())
+
+
+def test_legacy_pin_service_notice_is_deleted_not_recreated():
+    async def run():
+        telegram = FakeTelegram()
+        gate = TelegramPasswordGate(telegram, password="test")
+        await gate.handle_update({"message": {
+            "message_id": 399, "chat": {"type": "private", "id": 55},
+            "from": {"id": 55},
+            "pinned_message": {"text": "Lucky Jet · приложение", "message_id": 300},
+        }})
+        assert ("deleteMessage", {"chat_id": 55, "message_id": 399}) in telegram.calls
+        assert telegram.count("sendMessage") == 0
+        assert telegram.count("pinChatMessage") == 0
+        await gate.close()
+    asyncio.run(run())
+
+
+def test_transient_telegram_error_keeps_legacy_record_for_next_start():
+    async def run():
+        redis = FakeRedis(decode_responses=True)
+        telegram = FakeTelegram()
+        telegram.error_on_unpin = True
+        await redis.hset(APP_PIN_KEY, "55", "42")
+        gate = TelegramPasswordGate(telegram, password="test")
+        gate.redis = redis
+        await gate._clean_legacy_pinned_launchers({55})
+        assert await redis.hget(APP_PIN_KEY, "55") == "42"
+        telegram.error_on_unpin = False
+        await gate._clean_legacy_pinned_launchers({55})
+        assert not await redis.hget(APP_PIN_KEY, "55")
+        await gate.close()
     asyncio.run(run())
 
 
 async def _until(predicate):
     while not predicate():
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.005)

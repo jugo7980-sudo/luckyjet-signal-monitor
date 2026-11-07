@@ -51,9 +51,16 @@ class DemoLedger:
         self.cycle_rounds = list(state.get("cycle_rounds", []))[-100:]
         self.history = list(state.get("history", []))
         self.daily_max_steps = dict(state.get("daily_max_steps", {}))
-        # Read-only virtual progression used by Maximum Step, independent of DEMO.
-        self.tracker_low_streak = max(0, self._int(state.get("tracker_low_streak", 0), 0))
-        self.tracker_step = max(0, self._int(state.get("tracker_step", 0), 0))
+        # Source-based streak statistics are independent of DEMO trigger,
+        # balances and completed cycles. Do not migrate the legacy
+        # daily_max_steps: it contains DEMO-step values and is not comparable.
+        raw_maxima = state.get("daily_max_low_streak") or {}
+        self.daily_max_low_streak = {
+            day: max(0, self._int(value, 0))
+            for day, value in raw_maxima.items()
+            if isinstance(day, str) and len(day) == 10 and self._int(value, 0) > 0
+        }
+        self.consecutive_below_two = max(0, self._int(state.get("consecutive_below_two", 0), 0))
         self.backfill_daily_steps()
         self.history = self.history[:MAX_HISTORY]
 
@@ -110,47 +117,39 @@ class DemoLedger:
             "cycle_rounds": self.cycle_rounds,
             "history": self.history,
             "daily_max_steps": self.daily_max_steps,
-            "tracker_low_streak": self.tracker_low_streak,
-            "tracker_step": self.tracker_step,
+            "daily_max_low_streak": self.daily_max_low_streak,
+            "consecutive_below_two": self.consecutive_below_two,
         }
 
     def track_max_step(self, coefficient, *, now=None):
-        """Track the next hypothetical step even when DEMO is disabled.
+        """Count every consecutive completed round below 2x, independent of DEMO.
 
-        Uses the same consecutive-below-2x trigger as DEMO, but never makes
-        virtual bets, changes the balance, or creates DEMO cycle history.
-        The current step is recorded immediately when it becomes reachable.
+        A 2x-or-higher result ends the run. Daily maxima record the observed
+        run length in Asia/Bangkok, with the run continuing across midnight.
+        No bets, DEMO counters, balances or cycle histories are touched.
         """
         try:
             multiplier = Decimal(str(coefficient).strip().rstrip("xX").replace(",", "."))
-        except (InvalidOperation, ValueError):
+        except (InvalidOperation, ValueError, TypeError):
             return False
         if not multiplier.is_finite() or multiplier < 1:
             return False
 
-        if self.tracker_step:
-            if multiplier >= 2:
-                self.tracker_step = 0
-                self.tracker_low_streak = 0
-                return True
-            self.tracker_step += 1
-            self._record_step(self.tracker_step, now)
-            return True
-
         if multiplier >= 2:
-            self.tracker_low_streak = 0
+            self.consecutive_below_two = 0
             return True
-        self.tracker_low_streak += 1
-        if self.tracker_low_streak >= self.trigger_streak:
-            self.tracker_step = 1
-            self.tracker_low_streak = 0
-            self._record_step(1, now)
+        self.consecutive_below_two += 1
+        day = (now or datetime.now(timezone.utc)).astimezone(
+            timezone(timedelta(hours=7))
+        ).date().isoformat()
+        self.daily_max_low_streak[day] = max(
+            self.daily_max_low_streak.get(day, 0), self.consecutive_below_two
+        )
         return True
 
     def reset_max_step_progress(self):
-        """Discard continuity when the source stream has a gap."""
-        self.tracker_low_streak = 0
-        self.tracker_step = 0
+        """Source discontinuity ends only the current series, not its maxima."""
+        self.consecutive_below_two = 0
 
     def set_trigger(self, count: int) -> bool:
         if self.active or count not in TRIGGER_OPTIONS:
@@ -202,12 +201,17 @@ class DemoLedger:
         return {"type": "trigger", "next_stake_cents": self.next_stake_cents}
 
     def reset(self):
+        # A DEMO reset must not erase independent source statistics.
+        streak_maxima = self.daily_max_low_streak.copy()
+        ongoing_streak = self.consecutive_below_two
         enabled = self.enabled
         trigger = self.trigger_streak
         self.__init__(
             enabled=enabled,
             trigger_streak=trigger,
             base_stake_cents=MINIMUM_STAKE_CENTS,
+            daily_max_low_streak=streak_maxima,
+            consecutive_below_two=ongoing_streak,
         )
 
     def _finish_cycle(

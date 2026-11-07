@@ -33,7 +33,7 @@ APP_PIN_REFRESH_KEY = "luckyjet:pinned_app_refresh_20261107_v2"
 APP_LAUNCH_TTL_SECONDS = 45
 
 
-THAILAND_TIME = timezone(timedelta(hours=7), name="Asia/Bangkok")
+VLADIVOSTOK_TIME = timezone(timedelta(hours=10), name="Asia/Vladivostok")
 
 
 from history_panels import HistoryPanels
@@ -404,7 +404,7 @@ class TelegramPasswordGate(HistoryPanels):
             return True
         if data.startswith("demo_daily:"):
             try:
-                return datetime.strptime(data.split(":", 1)[1], "%Y-%m-%d").date() <= datetime.now(THAILAND_TIME).date()
+                return datetime.strptime(data.split(":", 1)[1], "%Y-%m-%d").date() <= datetime.now(VLADIVOSTOK_TIME).date()
             except ValueError:
                 return False
         if data.startswith(("hi_", "demo_daily_days:")):
@@ -541,7 +541,7 @@ class TelegramPasswordGate(HistoryPanels):
             instant = datetime.fromisoformat(value)
             if instant.tzinfo is None:
                 instant = instant.replace(tzinfo=timezone.utc)
-            return instant.astimezone(THAILAND_TIME).strftime("%d.%m.%Y %H:%M:%S")
+            return instant.astimezone(VLADIVOSTOK_TIME).strftime("%d.%m.%Y %H:%M:%S")
         except (ValueError, TypeError):
             return "время не сохранено"
 
@@ -580,7 +580,7 @@ class TelegramPasswordGate(HistoryPanels):
         }.get(outcome, str(outcome or "неизвестно"))
         lines = [
             f"📜 Демо-цикл {page + 1} из {len(history)} · новые сначала",
-            "Время Таиланда, UTC+7",
+            "Время Владивостока, UTC+10",
             f"Начало: {self._cycle_time(entry.get('started_at'))}",
             f"Завершение: {self._cycle_time(entry.get('ended_at'))}",
             f"Длительность: {self._cycle_duration(entry.get('started_at'), entry.get('ended_at'))}",
@@ -653,7 +653,7 @@ class TelegramPasswordGate(HistoryPanels):
             rows=[]
             from datetime import datetime,timedelta
             from zoneinfo import ZoneInfo
-            today=datetime.now(ZoneInfo("Asia/Bangkok")).date()
+            today=datetime.now(ZoneInfo("Asia/Vladivostok")).date()
             page=int(parts[1])
             dates,total=await stats.days(page)
             pages=max(1,(total+9)//10)
@@ -663,7 +663,7 @@ class TelegramPasswordGate(HistoryPanels):
             for day in dates:
                 label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y')
                 rows.append([{"text":label,"callback_data":f"coef_day:{day}:10:{page}"}])
-            title=f"📈 История Кэф · {page+1}/{pages}\nТаиланд, UTC+7 · новые сначала"
+            title=f"📈 История Кэф · {page+1}/{pages}\nВладивосток, UTC+10 · новые сначала"
             if not rows:
                 title+="\nДанных пока нет."
             pager=[]
@@ -718,7 +718,7 @@ class TelegramPasswordGate(HistoryPanels):
         token, history = view
         pages = max(1, (len(history) + 9) // 10)
         page = min(max(0, page), pages - 1)
-        text = f"📜 История демо-циклов · {len(history)} циклов · {page + 1}/{pages}\nТаиланд, UTC+7 · новые сначала"
+        text = f"📜 История демо-циклов · {len(history)} циклов · {page + 1}/{pages}\nВладивосток, UTC+10 · новые сначала"
         if not history:
             text += "\nЦиклов пока нет."
         rows = []
@@ -752,7 +752,7 @@ class TelegramPasswordGate(HistoryPanels):
     @staticmethod
     def _valid_history_date(day):
         try:
-            return datetime.strptime(day, '%Y-%m-%d').date() <= datetime.now(THAILAND_TIME).date()
+            return datetime.strptime(day, '%Y-%m-%d').date() <= datetime.now(VLADIVOSTOK_TIME).date()
         except ValueError:
             return False
 
@@ -762,17 +762,17 @@ class TelegramPasswordGate(HistoryPanels):
         rows=[[button(f"{datetime.strptime(day,'%Y-%m-%d'):%d.%m.%Y} · {values[day]} шаг.",f"demo_daily:{day}")] for day in dates[page*10:page*10+10]]
         rows+=pager(page,pages,lambda p:f'demo_daily_days:{p}')
         rows+=[[button('📅 Дата','demo_daily_date'),button('Сегодня','demo_daily')]]+footer('demo_menu')
-        text=f'Максимальный шаг · {page+1}/{pages}\nТаиланд, UTC+7'
+        text=f'Максимальный шаг · {page+1}/{pages}\nВладивосток, UTC+10'
         if not dates:text+='\nЗаписей пока нет.'
         return text,{'inline_keyboard':rows}
 
     def _demo_daily_screen(self, user_id, day=None):
-        today = datetime.now(THAILAND_TIME).date()
+        today = datetime.now(VLADIVOSTOK_TIME).date()
         selected = datetime.strptime(day, "%Y-%m-%d").date() if day else today
         value = self._demo_ledger(user_id).daily_max_low_streak.get(selected.isoformat())
         text = (f"📊 Максимальный шаг за сутки\n{selected:%d.%m.%Y}\n"
                 + (f"Максимальный шаг: {value}" if value else "Нет сохранённых данных за этот день.")
-                + "\nВремя Таиланда, UTC+7")
+                + "\nВремя Владивостока, UTC+10")
         pager = []
         if selected > datetime.min.date():
             pager.append({"text": "◀ Предыдущий день", "callback_data": f"demo_daily:{selected - timedelta(days=1)}"})
@@ -788,7 +788,7 @@ class TelegramPasswordGate(HistoryPanels):
             await self._safe_delete(chat_id, message_id)
             try:
                 selected = datetime.strptime(raw.strip(), "%d.%m.%Y").date()
-                if selected > datetime.now(THAILAND_TIME).date():
+                if selected > datetime.now(VLADIVOSTOK_TIME).date():
                     raise ValueError("Future date")
                 self.history_open.add(user_id)
                 if field == "daily_date":

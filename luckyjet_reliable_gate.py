@@ -146,11 +146,11 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
         await super()._revoke_user(user_id, block=block)
         await self._persist_runtime_user(user_id)
 
-    async def on_round(self, coefficient, *, round_id=None):
+    async def on_round(self, coefficient, *, round_id=None, stream_id=None, now=None, silent=False):
         batch = {}
         token = _demo_batch.set((self, batch))
         try:
-            await super().on_round(coefficient, round_id=round_id)
+            await super().on_round(coefficient, round_id=round_id, stream_id=stream_id, now=now, silent=silent)
         finally:
             _demo_batch.reset(token)
             if self.redis and batch:

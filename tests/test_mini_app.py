@@ -48,7 +48,9 @@ def test_telegram_commands_button_is_separate_from_mini_app_launcher():
         async def request(method,payload):
             calls.append((method,payload))
             return {'ok':True, 'result': {'message_id': 50}}
+        from fakeredis.aioredis import FakeRedis
         gate=TelegramPasswordGate(request)
+        gate.redis=FakeRedis(decode_responses=True)
         await gate._register_commands_button(42)
         assert calls[0]==('setChatMenuButton', {
             'chat_id':42,'menu_button':{'type':'commands'}})

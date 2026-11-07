@@ -230,8 +230,11 @@ class HighGapStrategy:
         }
         self.rounds.append(record)
         if multiplier >= self.target:
-            payout = int((Decimal(self.stake_cents) * self.target).quantize(
-                Decimal('1'), rounding=ROUND_HALF_UP))
+            # KRW has no fractional won. Internal balances use hundredths,
+            # so a KRW payout must be rounded to whole won, not cents.
+            unit = 100 if currency == 'KRW' else 1
+            payout = int((Decimal(self.stake_cents) * self.target / unit).quantize(
+                Decimal('1'), rounding=ROUND_HALF_UP)) * unit
             balance += payout
             record['payout_cents'] = payout
             record['balance_after_cents'] = balance

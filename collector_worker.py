@@ -21,6 +21,8 @@ from playwright.async_api import async_playwright
 
 from round_archive import RoundArchive
 from luckyjet_signal import monitor
+from luckyjet_signal.demo_mode import wrap_click_demo_mode
+from luckyjet_source_guard import install_source_guard
 from xray_runtime import XrayManager
 
 log = logging.getLogger("luckyjet.collector")
@@ -112,6 +114,8 @@ async def main_async():
     seconds = max(0.2, float(os.getenv("POLL_SECONDS", "0.5")))
     redis = from_url(redis_url, decode_responses=True)
     archive = RoundArchive(redis, name)
+    install_source_guard(monitor)
+    monitor.click_demo_mode = wrap_click_demo_mode(monitor.click_demo_mode)
     try:
         await redis.ping()
         async with XrayManager() as xray:

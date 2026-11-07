@@ -175,3 +175,22 @@ def test_silent_archive_replay_preserves_balance_and_source_time():
         assert "1970-01-01" in gate.ledger.daily_max_low_streak
         await redis.aclose()
     asyncio.run(run())
+
+
+def test_replayed_demo_cycles_preserve_archived_dates():
+    from datetime import datetime, timezone
+
+    ledger = DemoLedger(enabled=True, trigger_streak=2)
+    times = [
+        datetime(2026, 11, 7, 13, 58, tzinfo=timezone.utc),
+        datetime(2026, 11, 7, 13, 59, tzinfo=timezone.utc),
+        datetime(2026, 11, 7, 14, 1, tzinfo=timezone.utc),
+    ]
+    for idx, multiplier in enumerate(("1.15x", "1.22x", "2.50x"), 1):
+        ledger.process_archived_round(
+            str(idx), multiplier, stream_id=f"{idx}-0", now=times[idx - 1],
+        )
+    assert ledger.history[0]["started_at"] == times[1].isoformat()
+    assert ledger.history[0]["ended_at"] == times[2].isoformat()
+    assert ledger.balance_verified
+    assert ledger.balance_cents == DEFAULT_BALANCE_CENTS + 1000

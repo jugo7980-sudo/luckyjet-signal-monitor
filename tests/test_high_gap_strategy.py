@@ -267,3 +267,16 @@ def test_krw_payout_rounds_to_integer_won_not_fractional_display():
     assert ledger.balance_cents == 100100
     assert ledger.balance_cents % 100 == 0
 
+
+
+def test_reset_preserves_high_gap_enabled_status_and_keeps_pre_reset_cycle():
+    ledger = ledger_with_high(wait=0)
+    advance(ledger, 1, 120)
+    advance(ledger, 2, 1.3)
+    assert ledger.high_gap.enabled and ledger.high_gap.rounds
+    ledger.reset(currency='KRW', balance_cents=700000, base_stake_cents=10000)
+    assert ledger.high_gap.enabled is True
+    assert ledger.high_gap.phase == 'waiting_reference'
+    assert ledger.high_gap.stake_cents == 10000  # currency changed
+    assert ledger.pending_archive_cycles[0]['currency'] == 'USD'
+    assert ledger.pending_archive_cycles[0]['net_cents'] == -1000

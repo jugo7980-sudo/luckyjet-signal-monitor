@@ -71,11 +71,13 @@ if anchor > 0 then limit = anchor - 1 end
 for i=limit,1,-1 do
     local item = snapshots[i]
     if redis.call('HSETNX',KEYS[2],item.id,now) == 1 then
-        redis.call('XADD',KEYS[1],'*',
+        local event_id = redis.call('XADD',KEYS[1],'*',
             'type','round','round_id',item.id,
             'coefficient',item.coefficient,
             'source_time',item.source_time,
             'observed_at',now,'collector',source)
+        -- Stable source ID -> stream ID enables lossless catch-up after upgrades.
+        redis.call('HSET',KEYS[2],item.id,event_id)
         inserted = inserted + 1
     end
 end

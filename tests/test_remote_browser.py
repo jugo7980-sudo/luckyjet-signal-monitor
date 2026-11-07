@@ -156,6 +156,18 @@ def test_remote_owner_access_and_manual_actions_are_not_public():
         assert events[1] == ("down",)
         assert events[-1] == ("up",)
         assert events[-2] == ("move", 301, 745.6)
+        events.clear()
+        assert (await call(action="pointer", phase="down", gesture=11, x=.1, y=.8))[0] == "200 OK"
+        assert (await call(action="pointer", phase="move", gesture=11, x=.3, y=.8))[0] == "200 OK"
+        assert gate.site_account._remote_browser_session.pointer_active
+        assert events == [("move", 43.0, 745.6), ("down",), ("move", 129.0, 745.6)]
+        assert (await call(action="pointer", phase="move", gesture=12, x=.5, y=.8))[0] == "400 Bad Request"
+        assert (await call(action="tap", x=.4, y=.8))[0] == "400 Bad Request"
+        assert (await call(action="pointer", phase="up", gesture=11, x=.7, y=.8))[0] == "200 OK"
+        assert events[-2:] == [("move", 301.0, 745.6), ("up",)]
+        assert not gate.site_account._remote_browser_session.pointer_active
+        assert (await call(action="pointer", phase="up", gesture=11, x=.8, y=.8))[0] == "400 Bad Request"
+        assert (await call(action="pointer", phase="down", gesture=3, x=1.2, y=.3))[0] == "400 Bad Request"
         assert (await call(action="drag", points=[[.1, .8], [1.3, .8]],
                            duration_ms=300))[0] == "400 Bad Request"
         assert (await call(action="drag", points=[[.1, .8], [.3, .8]],
@@ -197,4 +209,59 @@ def test_remote_stop_closes_browser_and_blocks_interactions():
         await session.close()
         assert (await session.status())["active"] is False
         assert account.last_driver.closed
+    asyncio.run(run())
+
+
+def test_frame_capture_does_not_block_live_pointer_events():
+    async def run():
+        account = Account()
+        session = RemoteSession(account)
+        await session.start()
+        screenshot_started = asyncio.Event()
+        allow_screenshot = asyncio.Event()
+
+        async def slow_screenshot(**kwargs):
+            screenshot_started.set()
+            await allow_screenshot.wait()
+            return b"small-jpeg"
+
+        account.last_driver.page.screenshot = slow_screenshot
+        frame_task = asyncio.create_task(session.status(capture=True))
+        await asyncio.wait_for(screenshot_started.wait(), 1)
+        try:
+            result = await asyncio.wait_for(session.action({
+                "action": "pointer", "phase": "down", "gesture": 14,
+                "x": .12, "y": .75,
+            }), .5)
+            assert result["message"] == "Движение передано."
+            assert session.pointer_active
+            result = await asyncio.wait_for(session.action({
+                "action": "pointer", "phase": "up", "gesture": 14,
+                "x": .71, "y": .75,
+            }), .5)
+            assert result["message"] == "Движение передано."
+        finally:
+            allow_screenshot.set()
+        assert (await frame_task)["image"]
+        await session.close()
+    asyncio.run(run())
+
+
+def test_remote_pointer_released_if_drag_goes_stale():
+    from mini_app_remote import POINTER_IDLE_SECONDS
+
+    async def run():
+        account = Account()
+        session = RemoteSession(account)
+        await session.start()
+        await session.action({
+            "action": "pointer", "phase": "down", "gesture": 19,
+            "x": .12, "y": .75,
+        })
+        assert session.pointer_active
+        session.pointer_last -= POINTER_IDLE_SECONDS + 2
+        await asyncio.sleep(1.1)
+        assert not session.pointer_active
+        assert account.last_driver.page.mouse.events[-1] == ("up",)
+        await session.close()
     asyncio.run(run())

@@ -117,11 +117,27 @@ class RemoteSession:
                 if any(type(v) not in (int, float) for v in (x, y)) or not (0 <= x <= 1 and 0 <= y <= 1):
                     return {"error": "Неверные координаты."}
                 await page.mouse.click(float(x) * VIEWPORT_WIDTH, float(y) * VIEWPORT_HEIGHT)
+            elif op in {"fill_email", "fill_password"} and set(payload) == {"action", "text"}:
+                value = payload["text"]
+                if not isinstance(value, str) or not 1 <= len(value) <= 512:
+                    return {"error": "Текст должен содержать 1–512 символов."}
+                target = "email" if op == "fill_email" else "password"
+                field = await self.driver._field(target)
+                if field is None:
+                    return {"error": "Нужное поле на странице не найдено. Проверь вкладку «Почта»."}
+                # Fill the named field, not whichever input has keyboard focus.
+                # This also replaces an accidentally inserted value or autofill.
+                await field.fill(value, timeout=6000)
+                await field.press("Tab", timeout=3000)
+                value = None
+                self.last_seen = time.monotonic()
+                return {"message": "Почта введена в Email." if target == "email"
+                        else "Пароль введён в Password."}
             elif op == "type" and set(payload) == {"action", "text"}:
                 value = payload["text"]
                 if not isinstance(value, str) or not 1 <= len(value) <= 512:
                     return {"error": "Текст должен содержать 1–512 символов."}
-                # Text is used only once in the active browser, never stored or logged.
+                # Generic input is reserved for one-time codes or other controls.
                 await page.keyboard.insert_text(value)
                 value = None
             elif op == "key" and set(payload) == {"action", "key"}:

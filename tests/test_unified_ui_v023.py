@@ -147,12 +147,14 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#demo-classic-accordion summary").click()
                 await page.locator("#demo-controls").wait_for(state="visible")
                 assert "виртуальным балансом" in await page.locator(
-                    "#page-demo .screen-subtitle").inner_text()
+                    "#page-demo .screen-subtitle").text_content()
+                assert await page.locator("#page-demo .screen-subtitle").is_hidden()
                 assert await page.locator("#high-gap-panel").is_hidden()
                 await page.locator("#demo-high-accordion summary").click()
                 await page.locator("#high-gap-panel").wait_for(state="visible")
+                await page.locator("#high-gap-panel .minimal-help summary").click()
                 assert "Без догона" in await page.locator(
-                    "#high-gap-panel > .field-help").inner_text()
+                    "#high-gap-panel .minimal-help p").inner_text()
                 assert await page.evaluate(
                     "document.documentElement.scrollWidth <= innerWidth")
 

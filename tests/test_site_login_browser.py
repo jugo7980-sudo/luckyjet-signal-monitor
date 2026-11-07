@@ -256,3 +256,53 @@ def test_timeout_with_open_login_form_reports_unconfirmed_submission(caplog):
     asyncio.run(run())
     assert 'secret789' not in caplog.text
     assert 'private@example.test' not in caplog.text
+
+
+def test_login_opener_recovers_from_spa_click_timeout_when_dialog_already_open():
+    from playwright.async_api import TimeoutError as BrowserTimeout
+    from site_login_browser import SiteLoginBrowser
+    class FakeButton:
+        async def click(self):
+            raise BrowserTimeout('Timeout 5000ms exceeded')
+    driver = SiteLoginBrowser('https://example.test/login')
+    async def field(name):
+        return object() if name == 'password' else None
+    driver._field = field
+    async def run():
+        await driver._click(FakeButton(), 'открытия входа')
+    asyncio.run(run())
+
+
+def test_login_opener_dom_fallback_requires_visible_uncovered_enabled(monkeypatch):
+    from playwright.async_api import TimeoutError as BrowserTimeout
+    from site_account import LoginProblem
+    from site_login_browser import SiteLoginBrowser
+    class Page:
+        url = 'https://example.test/login'
+        async def screenshot(self, **kwargs): return b'PNG'
+    class FakeButton:
+        def __init__(self, covered):
+            self.covered = covered
+            self.dispatched = False
+        async def click(self):
+            raise BrowserTimeout('Timeout 5000ms exceeded')
+        async def evaluate(self, script, **kwargs):
+            return {'visible': True, 'uncovered': not self.covered, 'enabled': True}
+        async def dispatch_event(self, event, **kwargs):
+            assert event == 'click'
+            self.dispatched = True
+    driver = SiteLoginBrowser('https://example.test/login')
+    driver.page = Page()
+    async def field(name): return None
+    async def challenge(): return False
+    driver._field = field
+    driver._challenge = challenge
+    async def run():
+        allowed = FakeButton(covered=False)
+        await driver._click(allowed, 'открытия входа')
+        assert allowed.dispatched
+        blocked = FakeButton(covered=True)
+        with pytest.raises(LoginProblem, match='перекрывает другой элемент'):
+            await driver._click(blocked, 'открытия входа')
+        assert not blocked.dispatched
+    asyncio.run(run())

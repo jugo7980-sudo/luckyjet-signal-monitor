@@ -21,6 +21,8 @@ def response(path):
         return '200 OK', 'application/javascript; charset=utf-8', (Path(__file__).parent / 'web' / 'admin.js').read_bytes()
     if path == '/site.js':
         return '200 OK', 'application/javascript; charset=utf-8', (Path(__file__).parent / 'web' / 'site.js').read_bytes()
+    if path == '/access.js':
+        return '200 OK', 'application/javascript; charset=utf-8', (Path(__file__).parent / 'web' / 'access.js').read_bytes()
     if path in {'/', '/health'}:
         return '200 OK', 'application/json', b'{"status":"ok"}'
     return '404 Not Found', 'text/plain; charset=utf-8', b'Not found'

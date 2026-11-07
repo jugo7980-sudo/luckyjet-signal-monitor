@@ -172,6 +172,10 @@ def test_home_colors_removed_quick_access_and_site_web_form():
             phase = ['disconnected']
             page.on('pageerror', lambda e: errors.append(str(e)))
             async def route(req):
+                if req.request.url.endswith('/access.js'):
+                    await req.fulfill(content_type='application/javascript',
+                        body="window.accessState={premium:true,registered:true,username:'tester'};document.body.dataset.access='premium';window.canUsePremium=()=>true;window.refreshAccessOverview?.();")
+                    return
                 url = req.request.url
                 if url.startswith('https://example.test/app'):
                     await req.fulfill(content_type='text/html', body=response('/app')[2])

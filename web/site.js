@@ -54,13 +54,13 @@
     schedule();
   }
   async function api(method = 'GET', payload) {
-    if (!tg || !tg.initData) throw new Error('Открой приложение через Telegram.');
+    if (!window.canUsePremium?.()) throw new Error('Требуется Premium.');
     const stop = new AbortController();
     const timeout = setTimeout(() => stop.abort(), 8000);
     try {
       const resp = await fetch('/api/site', {
-        method, signal: stop.signal, cache: 'no-store', credentials: 'omit',
-        headers: {Authorization: 'tma ' + tg.initData,
+        method, signal: stop.signal, cache: 'no-store', credentials: 'same-origin',
+        headers: {...(tg?.initData ? {Authorization: 'tma ' + tg.initData} : {}),
           ...(method === 'POST' ? {'Content-Type': 'application/json'} : {})},
         ...(method === 'POST' ? {body: JSON.stringify(payload)} : {}),
       });

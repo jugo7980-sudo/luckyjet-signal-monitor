@@ -110,6 +110,10 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             page.on('pageerror', lambda error: errors.append(str(error)))
 
             async def route(request):
+                if request.request.url.endswith('/access.js'):
+                    await request.fulfill(content_type='application/javascript',
+                        body="window.accessState={premium:true,registered:true,username:'tester'};document.body.dataset.access='premium';window.canUsePremium=()=>true;window.refreshAccessOverview?.();")
+                    return
                 url = request.request.url
                 if url.endswith('/controls.js') or url.endswith('/history.js'):
                     await request.fulfill(content_type='application/javascript',

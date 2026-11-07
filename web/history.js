@@ -218,13 +218,13 @@
     setTabs();
     const seq = ++requestNo;
     status.textContent = 'Загрузка истории…';
-    if (!tg || !tg.initData) { status.textContent = 'Открой Mini App через Telegram-бота.'; return; }
+    if (!window.canUsePremium?.()) { status.textContent = 'Требуется Premium.'; return; }
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), 8000);
     try {
       const url = '/api/history?' + new URLSearchParams(args);
       const response = await fetch(url, {
-        headers: {Authorization: 'tma ' + tg.initData}, credentials: 'omit',
+        headers: {...(tg?.initData ? {Authorization: 'tma ' + tg.initData} : {})}, credentials: 'same-origin',
         cache: 'no-store', signal: abort.signal,
       });
       const result = await response.json();

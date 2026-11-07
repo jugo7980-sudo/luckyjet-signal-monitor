@@ -1,0 +1,164 @@
+/* One identity for Telegram Mini App and browser, Premium unlocks private APIs. */
+(() => {
+  'use strict';
+  const app = window.Telegram && window.Telegram.WebApp;
+  const modal = document.getElementById('access-modal');
+  const dialog = document.getElementById('access-dialog');
+  const login = document.getElementById('top-login');
+  const premium = document.getElementById('top-premium');
+  const headline = document.getElementById('access-headline');
+  const explanation = document.getElementById('access-explanation');
+  const nativeRegister = document.getElementById('access-register');
+  const widget = document.getElementById('telegram-login-widget');
+  const keyForm = document.getElementById('access-premium-form');
+  const keyInput = document.getElementById('access-key');
+  const message = document.getElementById('access-message');
+  const logout = document.getElementById('access-logout');
+  const close = document.getElementById('access-close');
+  const defaultAccess = {verified: false, registered: false, premium: false, username: null};
+  window.accessState = {...defaultAccess};
+  let busy = false;
+  let widgetLoaded = false;
+  let previousFocus = null;
+
+  const authHeaders = () => app && app.initData ? {Authorization: 'tma ' + app.initData} : {};
+  async function api(method = 'GET', payload) {
+    const timeout = new AbortController();
+    const stop = setTimeout(() => timeout.abort(), 8000);
+    try {
+      const resp = await fetch('/api/access', {
+        method, signal: timeout.signal, cache: 'no-store', credentials: 'same-origin',
+        headers: {...authHeaders(), ...(method === 'POST' ? {'Content-Type': 'application/json'} : {})},
+        ...(method === 'POST' ? {body: JSON.stringify(payload)} : {}),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Ошибка авторизации.');
+      return result;
+    } finally { clearTimeout(stop); }
+  }
+  function render(data) {
+    const before = Boolean(window.accessState.premium);
+    window.accessState = data;
+    document.body.dataset.access = data.premium ? 'premium' : 'guest';
+    const name = data.registered
+      ? (data.username ? '@' + data.username : data.first_name || 'Telegram')
+      : 'Войти';
+    login.textContent = name;
+    login.title = data.registered ? 'Аккаунт Telegram' : 'Войти через Telegram';
+    premium.hidden = !data.registered || data.premium;
+    document.getElementById('header-balance').textContent = data.premium
+      ? new Intl.NumberFormat('ru-RU', {style: 'currency', currency: 'USD'})
+          .format((Number(data.balance_cents) || 1000000) / 100) : '—';
+    nativeRegister.hidden = !(data.verified && !data.registered);
+    keyForm.hidden = !(data.registered && !data.premium);
+    logout.hidden = !data.verified || Boolean(app && app.initData);
+    widget.hidden = Boolean(data.verified);
+    if (data.premium) {
+      headline.textContent = 'Premium активирован';
+      explanation.textContent = 'Полный доступ к сводке, истории, DEMO и настройкам открыт.';
+    } else if (data.registered) {
+      headline.textContent = 'Активировать Premium';
+      explanation.textContent = 'Введи ключ доступа для открытия сводки, истории и всех функций.';
+    } else {
+      headline.textContent = 'Войти через Telegram';
+      explanation.textContent = 'Зарегистрируйся через Telegram, затем активируй ключ Premium.';
+    }
+    if (before !== Boolean(data.premium)) {
+      if (!data.premium) {
+        if (window.clearHistoryData) window.clearHistoryData();
+        if (window.clearControlsData) window.clearControlsData();
+        if (window.clearAdminData) window.clearAdminData();
+        if (window.clearSiteData) window.clearSiteData();
+      } else {
+        const active = document.querySelector('nav button[aria-current="page"]')?.dataset.tab;
+        if (active === 'demo' || active === 'account') window.openControlsTab?.();
+        if (active === 'history') window.openHistoryTab?.();
+        if (active === 'account') { window.openAdminTab?.(); window.openSiteTab?.(); }
+      }
+      window.refreshAccessOverview?.();
+    }
+  }
+  async function refresh() {
+    try { render(await api()); }
+    catch (err) { message.textContent = err.message; }
+  }
+  async function submit(action) {
+    if (busy) return;
+    busy = true;
+    message.textContent = 'Проверка…';
+    nativeRegister.disabled = true;
+    keyForm.querySelector('button').disabled = true;
+    try {
+      const result = await api('POST', action);
+      render(result);
+      message.textContent = action.action === 'premium'
+        ? 'Premium активирован.' : action.action === 'register'
+          ? 'Telegram подтверждён. Для полного доступа активируй Premium.'
+          : action.action === 'logout' ? 'Выход выполнен.' : 'Вход подтверждён.';
+      if (result.premium) hideModal();
+    } catch (err) {
+      message.textContent = err.name === 'AbortError' ? 'Сервер не ответил.' : err.message;
+    } finally {
+      busy = false;
+      nativeRegister.disabled = false;
+      keyForm.querySelector('button').disabled = false;
+    }
+  }
+  window.onTelegramAuth = user => {
+    if (!user || typeof user !== 'object') return;
+    submit({action: 'telegram_login', user});
+  };
+  function loadWidget() {
+    if (widgetLoaded || (app && app.initData)) return;
+    widgetLoaded = true;
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = 'https://telegram.org/js/telegram-widget.js?22';
+    script.dataset.telegramLogin = 'jugo_luckyjet_signal_bot';
+    script.dataset.size = 'large';
+    script.dataset.radius = '14';
+    script.dataset.onauth = 'onTelegramAuth(user)';
+    script.dataset.requestAccess = 'read';
+    widget.appendChild(script);
+  }
+  function showModal() {
+    previousFocus = document.activeElement;
+    modal.hidden = false;
+    message.textContent = '';
+    loadWidget();
+    close.focus();
+  }
+  function hideModal() {
+    modal.hidden = true;
+    keyInput.value = '';
+    if (previousFocus && previousFocus.focus) previousFocus.focus();
+  }
+  login.addEventListener('click', showModal);
+  premium.addEventListener('click', showModal);
+  document.querySelectorAll('.access-open').forEach(button => button.addEventListener('click', showModal));
+  close.addEventListener('click', hideModal);
+  modal.addEventListener('click', e => { if (e.target === modal) hideModal(); });
+  modal.addEventListener('keydown', e => {
+    if (e.key === 'Escape') hideModal();
+    if (e.key !== 'Tab') return;
+    const focusables = [...dialog.querySelectorAll('button:not(:disabled):not([hidden]),input:not([hidden]),a')].filter(el => el.getClientRects().length);
+    if (!focusables.length) return;
+    if (e.shiftKey && document.activeElement === focusables[0]) {
+      e.preventDefault(); focusables[focusables.length - 1].focus();
+    } else if (!e.shiftKey && document.activeElement === focusables[focusables.length - 1]) {
+      e.preventDefault(); focusables[0].focus();
+    }
+  });
+  nativeRegister.addEventListener('click', () => submit({action: 'register'}));
+  keyForm.addEventListener('submit', e => {
+    e.preventDefault();
+    const key = keyInput.value.trim();
+    keyInput.value = '';
+    submit({action: 'premium', key});
+  });
+  logout.addEventListener('click', () => submit({action: 'logout'}));
+  window.canUsePremium = () => Boolean(window.accessState?.premium);
+  window.openAccessModal = showModal;
+  window.refreshAccessState = refresh;
+  refresh();
+})();

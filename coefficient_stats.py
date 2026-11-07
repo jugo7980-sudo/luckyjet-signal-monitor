@@ -11,7 +11,7 @@ UNDER2_FIX_DAY = '2026-11-03'
 UNDER2_FIX_MARKER = 'luckyjet:coef:lt2-single-count-fixed-v1'
 SCRIPT = """
 if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
-redis.call('SET', KEYS[1], '1', 'EX', 7948800)
+redis.call('SET', KEYS[1], '1')
 local day_existed = redis.call('EXISTS', KEYS[2]) == 1
 if day_existed and redis.call('HEXISTS', KEYS[2], 'lt2_tracking') == 0 then redis.call('HSET', KEYS[2], 'lt2_partial', '1') end
 redis.call('HSET', KEYS[2], 'lt2_tracking', '1')
@@ -26,7 +26,6 @@ for i=2,16 do
   redis.call('HINCRBY', KEYS[2], ARGV[i], 1)
  end
 end
-redis.call('EXPIRE', KEYS[2], 7948800)
 redis.call('ZADD', KEYS[3], ARGV[17], ARGV[18])
 local last = tonumber(redis.call('HGET', KEYS[4], 'stamp') or '-1')
 local stamp = tonumber(ARGV[17])
@@ -56,7 +55,7 @@ if raw then
   redis.call('HSET', KEYS[2], 'lt2', math.floor(count / 2))
  end
 end
-redis.call('SET', KEYS[1], '1', 'EX', 7948800)
+redis.call('SET', KEYS[1], '1')
 return 1
 """
 
@@ -171,15 +170,49 @@ class CoefficientStats:
         if values:
             await self.redis.zadd('luckyjet:coef:days',values,nx=True)
 
+        # Keep existing keys created before the no-expiry policy. Without
+        # this one-time migration old daily snapshots and seen-round IDs
+        # would still expire at their originally scheduled TTL.
+        if hasattr(self.redis, 'scan_iter'):
+            await self._preserve_legacy_retention()
+
+    async def _preserve_legacy_retention(self):
+        marker = 'luckyjet:coef:retention-upgraded-v1'
+        if await self.redis.exists(marker):
+            return
+        pipe = self.redis.pipeline()
+        batched = 0
+        async for key in self.redis.scan_iter(match='luckyjet:coef:seen:*', count=500):
+            pipe.persist(key)
+            batched += 1
+            if batched >= 500:
+                await pipe.execute()
+                pipe = self.redis.pipeline()
+                batched = 0
+        days = await self.redis.zrange('luckyjet:coef:days', 0, -1)
+        for day in days:
+            if isinstance(day, bytes):
+                day = day.decode('utf-8')
+            pipe.persist('luckyjet:coef:' + str(day))
+            batched += 1
+            if batched >= 500:
+                await pipe.execute()
+                pipe = self.redis.pipeline()
+                batched = 0
+        if batched:
+            await pipe.execute()
+        await self.redis.set(marker, '1')
+
+
     async def days(self, page=0):
         if self.redis is None:
             return [], 0
-        cutoff=(datetime.now(TZ)-timedelta(days=90)).timestamp()
+        # Historical daily counters must not vanish after a fixed horizon.
+        # Exact archive source IDs also remain deduplicated indefinitely.
         pipe = self.redis.pipeline()
-        pipe.zremrangebyscore('luckyjet:coef:days', '-inf', cutoff)
         pipe.zcard('luckyjet:coef:days')
         pipe.zrevrange('luckyjet:coef:days', page * 10, page * 10 + 9)
-        _, total, values = await pipe.execute()
+        total, values = await pipe.execute()
         return [v.decode() if isinstance(v, bytes) else v for v in values], total
 
     async def summary(self, day):

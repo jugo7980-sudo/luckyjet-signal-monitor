@@ -9,7 +9,7 @@ from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 DEFAULT_BALANCE_CENTS = 1_000_000  # $10,000.00
 MINIMUM_STAKE_CENTS = 1_000  # $10.00
 DEFAULT_STAKE_CENTS = MINIMUM_STAKE_CENTS
-TRIGGER_OPTIONS = (2, 3, 4, 5, 6)
+TRIGGER_OPTIONS = tuple(range(2, 11))
 MAX_HISTORY = 100
 VLADIVOSTOK_TZ = ZoneInfo('Asia/Vladivostok')
 

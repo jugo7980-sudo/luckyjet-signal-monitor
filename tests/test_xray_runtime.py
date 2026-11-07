@@ -107,6 +107,8 @@ def test_invalid_subscription_keeps_game_direct_without_printing_secrets(monkeyp
     asyncio.run(run())
     assert secret not in caplog.text
     assert "Xray not activated" in caplog.text
+    assert "source=subscription" in caplog.text
+    assert "reason=Subscription did not return compatible Xray nodes" in caplog.text
 
 
 def test_invalid_upstream_refuses_unprotected_direct_egress():

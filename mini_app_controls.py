@@ -3,6 +3,8 @@ import asyncio
 import json
 import time
 import secrets
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from redis.exceptions import RedisError
 from luckyjet_signal.demo_money import parse_money
 from round_archive import STREAM_KEY
@@ -16,7 +18,7 @@ ACTIONS = {
     'demo_toggle', 'demo_trigger', 'demo_stake', 'demo_reset',
     'notifications_toggle', 'sound_toggle', 'notification_threshold',
     'history_size', 'delete_delay', 'settings_reset', 'test_notification',
-    'demo_probe_start',
+    'demo_probe_start', 'history_reset',
 }
 
 
@@ -90,7 +92,26 @@ async def controls(authorization, gate, token, method='GET', body=None):
         ledger = gate._demo_ledger(uid)
         value = payload.get('value')
         message = 'Сохранено.'
-        if action == 'demo_probe_start':
+        if action == 'history_reset':
+            # Reset only the caller's visible history. Never delete source rounds,
+            # global counters, or the DEMO ledger. All four scopes share one
+            # append-only cutoff marker for a consistent all-tabs reset.
+            if payload.get('confirm') is not True or value not in {'days', 'high_days', 'cycles', 'max_steps', 'all'}:
+                return json_response('400 Bad Request', {'error': 'Подтверди вкладку для сброса.'})
+            try:
+                head = await gate.redis.xrevrange(STREAM_KEY, count=1)
+                marker = json.dumps({
+                    'stream_id': str(head[0][0]) if head else '0-0',
+                    'at_ms': int(time.time() * 1000),
+                    'day': datetime.now(ZoneInfo('Asia/Vladivostok')).date().isoformat(),
+                })
+                scopes = ('days', 'high_days', 'cycles', 'max_steps') if value == 'all' else (value,)
+                await gate.redis.hset(f'luckyjet:history:user-reset:{uid}',
+                                      mapping={scope: marker for scope in scopes})
+            except (RedisError, OSError):
+                return json_response('503 Service Unavailable', {'error': 'Не удалось сохранить сброс истории.'})
+            message = 'История вкладок очищена. Исходный архив и DEMO сохранены.' if value == 'all' else 'Вкладка очищена. Исходный архив сохранён.'
+        elif action == 'demo_probe_start':
             if not gate.is_admin(uid):
                 return json_response('403 Forbidden', {'error': 'Проверка доступна администратору.'})
             probe = getattr(gate, 'demo_probe', None)

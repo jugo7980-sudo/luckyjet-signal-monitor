@@ -5,6 +5,8 @@ import httpx
 
 log = logging.getLogger("luckyjet.auth")
 
+HISTORY_PANEL_TITLE = "Lucky Jet | Мониторинг онлайн"
+
 
 class HistoryPanels:
     async def ensure_private_history(self, user_id):
@@ -25,7 +27,7 @@ class HistoryPanels:
             try:
                 await self.request(
                     "editMessageText",
-                    {"chat_id": chat_id, "message_id": message_id, "text": "📊", "reply_markup": markup},
+                    {"chat_id": chat_id, "message_id": message_id, "text": HISTORY_PANEL_TITLE, "reply_markup": markup},
                 )
                 return True
             except httpx.HTTPStatusError as exc:

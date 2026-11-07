@@ -1355,9 +1355,8 @@ class TelegramPasswordGate(HistoryPanels):
             log.exception("Personal Telegram UI restart failed: user_id=%s", user_id)
             await reply("Не удалось перезапустить интерфейс.", True)
             return
-        await self._safe_delete(
-            chat_id, self._to_int(((callback.get("message") or {}).get("message_id"))
-        )
+        confirmation_message = (callback.get("message") or {}).get("message_id")
+        await self._safe_delete(chat_id, self._to_int(confirmation_message))
         await reply("Личный интерфейс перезапущен.")
         log.info("Personal Telegram UI restarted: user_id=%s", user_id)
 

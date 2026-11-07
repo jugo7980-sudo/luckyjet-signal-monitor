@@ -51,6 +51,9 @@ class DemoLedger:
         self.cycle_rounds = list(state.get("cycle_rounds", []))[-100:]
         self.history = list(state.get("history", []))
         self.daily_max_steps = dict(state.get("daily_max_steps", {}))
+        # Read-only virtual progression used by Maximum Step, independent of DEMO.
+        self.tracker_low_streak = max(0, self._int(state.get("tracker_low_streak", 0), 0))
+        self.tracker_step = max(0, self._int(state.get("tracker_step", 0), 0))
         self.backfill_daily_steps()
         self.history = self.history[:MAX_HISTORY]
 
@@ -107,7 +110,47 @@ class DemoLedger:
             "cycle_rounds": self.cycle_rounds,
             "history": self.history,
             "daily_max_steps": self.daily_max_steps,
+            "tracker_low_streak": self.tracker_low_streak,
+            "tracker_step": self.tracker_step,
         }
+
+    def track_max_step(self, coefficient, *, now=None):
+        """Track the next hypothetical step even when DEMO is disabled.
+
+        Uses the same consecutive-below-2x trigger as DEMO, but never makes
+        virtual bets, changes the balance, or creates DEMO cycle history.
+        The current step is recorded immediately when it becomes reachable.
+        """
+        try:
+            multiplier = Decimal(str(coefficient).strip().rstrip("xX").replace(",", "."))
+        except (InvalidOperation, ValueError):
+            return False
+        if not multiplier.is_finite() or multiplier < 1:
+            return False
+
+        if self.tracker_step:
+            if multiplier >= 2:
+                self.tracker_step = 0
+                self.tracker_low_streak = 0
+                return True
+            self.tracker_step += 1
+            self._record_step(self.tracker_step, now)
+            return True
+
+        if multiplier >= 2:
+            self.tracker_low_streak = 0
+            return True
+        self.tracker_low_streak += 1
+        if self.tracker_low_streak >= self.trigger_streak:
+            self.tracker_step = 1
+            self.tracker_low_streak = 0
+            self._record_step(1, now)
+        return True
+
+    def reset_max_step_progress(self):
+        """Discard continuity when the source stream has a gap."""
+        self.tracker_low_streak = 0
+        self.tracker_step = 0
 
     def set_trigger(self, count: int) -> bool:
         if self.active or count not in TRIGGER_OPTIONS:

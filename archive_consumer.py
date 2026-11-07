@@ -85,8 +85,13 @@ async def process_archive_event(redis, gate, state, panel, stream_id, fields):
     timestamp, uncertain = parse_event_timestamp(fields)
     # The per-user DEMO ledger saves this source ID with each balance update,
     # so replay after a process crash cannot charge the same stake twice.
-    await gate.on_round(formatted, round_id=rid)
+    previous_panel = list(panel.history)
     panel.history = base.prepend_history(panel.history, formatted, limit=panel.limit)
+    try:
+        await gate.on_round(formatted, round_id=rid)
+    except Exception:
+        panel.history = previous_panel
+        raise
     stats = getattr(gate, "coefficient_stats", None)
     if stats is not None:
         await stats.record(

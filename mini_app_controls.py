@@ -3,7 +3,8 @@ import asyncio
 import json
 import time
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 from redis.exceptions import RedisError
 from luckyjet_signal.demo_money import parse_money
@@ -13,9 +14,12 @@ import httpx
 
 from mini_app_api import json_response, telegram_user
 from luckyjet_signal.demo_ledger import DemoLedger, TRIGGER_OPTIONS, parse_dollars
+from luckyjet_signal.demo_money import MAX_AMOUNT
+
 
 ACTIONS = {
     'demo_toggle', 'demo_trigger', 'demo_stake', 'demo_reset',
+    'high_gap_toggle', 'high_gap_config',
     'notifications_toggle', 'sound_toggle', 'notification_threshold',
     'history_size', 'delete_delay', 'settings_reset', 'test_notification',
     'demo_probe_start', 'history_reset',
@@ -47,6 +51,7 @@ def snapshot(gate, uid):
             'step': len(ledger.cycle_rounds) + 1 if ledger.active else None,
             'next_stake_cents': ledger.next_stake_cents if ledger.active else None,
         },
+        'high_gap': ledger.high_gap.public(),
         'settings': {
             'notifications': uid not in gate.notifications_disabled,
             'sound': uid not in gate.silent_users,
@@ -56,6 +61,45 @@ def snapshot(gate, uid):
         },
     }
 
+
+
+async def _seed_high_gap(redis, ledger):
+    """Anchor to last validated round already processed by this user.
+
+    A current source snapshot is never replayed as if it were a paid bet.
+    Stop on a missing-history marker; gaps cannot be silently bridged.
+    """
+    cursor = ledger.last_archived_stream_id
+    if not cursor:
+        return False
+    events = await redis.xrevrange('luckyjet:archive:v1:events', max=cursor, count=20000)
+    elapsed = 0
+    for stream_id, fields in events:
+        kind = str(fields.get('type', ''))
+        if kind in {'gap', 'baseline'}:
+            break
+        if kind != 'round':
+            continue
+        try:
+            coefficient = Decimal(str(fields.get('coefficient', '')))
+        except (InvalidOperation, ValueError, TypeError):
+            break
+        if not coefficient.is_finite() or coefficient < 1:
+            break
+        if coefficient > ledger.high_gap.reference:
+            observed = fields.get('observed_at', '')
+            try:
+                at = datetime.fromtimestamp(int(observed) / 1000, timezone.utc).isoformat()
+            except (TypeError, ValueError, OverflowError, OSError):
+                at = None
+            ledger.high_gap.arm_from_source(
+                round_id=fields.get('round_id', ''),
+                coefficient=coefficient, elapsed=elapsed,
+                observed_at=at,
+            )
+            return True
+        elapsed += 1
+    return False
 
 async def controls(authorization, gate, token, method='GET', body=None):
     if not authorization.startswith('tma '):
@@ -123,6 +167,54 @@ async def controls(authorization, gate, token, method='GET', body=None):
                 return json_response('429 Too Many Requests', {'error': 'Повторная проверка через минуту.'})
             probe.start()
             message = 'Проверка запущена. Результат появится после чтения страницы мониторинга.'
+        elif action == 'high_gap_toggle':
+            if ledger.high_gap.enabled:
+                completed = ledger.high_gap.stop(
+                    currency=ledger.currency, balance=ledger.balance_cents,
+                )
+                if completed:
+                    ledger.high_history.insert(0, completed)
+                    ledger.high_history = ledger.high_history[:100]
+            else:
+                if ledger.balance_verified is False:
+                    return json_response('409 Conflict', {
+                        'error': 'Баланс непроверен после пропуска раундов. Сначала сбрось DEMO.',
+                    })
+                if not ledger.last_archived_stream_id:
+                    return json_response('409 Conflict', {
+                        'error': 'Ожидание первого подтверждённого раунда. Повтори включение.',
+                    })
+                ledger.high_gap.reset_progress()
+                ledger.high_gap.enabled = True
+                await _seed_high_gap(gate.redis, ledger)
+            await gate._persist_demo(uid)
+        elif action == 'high_gap_config':
+            if not isinstance(value, dict) or set(value) != {'reference', 'wait_rounds', 'target', 'stake'}:
+                return json_response('400 Bad Request', {
+                    'error': 'Укажи порог, число раундов, автовывод и сумму.',
+                })
+            stake = parse_money(value['stake'], ledger.currency)
+            reference = value['reference']
+            target = value['target']
+            wait = value['wait_rounds']
+            if stake is None or not isinstance(reference, str) or not isinstance(target, str) or type(wait) is not int:
+                return json_response('400 Bad Request', {'error': 'Проверь настройки стратегии.'})
+            from luckyjet_signal.high_gap_demo import parse_multiplier
+            target_multiplier = parse_multiplier(target)
+            if target_multiplier is None or Decimal(stake) * target_multiplier > MAX_AMOUNT:
+                return json_response('400 Bad Request', {
+                    'error': 'Автовывод превышает допустимую точность виртуального баланса.',
+                })
+            if not ledger.high_gap.configure(
+                reference, wait, target, stake,
+                min_stake=ledger.minimum_stake_cents,
+            ):
+                return json_response('409 Conflict', {
+                    'error': 'Некорректные параметры или активный цикл. Дождись завершения.',
+                })
+            if ledger.high_gap.enabled:
+                await _seed_high_gap(gate.redis, ledger)
+            await gate._persist_demo(uid)
         elif action == 'demo_toggle':
             if ledger.active and ledger.enabled:
                 return json_response('409 Conflict', {'error': 'Активную DEMO-сессию нельзя выключить до завершения.'})

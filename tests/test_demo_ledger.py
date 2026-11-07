@@ -144,3 +144,64 @@ def test_two_round_trigger_bets_only_on_following_round_and_survives_reload():
     assert restored.trigger_streak == 2
     assert restored.process_round('2.00')['type'] == 'recovered'
     assert restored.balance_cents == DEFAULT_BALANCE_CENTS + DEFAULT_STAKE_CENTS
+
+
+def test_trigger_options_extend_to_ten_and_survive_persistence():
+    from luckyjet_signal.demo_ledger import TRIGGER_OPTIONS
+
+    assert TRIGGER_OPTIONS == tuple(range(2, 11))
+    for trigger in range(7, 11):
+        ledger = DemoLedger(enabled=True)
+        assert ledger.set_trigger(trigger)
+        for i in range(1, trigger):
+            assert ledger.process_round("1.20x") is None
+            assert ledger.low_streak == i
+            assert ledger.active is False
+
+        restored = DemoLedger(**ledger.dump())
+        assert restored.trigger_streak == trigger
+        assert restored.low_streak == trigger - 1
+        event = restored.process_round("1.20x")
+        assert event == {"type": "trigger", "next_stake_cents": DEFAULT_STAKE_CENTS}
+        assert restored.active is True
+        # Triggering arms the following simulated bet, without changing balance.
+        assert restored.balance_cents == DEFAULT_BALANCE_CENTS
+        assert restored.process_round("2.00x")["type"] == "recovered"
+        assert restored.balance_cents == DEFAULT_BALANCE_CENTS + DEFAULT_STAKE_CENTS
+
+    ledger = DemoLedger()
+    for invalid in (1, 11, 99):
+        assert not ledger.set_trigger(invalid)
+    assert DemoLedger(trigger_streak=10).trigger_streak == 10
+    assert DemoLedger(trigger_streak=11).trigger_streak == 4
+
+
+def test_ten_round_trigger_syncs_existing_history_only_after_tenth_round():
+    ledger = DemoLedger(enabled=True, trigger_streak=10)
+    assert ledger.sync_history(["1.20x"] * 9 + ["2.00x"]) is None
+    assert ledger.low_streak == 9
+    assert ledger.sync_history(["1.20x"] * 10 + ["2.00x"]) == {
+        "type": "trigger", "next_stake_cents": DEFAULT_STAKE_CENTS,
+    }
+    assert ledger.active
+    assert ledger.balance_cents == DEFAULT_BALANCE_CENTS
+
+
+def test_telegram_trigger_menu_offers_all_options_up_to_ten():
+    from luckyjet_password_gate import TelegramPasswordGate
+
+    gate = TelegramPasswordGate(None)
+    ledger = gate._demo_ledger(42)
+    assert ledger.set_trigger(10)
+    title, markup = gate._choice_screen(42, "demo_trigger_menu")
+    assert "Старт демо" in title
+    choices = [
+        button for row in markup["inline_keyboard"] for button in row
+        if button["callback_data"].startswith("demo_trigger:")
+    ]
+    assert [item["callback_data"] for item in choices] == [
+        f"demo_trigger:{n}" for n in range(2, 11)
+    ]
+    assert any("10 подряд" in item["text"] for item in choices)
+    assert gate._supported_callback("demo_trigger:10", 42)
+    assert not gate._supported_callback("demo_trigger:11", 42)

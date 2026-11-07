@@ -182,7 +182,7 @@ if(shortcutSupported){
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkShortcut()});
 }else{
   updateShortcutStatus('unsupported');
-  shortcutStatus.textContent='Откройте Mini App в Telegram 8.0+ на поддерживаемом устройстве.';
+  shortcutStatus.textContent='Откройте Mini App в Telegram версии 8.0+ на поддерживаемом устройстве.';
   shortcutHomeStatus.textContent='Для ярлыка нужен Telegram 8.0+ и поддерживаемое устройство.';
 }
 function showTab(name){if(!['home','demo','history','account'].includes(name))return;document.querySelectorAll('.tab-page').forEach(p=>p.hidden=p.id!=='page-'+name);document.querySelectorAll('nav button').forEach(b=>{if(b.dataset.tab===name)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});if(app){try{if(name==='home')app.BackButton.hide();else app.BackButton.show();app.HapticFeedback.selectionChanged()}catch(e){}}window.scrollTo(0,0);if(window.accessState?.premium){if(name==='history'&&window.openHistoryTab)window.openHistoryTab();if((name==='demo'||name==='account')&&window.openControlsTab)window.openControlsTab();if(name==='account'&&window.openAdminTab)window.openAdminTab();if(name==='account'&&window.openSiteTab)window.openSiteTab()}if(name==='home'||(name==='demo'&&window.accessState?.premium)){clearTimeout(refreshTimer);if(allowed)loadOverview()}else clearTimeout(refreshTimer)}

@@ -64,6 +64,7 @@ class DemoLedger:
         }
         self.consecutive_below_two = max(0, self._int(state.get("consecutive_below_two", 0), 0))
         self.last_archived_round_id = str(state.get("last_archived_round_id") or "")
+        self.last_archived_stream_id = str(state.get("last_archived_stream_id") or "")
         self.balance_verified = bool(state.get("balance_verified", True))
         self.backfill_daily_steps()
         self.history = self.history[:MAX_HISTORY]
@@ -124,6 +125,7 @@ class DemoLedger:
             "daily_max_low_streak": self.daily_max_low_streak,
             "consecutive_below_two": self.consecutive_below_two,
             "last_archived_round_id": self.last_archived_round_id,
+            "last_archived_stream_id": self.last_archived_stream_id,
             "balance_verified": self.balance_verified,
         }
 
@@ -153,22 +155,37 @@ class DemoLedger:
         )
         return True
 
-    def process_archived_round(self, round_id, coefficient, *, now=None):
-        """Apply an archived round to DEMO at most once per source ID.
+    @staticmethod
+    def _stream_position(stream_id):
+        parts = str(stream_id or "").split("-")
+        if len(parts) != 2 or not all(part.isdecimal() for part in parts):
+            raise ValueError("Invalid archive stream sequence number")
+        return tuple(int(part) for part in parts)
 
-        The caller must persist this ledger snapshot before acknowledging the
-        archive consumer cursor. A crash after persistence can safely replay
-        the same round without applying a stake twice.
+    def process_archived_round(self, round_id, coefficient, *, now=None, stream_id=None):
+        """Idempotent DEMO processing across crashes and replay cursor rewinds.
+
+        The stream position is monotonic. Reject *any* earlier event, not just
+        the same last source round, before calculating another simulated bet.
         """
         identifier = str(round_id or "").strip()
         if not identifier:
             raise ValueError("Archived DEMO processing requires a source round ID")
+        position = None
+        if stream_id is not None:
+            position = self._stream_position(stream_id)
+            if self.last_archived_stream_id:
+                previous = self._stream_position(self.last_archived_stream_id)
+                if position <= previous:
+                    return None, False
         if identifier == self.last_archived_round_id:
             return None, False
         if not self.track_max_step(coefficient, now=now):
             return None, False
         event = self.process_round(coefficient, now=now) if self.enabled else None
         self.last_archived_round_id = identifier
+        if position is not None:
+            self.last_archived_stream_id = str(stream_id)
         return event, True
 
     def reset_max_step_progress(self):
@@ -229,6 +246,7 @@ class DemoLedger:
         streak_maxima = self.daily_max_low_streak.copy()
         ongoing_streak = self.consecutive_below_two
         last_round_id = self.last_archived_round_id
+        last_stream_id = self.last_archived_stream_id
         enabled = self.enabled
         trigger = self.trigger_streak
         self.__init__(
@@ -238,6 +256,7 @@ class DemoLedger:
             daily_max_low_streak=streak_maxima,
             consecutive_below_two=ongoing_streak,
             last_archived_round_id=last_round_id,
+            last_archived_stream_id=last_stream_id,
             balance_verified=True,
         )
 

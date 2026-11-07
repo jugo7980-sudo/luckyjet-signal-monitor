@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from release_reset import apply_release_reset
+from release_reset import apply_release_reset, apply_access_reset
 from luckyjet_signal.demo_ledger import (
     DEFAULT_BALANCE_CENTS,
     MAX_HISTORY,
@@ -128,6 +128,7 @@ class TelegramPasswordGate(HistoryPanels):
                 await self.redis.ping()
                 if await apply_release_reset(self.redis):
                     self.current_streak = []
+                await apply_access_reset(self.redis)
                 await self._load_persisted_state()
                 log.info("Telegram private state loaded from Redis")
             except Exception:

@@ -18,7 +18,7 @@ from mini_app_api import telegram_user, json_response
 
 SESSION_AGE = 30 * 86400
 SESSION_COOKIE = 'lj_session'
-SESSION_KEY = 'luckyjet:web_session:'
+SESSION_KEY = 'luckyjet:web_session:after-reset-20261107:'
 REGISTRY_KEY = 'luckyjet:web_registered'
 AUTH_DAYS = 30
 LIMITS = {'20', '30', '50', '100'}
@@ -140,7 +140,7 @@ async def _registered(redis, uid):
 
 async def _status(gate, profile, *, registered=False):
     uid = profile['id'] if profile else None
-    premium = bool(uid and (gate.is_admin(uid) or uid in gate.authorized)
+    premium = bool(uid and uid in gate.authorized
                    and (uid not in gate.blocked or gate.is_admin(uid)))
     member = registered or premium
     ledger = gate.demo_ledgers.get(uid) if premium else None

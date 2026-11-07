@@ -107,8 +107,9 @@ def test_public_restart_expiration_blocked_user_and_no_redis(monkeypatch):
 
         await gate.handle_update(incoming(42))
         token = gate._restart_pending[42][0]
+        expired_instant = gate._restart_pending[42][1] + 1
         monkeypatch.setattr(luckyjet_password_gate.time, "monotonic",
-                            lambda: gate._restart_pending[42][1] + 1)
+                            lambda: expired_instant)
         await gate.handle_callback(confirmation(42, "restart_confirm:" + token))
         assert not gate._restart_requested.is_set()
         assert await gate.redis.get(RESTART_COOLDOWN_KEY) is None

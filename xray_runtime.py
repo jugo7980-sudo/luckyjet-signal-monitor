@@ -31,6 +31,33 @@ _USER_AGENTS = (
 _SOCKS_HOST = "127.0.0.1"
 _SOCKS_PORT = 10808
 
+# Only fixed, non-secret diagnostics may reach Railway logs.
+_SAFE_XRAY_REASONS = frozenset({
+    "Unsupported proxy protocol",
+    "Missing upstream host or port",
+    "Unsupported transport type",
+    "Secure TLS/REALITY transport required",
+    "REALITY public key or SNI missing",
+    "Invalid VLESS user ID",
+    "Missing Trojan password",
+    "Empty subscription",
+    "Subscription returned an HTML installation page",
+    "Subscription is not a supported node list",
+    "Subscription encoding is unsupported",
+    "No compatible proxy nodes in subscription",
+    "No compatible VLESS/Trojan TLS/REALITY node",
+    "Only HTTPS subscription URLs are accepted",
+    "Subscription HTTP response was not successful",
+    "Subscription response was too large",
+    "Subscription request failed",
+    "Subscription did not return compatible Xray nodes",
+    "Refusing unverified direct/blackhole outbound",
+    "Xray exited before readiness",
+    "Local Xray SOCKS port not ready",
+    "Proxy probe gave no egress IP",
+    "Xray outbound connection probe failed",
+})
+
 
 class XrayConfigError(ValueError):
     """Unsupported/invalid node or a subscription landing page."""
@@ -158,18 +185,26 @@ async def fetch_node(subscription: str, *, client=None) -> dict:
 
 
 async def _fetch_using_client(http, subscription):
+    last_reason = "Subscription did not return compatible Xray nodes"
     for agent in _USER_AGENTS:
         try:
             response = await http.get(
                 subscription,
                 headers={"User-Agent": agent, "Accept": "*/*"},
             )
-            if response.status_code != 200 or len(response.content) > _MAX_BYTES:
+            if response.status_code != 200:
+                last_reason = "Subscription HTTP response was not successful"
+                continue
+            if len(response.content) > _MAX_BYTES:
+                last_reason = "Subscription response was too large"
                 continue
             return first_compatible_node(response.text)
-        except (XrayConfigError, UnicodeError, httpx.HTTPError):
-            continue
-    raise XrayConfigError("Subscription did not return compatible Xray nodes")
+        except XrayConfigError as exc:
+            # Parser exceptions contain only static reason strings, never URL data.
+            last_reason = str(exc) if str(exc) in _SAFE_XRAY_REASONS else "Subscription did not return compatible Xray nodes"
+        except (UnicodeError, httpx.HTTPError):
+            last_reason = "Subscription request failed"
+    raise XrayConfigError(last_reason)
 
 
 def make_config(outbound: dict) -> dict:
@@ -212,7 +247,9 @@ class XrayManager:
             outbound = parse_node_link(node) if node else await fetch_node(subscription)
             return await self._start_outbound(outbound)
         except (XrayConfigError, httpx.HTTPError, OSError, RuntimeError, ValueError) as exc:
-            log.warning("Xray not activated (%s); game traffic stays direct", type(exc).__name__)
+            reason = str(exc) if isinstance(exc, XrayConfigError) and str(exc) in _SAFE_XRAY_REASONS else type(exc).__name__
+            source = "node" if node else "subscription"
+            log.warning("Xray not activated (source=%s reason=%s); game traffic stays direct", source, reason)
             await self.stop()
             return False
 

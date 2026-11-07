@@ -50,6 +50,7 @@ class DemoPersistence:
                 state = ledger.dump()
                 state_history = state.pop('history')
                 high_state_history = state.pop('high_history', [])
+                pending_archive = state.pop('pending_archive_cycles', [])
                 history = json.dumps(state_history, separators=(',', ':'))
                 high_history = json.dumps(high_state_history, separators=(',', ':'))
                 raw = json.dumps(state, separators=(',', ':'))
@@ -78,10 +79,20 @@ class DemoPersistence:
                                 pipe.hsetnx(ARCHIVE_ENTRIES + str(uid), key, payload)
                                 pipe.zadd(ARCHIVE_CYCLES + str(uid), {key: stamp}, nx=True)
                     high_histories[str(uid)] = high_history
+                if hasattr(pipe, 'hsetnx') and hasattr(pipe, 'zadd'):
+                    for entry in pending_archive:
+                        record = _cycle_archival_record(entry)
+                        if record is None:
+                            continue
+                        key, stamp, payload = record
+                        pipe.hsetnx(ARCHIVE_ENTRIES + str(uid), key, payload)
+                        pipe.zadd(ARCHIVE_CYCLES + str(uid), {key: stamp}, nx=True)
                 histories[uid] = history
             await pipe.execute()
             self.saved_history.update(histories)
             self.saved_high_history.update(high_histories)
+            for ledger in ledgers.values():
+                ledger.pending_archive_cycles.clear()
 
     async def restore(self, redis, ledgers):
         histories = await redis.hgetall('luckyjet:demo_completed_cycles')

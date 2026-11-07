@@ -3,6 +3,7 @@ import asyncio
 import httpx
 
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
+from history_panels import HISTORY_PANEL_TITLE
 
 
 class RacingRequest:
@@ -12,7 +13,7 @@ class RacingRequest:
 
     async def __call__(self, method, payload):
         self.calls.append((method, payload))
-        if method == "editMessageText" and payload.get("text") == "📊" and payload.get("message_id") == 799:
+        if method == "editMessageText" and payload.get("text") == HISTORY_PANEL_TITLE and payload.get("message_id") == 799:
             await asyncio.sleep(0)
             raise httpx.HTTPError("message to edit not found")
         if method == "sendMessage":
@@ -44,7 +45,7 @@ def test_concurrent_history_recovery_creates_only_one_replacement():
     history_sends = [
         payload
         for method, payload in request.calls
-        if method == "sendMessage" and payload.get("text") == "📊"
+        if method == "sendMessage" and payload.get("text") == HISTORY_PANEL_TITLE
     ]
     assert len(history_sends) == 1
     assert gate.history_messages[42] == 801

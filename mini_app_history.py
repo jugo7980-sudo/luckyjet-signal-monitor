@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from mini_app_api import json_response, telegram_user
 from luckyjet_signal.demo_ledger import DemoLedger, DEFAULT_BALANCE_CENTS, MAX_HISTORY
 
-TZ = ZoneInfo('Asia/Bangkok')
+TZ = ZoneInfo('Asia/Vladivostok')
 VIEWS = {'days', 'day', 'high_days', 'high_day', 'high_item',
          'cycles', 'cycle', 'demo_stats', 'max_steps', 'max_step_day'}
 DAY_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')

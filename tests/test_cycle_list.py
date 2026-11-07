@@ -27,7 +27,7 @@ def test_cycle_list_pages_details_and_return_are_static_and_stable():
         first = screen(request)
         assert '21 циклов · 1/3' in first['text']
         assert len(buttons(first, 'demo_cycle:')) == 10
-        assert '02.11 23:00' in buttons(first, 'demo_cycle:')[0]['text']
+        assert '03.11 02:00' in buttons(first, 'demo_cycle:')[0]['text']
         assert '+$10.00' in buttons(first, 'demo_cycle:')[0]['text']
         next_page = buttons(first, 'demo_list:')[0]['callback_data']
         await click(gate, next_page)
@@ -38,7 +38,7 @@ def test_cycle_list_pages_details_and_return_are_static_and_stable():
         ledger.history.insert(0, entries(1)[0])
         await click(gate, selected)
         detail = screen(request)
-        assert 'Начало: 02.11.2026 23:13:00' in detail['text']
+        assert 'Начало: 03.11.2026 02:13:00' in detail['text']
         assert 'Чистый результат: +$10.13' in detail['text']
         await click(gate, buttons(detail, 'demo_list:')[0]['callback_data'])
         assert buttons(screen(request), 'demo_cycle:') == buttons(second, 'demo_cycle:')

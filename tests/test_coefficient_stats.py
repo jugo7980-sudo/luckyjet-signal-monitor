@@ -115,3 +115,25 @@ def test_daily_statistics_and_seen_rounds_no_longer_expire():
  assert "7948800" not in SCRIPT
  assert "7948800" not in UNDER2_DOUBLE_FIX
  assert "EXPIRE', KEYS[2]" not in SCRIPT
+
+
+def test_existing_expiring_statistic_keys_keep_their_data_but_lose_ttl():
+ from fakeredis.aioredis import FakeRedis
+
+ async def run():
+  redis=FakeRedis(decode_responses=True)
+  await redis.set('luckyjet:coef:seen:old123','1',ex=100)
+  await redis.hset('luckyjet:coef:2026-11-06',mapping={'total':23,'lt2':7})
+  await redis.expire('luckyjet:coef:2026-11-06',100)
+  await redis.zadd('luckyjet:coef:days',{'2026-11-06':123.0})
+  stats=CoefficientStats(redis)
+  await stats._preserve_legacy_retention()
+  assert await redis.ttl('luckyjet:coef:seen:old123')==-1
+  assert await redis.ttl('luckyjet:coef:2026-11-06')==-1
+  assert await redis.hget('luckyjet:coef:2026-11-06','total')=='23'
+  assert await redis.hget('luckyjet:coef:2026-11-06','lt2')=='7'
+  assert await redis.get('luckyjet:coef:retention-upgraded-v1')=='1'
+  await stats._preserve_legacy_retention()
+  await redis.aclose()
+
+ asyncio.run(run())

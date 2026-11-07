@@ -18,7 +18,8 @@ from luckyjet_signal.demo_ledger import DemoLedger, DEFAULT_BALANCE_CENTS, MAX_H
 
 TZ = ZoneInfo('Asia/Vladivostok')
 VIEWS = {'days', 'day', 'high_days', 'high_day', 'high_item',
-         'cycles', 'cycle', 'demo_stats', 'max_steps', 'max_step_day', 'archive'} | FACTUAL_VIEWS
+         'cycles', 'cycle', 'high_cycles', 'high_cycle', 'demo_stats',
+         'max_steps', 'max_step_day', 'archive'} | FACTUAL_VIEWS
 DAY_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 ITEM_PATTERN = re.compile(r'^[0-9a-f]{16}$')
 CURSOR_PATTERN = re.compile(r'^\d{1,16}-\d{1,16}$')
@@ -78,6 +79,11 @@ def _cycle(entry, index, detailed=False):
         'outcome': entry.get('outcome'),
         'net_cents': entry.get('net_cents'),
         'steps': len(entry.get('rounds') or []),
+        'strategy': entry.get('strategy', 'classic'),
+        'cashout_multiplier': entry.get('cashout_multiplier', '2'),
+        'reference_threshold': entry.get('reference_threshold'),
+        'reference_coefficient': entry.get('reference_coefficient'),
+        'wait_rounds': entry.get('wait_rounds'),
     }
     if detailed:
         result.update({
@@ -262,7 +268,7 @@ async def history(authorization, gate, token, query=''):
         if (view in {'day', 'high_day', 'max_step_day',
                      'archive_day', 'archive_high_day', 'archive_high_item', 'archive_max_step_day'} and day is None or
             view in {'high_item', 'archive_high_item', 'archive_cycle'} and item_id is None or
-            view == 'cycle' and index is None):
+            view in {'cycle', 'high_cycle'} and index is None):
             raise ValueError('Required parameter missing')
     except (ValueError, KeyError, TypeError):
         return json_response('400 Bad Request', {'error': 'Некорректные параметры истории.'})
@@ -282,10 +288,12 @@ async def history(authorization, gate, token, query=''):
         stored = await redis_for_reset.hgetall(f'luckyjet:history:user-reset:{uid}')
         markers = {_string(k): _reset_info(v) for k, v in stored.items()}
 
-    if view in {'cycles', 'cycle', 'demo_stats', 'max_steps', 'max_step_day'}:
+    if view in {'cycles', 'cycle', 'high_cycles', 'high_cycle', 'demo_stats', 'max_steps', 'max_step_day'}:
         ledger = gate.demo_ledgers.get(uid) or DemoLedger()
         cycle_marker = markers.get('cycles')
-        eligible = [(i, record) for i, record in enumerate(ledger.history)
+        is_high = view in {'high_cycles', 'high_cycle'}
+        current_history = ledger.high_history if is_high else ledger.history
+        eligible = [(i, record) for i, record in enumerate(current_history)
                     if _after_cycle_reset(record, cycle_marker)]
         if view == 'demo_stats':
             result = _demo_stats(ledger, [record for _, record in eligible])
@@ -325,14 +333,16 @@ async def history(authorization, gate, token, query=''):
                     for key in days[page*10:page*10+10]],
                 'total': len(days), 'page': page, 'view_reset': bool(marker),
             })
-        if view == 'cycles':
+        if view in {'cycles', 'high_cycles'}:
             return json_response('200 OK', {
                 'view': view, 'total': len(eligible), 'page': page,
                 'items': [_cycle(row, i) for i, row in eligible[page*10:page*10+10]],
             })
-        if index >= len(ledger.history) or not _after_cycle_reset(ledger.history[index], cycle_marker):
+        if index >= len(current_history) or not _after_cycle_reset(current_history[index], cycle_marker):
             return json_response('404 Not Found', {'error': 'Цикл не найден.'})
-        return json_response('200 OK', {'view': view, 'item': _cycle(ledger.history[index], index, detailed=True)})
+        return json_response('200 OK', {
+            'view': view, 'item': _cycle(current_history[index], index, detailed=True),
+        })
 
     stats = getattr(gate, 'coefficient_stats', None)
     if stats is None or stats.redis is None:

@@ -2,13 +2,13 @@ import sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from datetime import datetime, timezone
-from luckyjet_signal.demo_ledger import DemoLedger
+from luckyjet_signal.demo_ledger import DemoLedger, VLADIVOSTOK_TZ
 
 
 def test_daily_max_survives_cycle_end_restart_and_reset():
     ledger=DemoLedger(enabled=True, trigger_streak=2)
     for value in [1,1,1,1,2]: ledger.process_round(value)
-    day=datetime.now(timezone.utc).astimezone(__import__('datetime').timezone(__import__('datetime').timedelta(hours=7))).date().isoformat()
+    day=datetime.now(VLADIVOSTOK_TZ).date().isoformat()
     assert ledger.daily_max_steps[day] == 3
     restored=DemoLedger(**ledger.dump())
     assert restored.daily_max_steps == ledger.daily_max_steps
@@ -16,10 +16,10 @@ def test_daily_max_survives_cycle_end_restart_and_reset():
     assert restored.daily_max_steps == {}
 
 
-def test_midnight_uses_thai_day_and_full_session_step_number():
+def test_midnight_uses_vladivostok_day_and_full_session_step_number():
     ledger=DemoLedger(enabled=True,active=True)
-    ledger.process_round(1, now=datetime(2026,11,6,16,59,tzinfo=timezone.utc))
-    ledger.process_round(2, now=datetime(2026,11,6,17,1,tzinfo=timezone.utc))
+    ledger.process_round(1, now=datetime(2026,11,6,13,59,tzinfo=timezone.utc))
+    ledger.process_round(2, now=datetime(2026,11,6,14,1,tzinfo=timezone.utc))
     assert ledger.daily_max_steps == {'2026-11-06':2,'2026-11-07':2}
 
 

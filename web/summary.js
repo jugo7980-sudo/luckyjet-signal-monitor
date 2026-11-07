@@ -109,17 +109,19 @@
     setText('ind-average', coefText(curr.average));
     setText('ind-maximum', coefText(curr.maximum));
     setText('ind-below-two', curr.below_two);
-    setText('ind-previous-count', prev.count);
+    setText('ind-previous-count', quality.complete_comparison ? prev.count : null);
     setText('ind-compare', quality.complete_comparison
       ? (curr.count - prev.count > 0 ? '+' : '') + (curr.count - prev.count) : '—');
     renderMatches(data.matches || [], data.match_rows_limited);
-    const missingIntervals = (curr.count ?? 0) < 2 || !curr.intervals_count;
     for (const id of ['ind-average-interval', 'ind-min-interval', 'ind-max-interval']) {
       const metric = byId(id);
-      metric.closest('.ind-stat')?.setAttribute('data-missing', String(metric.textContent === '—'));
+      const missing = metric.textContent === '—';
+      metric.closest('.ind-stat')?.setAttribute('data-missing', String(missing));
       const hint = byId(id + '-hint');
-      if (hint) hint.textContent = missingIntervals
-        ? 'Нужно хотя бы 2 совпадения без разрыва архива.'
+      if (hint) hint.textContent = missing
+        ? (curr.count ?? 0) < 2
+          ? 'Нужно хотя бы 2 совпадения без разрыва архива.'
+          : 'Промежуток между X не подтверждён из-за отсутствующих данных.'
         : id === 'ind-average-interval' ? 'Среднее число раундов между найденными X.'
         : id === 'ind-min-interval' ? 'Самый короткий подтверждённый промежуток между X.'
         : 'Самый длинный подтверждённый промежуток между X.';

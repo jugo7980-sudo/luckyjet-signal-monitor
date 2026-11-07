@@ -36,9 +36,9 @@ def test_screenshot_six_rounds_are_maximum_six_not_demo_step():
         assert ledger.daily_max_steps == {}  # DEMO steps are not invented.
 
 
-def test_records_every_step_one_two_and_six_across_bangkok_midnight():
+def test_records_every_step_one_two_and_six_across_vladivostok_midnight():
     ledger = DemoLedger(enabled=False, trigger_streak=6)
-    before = datetime(2026, 11, 7, 16, 59, tzinfo=timezone.utc)
+    before = datetime(2026, 11, 7, 13, 59, tzinfo=timezone.utc)
     after = before + timedelta(minutes=3)
     for coefficient, expected in [("1.25", 1), ("1.12x", 2), ("1.34", 3)]:
         assert ledger.track_max_step(coefficient, now=before)

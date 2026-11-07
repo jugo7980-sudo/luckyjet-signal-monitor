@@ -60,7 +60,7 @@ class HistoryPanels:
         try:
             result = await self.request(
                 "sendMessage",
-                {"chat_id": chat_id, "text": "📊", "reply_markup": markup},
+                {"chat_id": chat_id, "text": HISTORY_PANEL_TITLE, "reply_markup": markup},
             )
             message_id = result.get("result", {}).get("message_id")
             if message_id is None:

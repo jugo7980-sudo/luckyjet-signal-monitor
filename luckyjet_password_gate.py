@@ -757,7 +757,7 @@ class TelegramPasswordGate(HistoryPanels):
             return False
 
     def _daily_days_screen(self, user_id, page):
-        values=self._demo_ledger(user_id).daily_max_steps
+        values=self._demo_ledger(user_id).daily_max_low_streak
         dates=sorted(values,reverse=True); pages=max(1,(len(dates)+9)//10); page=min(page,pages-1)
         rows=[[button(f"{datetime.strptime(day,'%Y-%m-%d'):%d.%m.%Y} · {values[day]} шаг.",f"demo_daily:{day}")] for day in dates[page*10:page*10+10]]
         rows+=pager(page,pages,lambda p:f'demo_daily_days:{p}')
@@ -769,7 +769,7 @@ class TelegramPasswordGate(HistoryPanels):
     def _demo_daily_screen(self, user_id, day=None):
         today = datetime.now(THAILAND_TIME).date()
         selected = datetime.strptime(day, "%Y-%m-%d").date() if day else today
-        value = self._demo_ledger(user_id).daily_max_steps.get(selected.isoformat())
+        value = self._demo_ledger(user_id).daily_max_low_streak.get(selected.isoformat())
         text = (f"📊 Максимальный шаг за сутки\n{selected:%d.%m.%Y}\n"
                 + (f"Максимальный шаг: {value}" if value else "Нет сохранённых данных за этот день.")
                 + "\nВремя Таиланда, UTC+7")

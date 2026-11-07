@@ -20,6 +20,7 @@ from redis.asyncio import from_url
 from playwright.async_api import async_playwright
 
 from round_archive import RoundArchive
+from archive_watchdog import watchdog_loop
 from luckyjet_signal import monitor
 from luckyjet_signal.demo_mode import wrap_click_demo_mode
 from luckyjet_source_guard import install_source_guard
@@ -116,8 +117,10 @@ async def main_async():
     archive = RoundArchive(redis, name)
     install_source_guard(monitor)
     monitor.click_demo_mode = wrap_click_demo_mode(monitor.click_demo_mode)
+    watcher = None
     try:
         await redis.ping()
+        watcher = asyncio.create_task(watchdog_loop(redis, name))
         async with XrayManager() as xray:
             await xray.start_from_env()
             monitor.game_proxy = xray.proxy_url
@@ -138,6 +141,9 @@ async def main_async():
             finally:
                 monitor.game_proxy = None
     finally:
+        if watcher is not None:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
         await redis.aclose()
 
 

@@ -193,7 +193,7 @@ class TargetStreakStrategy:
         record = {
             'round_id': str(round_id), 'coefficient': str(multiplier),
             'stake_cents': stake, 'payout_cents': 0,
-            'balance_after_cents': balance,
+            'balance_after_cents': balance, 'observed_at': at,
         }
         self.rounds.append(record)
         if multiplier >= self.target:

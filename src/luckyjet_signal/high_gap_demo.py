@@ -288,7 +288,7 @@ class HighGapStrategy:
         record = {
             'round_id': str(round_id), 'coefficient': str(multiplier),
             'stake_cents': self.stake_cents, 'payout_cents': 0,
-            'balance_after_cents': balance,
+            'balance_after_cents': balance, 'observed_at': at,
         }
         self.rounds.append(record)
         if multiplier >= self.target:

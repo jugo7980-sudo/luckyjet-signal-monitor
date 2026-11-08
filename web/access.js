@@ -9,6 +9,12 @@
   const headline = document.getElementById('access-headline');
   const explanation = document.getElementById('access-explanation');
   const nativeRegister = document.getElementById('access-register');
+  const nativeLogin = document.getElementById('access-telegram-login');
+  const accountLogout = document.getElementById('account-logout');
+  const accountLogoutConfirm = document.getElementById('account-logout-confirm');
+  const accountLogoutButton = document.getElementById('account-logout-confirm-button');
+  const accountLogoutCancel = document.getElementById('account-logout-cancel');
+  const accountLogoutStatus = document.getElementById('account-logout-status');
   const widget = document.getElementById('telegram-login-widget');
   const keyForm = document.getElementById('access-premium-form');
   const keyInput = document.getElementById('access-key');
@@ -20,6 +26,13 @@
   let busy = false;
   let widgetLoaded = false;
   let previousFocus = null;
+
+  function toggleLogoutConfirm(show) {
+    if (!accountLogoutConfirm) return;
+    accountLogoutConfirm.hidden = !show;
+    accountLogout?.setAttribute('aria-expanded', String(show));
+    if (!show && accountLogoutStatus) accountLogoutStatus.textContent = '';
+  }
 
   const authHeaders = () => app && app.initData ? {Authorization: 'tma ' + app.initData} : {};
   async function api(method = 'GET', payload) {
@@ -53,16 +66,24 @@
       accountStatus.dataset.state = data.premium ? 'good' : 'warn';
     }
     premium.hidden = !data.registered || data.premium;
+    nativeLogin.hidden = !(Boolean(app && app.initData) && data.signed_out === true);
+    document.querySelectorAll('.access-open').forEach(button => {
+      button.textContent = data.signed_out ? 'Войти через Telegram' : 'Войти / Получить доступ';
+    });
+    if (data.signed_out) toggleLogoutConfirm(false);
     document.getElementById('header-premium').hidden = !data.premium;
     if (data.premium) window.renderDemoBalance?.({balance_cents:data.balance_cents, currency:data.currency, balance_verified:data.balance_verified});
     else document.getElementById('header-balance').textContent = '—';
     nativeRegister.hidden = !(data.verified && !data.registered);
     keyForm.hidden = !(data.registered && !data.premium);
     logout.hidden = !data.verified || Boolean(app && app.initData);
-    widget.hidden = Boolean(data.verified);
+    widget.hidden = Boolean(data.verified || (app && app.initData));
     if (data.premium) {
       headline.textContent = 'Premium активирован';
       explanation.textContent = 'Полный доступ к сводке, истории, DEMO и настройкам открыт.';
+    } else if (data.signed_out) {
+      headline.textContent = 'Войти через Telegram';
+      explanation.textContent = 'Вы вышли из LuckyJet. Для восстановления доступа нажми кнопку входа. Premium и данные сохранены.';
     } else if (data.registered) {
       headline.textContent = 'Активировать Premium';
       explanation.textContent = 'Введи Premium-ключ или пароль доступа к Telegram-боту.';
@@ -94,6 +115,8 @@
     busy = true;
     message.textContent = 'Проверка…';
     nativeRegister.disabled = true;
+    nativeLogin.disabled = true;
+    if (accountLogoutButton) accountLogoutButton.disabled = true;
     keyForm.querySelector('button').disabled = true;
     try {
       const result = await api('POST', action);
@@ -101,13 +124,19 @@
       message.textContent = action.action === 'premium'
         ? 'Premium активирован.' : action.action === 'register'
           ? 'Telegram подтверждён. Для полного доступа активируй Premium.'
-          : action.action === 'logout' ? 'Выход выполнен.' : 'Вход подтверждён.';
+          : action.action === 'logout' ? 'Выход из LuckyJet выполнен.'
+          : 'Вход подтверждён.';
+      if (action.action === 'logout') toggleLogoutConfirm(false);
       if (result.premium) hideModal();
     } catch (err) {
-      message.textContent = err.name === 'AbortError' ? 'Сервер не ответил.' : err.message;
+      const errorText = err.name === 'AbortError' ? 'Сервер не ответил.' : err.message;
+      message.textContent = errorText;
+      if (action.action === 'logout' && accountLogoutStatus) accountLogoutStatus.textContent = errorText;
     } finally {
       busy = false;
       nativeRegister.disabled = false;
+      nativeLogin.disabled = false;
+      if (accountLogoutButton) accountLogoutButton.disabled = false;
       keyForm.querySelector('button').disabled = false;
     }
   }
@@ -157,6 +186,10 @@
     }
   });
   nativeRegister.addEventListener('click', () => submit({action: 'register'}));
+  nativeLogin.addEventListener('click', () => submit({action: 'login'}));
+  accountLogout?.addEventListener('click', () => toggleLogoutConfirm(true));
+  accountLogoutCancel?.addEventListener('click', () => toggleLogoutConfirm(false));
+  accountLogoutButton?.addEventListener('click', () => submit({action: 'logout'}));
   keyForm.addEventListener('submit', e => {
     e.preventDefault();
     const key = keyInput.value.trim();

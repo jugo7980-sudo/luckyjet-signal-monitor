@@ -89,6 +89,9 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
             target_max=str(self.target_max), next_target=str(self.next_target()),
             last_bet_win=(bool(self.rounds) and
                           int(self.rounds[-1].get('payout_cents') or 0) > 0),
+            last_bet_profit_cents=(int(self.rounds[-1].get('payout_cents') or 0) -
+                                   int(self.rounds[-1].get('stake_cents') or 0)
+                                   if self.rounds else 0),
             session_net_cents=(sum(int(r.get('payout_cents') or 0)
                                    for r in self.rounds) - self.total_stake_cents),
             mode='autobet')

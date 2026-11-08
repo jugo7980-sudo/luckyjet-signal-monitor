@@ -55,7 +55,13 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
                             high.update({'reference': values['reference'],
                                          'target': values['target'],
                                          'wait_rounds': values['wait_rounds'],
-                                         'stake_cents': 1000})
+                                         'stake_cents': 1000,
+                                         'bets_limit_enabled': values['bets_limit_enabled'],
+                                         'bets_limit': values['bets_limit'],
+                                         'active_filter_enabled': values['active_filter_enabled'],
+                                         'active_filter_threshold': values['active_filter_threshold'],
+                                         'active_filter_window': values['active_filter_window'],
+                                         'active_filter_limit': values['active_filter_limit']})
                         if payload['action'] == 'high_gap_toggle':
                             high.update({'enabled': not high['enabled'],
                                          'phase': 'waiting', 'reference_value': '134.20',
@@ -111,6 +117,14 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
             await page.locator('#high-gap-filter-enabled').check()
             await page.locator('#high-gap-filter-threshold').fill('10')
             await page.locator('#high-gap-filter-limit').fill('999999999999999999999999')
+            assert not await page.locator('#high-gap-session-safety').evaluate('(n) => n.open')
+            await page.locator('#high-gap-session-safety > summary').click()
+            await page.locator('#high-gap-bets-limit-enabled').check()
+            await page.locator('#high-gap-bets-limit').fill('120')
+            await page.locator('#high-gap-active-filter-enabled').check()
+            await page.locator('#high-gap-active-filter-window').fill('50')
+            await page.locator('#high-gap-active-filter-threshold').fill('10')
+            await page.locator('#high-gap-active-filter-limit').fill('7')
             await page.locator('#high-gap-save').click()
             await page.get_by_text('Сохранено.', exact=True).wait_for()
             assert posted[0] == {'action': 'high_gap_config', 'value': {
@@ -118,6 +132,10 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
                 'target': '1.50', 'stake': '1000',
                 'filter_enabled': True, 'filter_threshold': '10',
                 'filter_limit': '999999999999999999999999',
+                'bets_limit_enabled': True, 'bets_limit': 120,
+                'active_filter_enabled': True,
+                'active_filter_threshold': '10', 'active_filter_window': 50,
+                'active_filter_limit': 7,
             }}
             await page.locator('#high-gap-toggle').click()
             from playwright.async_api import expect

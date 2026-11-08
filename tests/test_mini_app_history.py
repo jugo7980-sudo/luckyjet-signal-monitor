@@ -187,7 +187,7 @@ def test_history_static_asset_and_mobile_flow():
                         body="window.accessState={premium:true,registered:true,username:'tester'};document.body.dataset.access='premium';window.canUsePremium=()=>true;window.refreshAccessOverview?.();")
                     return
                 url = request.request.url
-                if url.endswith('/history.js'):
+                if url.split('?', 1)[0].endswith('/history.js'):
                     await request.fulfill(content_type='application/javascript', body=response('/history.js')[2])
                 elif url.startswith('https://example.test/app'):
                     await request.fulfill(content_type='text/html', body=response('/app')[2])

@@ -747,7 +747,9 @@
         currency = c.currency || 'USD';
         const reasons = {recovered: 'Цель достигнута', safe_limit: 'Сейф: лимит проигрышей', insufficient_balance: 'Недостаточно баланса',
           incomplete_data: 'Неполные данные', stopped_by_user: 'Остановлена пользователем',
-          reference_changed: 'Новый опорный коэффициент'};
+          reference_changed: 'Новый опорный коэффициент',
+          bet_limit: 'Сейв: лимит ставок',
+          active_filter_limit: 'Сейв: фильтр X во время ставок'};
         heading(archive ? 'Цикл DEMO' : view === 'recovery_cycle' ? 'Стратегия №4 · цикл'
           : view === 'target_cycle' ? 'Стратегия №3 · цикл'
           : view === 'high_cycle' ? 'Стратегия №2 · цикл' :

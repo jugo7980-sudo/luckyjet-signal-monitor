@@ -177,6 +177,11 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             await page.locator('#demo-trigger-select').select_option('10')
             await page.locator('#demo-stake-input').fill('25.50')
             await page.locator('#demo-stake-save').click()
+            # An async control refresh can temporarily disable or fold the panel.
+            await page.wait_for_function(
+                "document.querySelector('#demo-reset') && !document.querySelector('#demo-reset').disabled")
+            if not await page.locator('#demo-classic-accordion').evaluate('(node) => node.open'):
+                await page.locator('#demo-classic-accordion summary').click()
             await page.locator('#demo-reset').click()
             await page.locator('#demo-reset-currency').select_option('RUB')
             await page.locator('#demo-reset-balance').fill('50000')

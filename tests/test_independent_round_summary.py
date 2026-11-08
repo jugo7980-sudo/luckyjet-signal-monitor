@@ -208,6 +208,9 @@ def test_browser_summary_independent_from_recent_tiles_and_demo():
             await page.locator("#summary-accordion summary").click()
             await page.wait_for_function("document.querySelector('#ind-found').textContent==='3'")
             assert requests[0] == {"rounds": ["150"], "target": ["150"], "since": ["150"]}
+            # The summary redraws several independent fields; do not read the
+            # second one before its asynchronous DOM update is complete.
+            await page.wait_for_function("document.querySelector('#ind-since-count').textContent==='47'")
             assert await page.locator("#ind-since-count").inner_text() == "47"
             assert await page.locator("#ind-compare").inner_text() == "+1"
             assert await page.locator("#ind-summary-matches .ind-summary-match").count() == 1

@@ -41,9 +41,12 @@ def changed_events(before, after, completed=None):
     if before.get('phase') == 'betting' and previous_steps == 0 and new_wager:
         results.append('betting')
     if before.get('phase') == 'betting' and new_wager and (
-            not completed or
+            (not completed and not after.get('last_bet_win')) or
             (completed_rounds and not completed_rounds[-1].get('payout_cents'))):
         results.append('loss')
+    if (before.get('phase') == 'betting' and new_wager and not completed
+            and after.get('continuous_session') and after.get('last_bet_win')):
+        results.append('goal')
     if completed and completed.get('outcome') == 'recovered':
         results.append('goal')
     elif completed and completed.get('outcome') == 'safe_limit':
@@ -76,6 +79,10 @@ def format_event(event, state, currency, completed=None):
                 f'Проигрышей: {completed.get("losses", len(completed.get("rounds") or []))}\n'
                 f'Чистый итог: {format_money(completed.get("net_cents"), currency)}\n'
                 f'Новый вход: после {trigger} подряд ниже x{x}')
+    if event == 'goal' and not completed and state.get('continuous_session'):
+        return (f'Стратегия №4 · ставка выиграна, сессия продолжается\\n'
+                f'Чистая прибыль ставки: {format_money(state.get("last_bet_profit_cents", 0), currency)}\\n'
+                f'Следующий целевой X: x{state.get("next_target", x)}')
     if event == 'goal' and completed:
         result = completed.get('net_cents')
         return (f'Стратегия №4 · целевой X достигнут, цикл завершён\n'

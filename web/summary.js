@@ -254,15 +254,20 @@
     popup.hidden = true;
     popupReturnFocus?.focus();
   }
-  document.querySelectorAll('[data-summary-help-for]').forEach(control => {
-    control.addEventListener('click', () => {
-      const source = byId(control.getAttribute('data-summary-help-for'));
-      popupTitle.textContent = control.getAttribute('aria-label') || 'Справка';
-      popupText.textContent = source?.textContent?.trim() || 'Пояснение пока недоступно.';
-      popupReturnFocus = control;
-      popup.hidden = false;
-      byId('summary-metric-close').focus();
-    });
+  // One delegated handler also supports metrics and notes inserted after a History refresh.
+  document.addEventListener('click', event => {
+    const control = event.target.closest?.('[data-summary-help-for], [data-help-text]');
+    if (!control) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const source = control.hasAttribute('data-summary-help-for')
+      ? byId(control.getAttribute('data-summary-help-for')) : null;
+    const detail = source?.textContent?.trim() || control.getAttribute('data-help-text') || '';
+    popupTitle.textContent = control.getAttribute('aria-label') || 'Справка';
+    popupText.textContent = detail || 'Пояснение пока недоступно.';
+    popupReturnFocus = control;
+    popup.hidden = false;
+    byId('summary-metric-close').focus();
   });
   byId('summary-metric-close').addEventListener('click', closeMetricPopup);
   popup.addEventListener('click', event => { if (event.target === popup) closeMetricPopup(); });

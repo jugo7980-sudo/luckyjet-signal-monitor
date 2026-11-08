@@ -305,7 +305,7 @@ async def controls(authorization, gate, token, method='GET', body=None):
                 currency=ledger.currency,
             ):
                 return json_response('409 Conflict', {
-                    'error': 'Недопустимый X (1.01–1.49) или активный цикл.',
+                    'error': 'Недопустимый X (1.01–10000) или активный цикл.',
                 })
             if ledger.recovery_streak.enabled:
                 await _seed_recovery_streak(gate.redis, ledger)

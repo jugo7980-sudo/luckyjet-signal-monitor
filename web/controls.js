@@ -117,8 +117,9 @@
     document.getElementById('recovery-streak-state-detail').textContent =
       'Старт после ' + (recovery.trigger ?? 3) + ' результатов подряд ниже x' + x +
       '. Первая ставка: ' + window.formatDemoMoney(recovery.stake_cents ?? 0, currency) +
-      '. После проигрышей цель — вернуть все потери плюс первоначальную ставку. ' +
-      'При x менее 2 первая успешная ставка приносит меньше первоначальной суммы.';
+      '. После проигрыша снова ждём ' + (recovery.trigger ?? 3) +
+      ' новых подряд ниже x' + x + '. Следующая ставка покрывает потери; ' +
+      'дополнительной цели прибыли нет.';
   }
   window.renderRecoveryStreakSnapshot = renderRecoveryStreak;
   function message(text, error = false) {

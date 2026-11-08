@@ -557,7 +557,7 @@ button:active:not(:disabled){transform:scale(.985)}
 #page-history .history-help{position:absolute;top:13px;right:16px;z-index:3;background:transparent;overflow:visible;border:0}
 #page-history{position:relative}
 #page-history .history-help>summary{display:flex;align-items:center;justify-content:center;min-height:27px;padding:2px;cursor:pointer;border:0}
-#page-history .history-help[open]{right:10px;width:min(290px,calc(100% - 30px));padding:4px;border-radius:12px;background:#2e233d}
+#page-history .history-help[open]{position:relative;inset:auto;right:auto;width:100%;box-sizing:border-box;margin:4px 0 9px;padding:4px;border-radius:12px;background:#2e233d}
 #page-history .history-help[open]>summary{justify-content:flex-end}
 #page-history .history-help #history-explainer{margin:5px;padding:9px;font-size:11px;line-height:1.5}
 .ui-circle-help{display:inline-grid;place-items:center;width:21px;height:21px;border:1px solid #6e5988;border-radius:50%;font-size:12px;color:#d9c7eb}

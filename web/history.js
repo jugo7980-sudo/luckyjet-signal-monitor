@@ -234,14 +234,14 @@
         heading(formatDay(data.day), 'История Кэф · Владивосток, UTC+10');
         if (!archive && data.view_reset) note('Данные после сброса.');
         if (data.truncated || !data.summary) { note('Неполные данные: превышен предел проверки.'); break; }
-        info('Всего раундов', s.total ?? 0);
-        info('<2x', s.lt2_tracking ? (s.lt2 ?? 0) : 'Нет данных',
-          s.lt2_partial ? 'С обновления' : '');
+        info('Раундов в прежней сводке', s.total ?? 'Нет данных');
         const distribution = data.distribution;
         if (!distribution || !distribution.complete_scan || !distribution.counts) {
           note('Распределение по X недоступно: архив за дату превышает предел безопасной проверки либо отсутствует.');
         } else {
           heading('Распределение коэффициентов');
+          if (Number(s.total) !== Number(distribution.total))
+            note('В прежней сводке и фактическом архиве разное число раундов. Ниже учитываются только записи архива.');
           note('Каждый сохранённый раунд учитывается один раз. Диапазон x5 = 5.00–5.99x.');
           const counts = distribution.counts;
           const total = Number(distribution.total) || 0;

@@ -67,6 +67,9 @@ def test_mobile_archive_and_reset_controls():
             await page.route('**/*', route)
             await page.goto('https://example.test/app')
             await page.locator('nav [data-tab=history]').click()
+            await page.locator('#history-content .history-date-search').wait_for(state='attached')
+            assert not await page.locator('#history-content .history-date-search').evaluate('(n) => n.open')
+            await page.locator('#history-content .history-date-search summary').click()
             await page.locator('#history-date').wait_for(state='visible')
             assert await page.locator('#history-date').input_value() != ''
             assert not await page.locator('#history-pager').is_visible()

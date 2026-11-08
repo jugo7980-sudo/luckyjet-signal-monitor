@@ -12,6 +12,13 @@
   let latest = null;
   const all = [...document.querySelectorAll('[data-control]')];
   const highPanel = document.getElementById('high-gap-panel');
+  const targetPanel = document.getElementById('target-streak-panel');
+  const targetHelpToggle = document.getElementById('target-streak-help-toggle');
+  targetHelpToggle?.addEventListener('click', () => {
+    const expanded = targetHelpToggle.getAttribute('aria-expanded') === 'true';
+    targetHelpToggle.setAttribute('aria-expanded', String(!expanded));
+    document.getElementById('target-streak-help-body').hidden = expanded;
+  });
   const highHelpToggle = document.getElementById('high-gap-help-toggle');
   highHelpToggle?.addEventListener('click', () => {
     const expanded = highHelpToggle.getAttribute('aria-expanded') === 'true';
@@ -57,6 +64,31 @@
         output].filter(Boolean).join('. ');
   }
   window.renderHighGapSnapshot = renderHighGap;
+  function renderTargetStreak(target = {}, currency = 'USD', balanceVerified = true) {
+    const enabled = Boolean(target.enabled);
+    const phase = target.phase || 'waiting';
+    const x = target.target || '1.57';
+    const summary = !enabled ? 'Выключена'
+      : phase === 'paused_gap' ? 'Пауза · разрыв архива'
+      : phase === 'paused_funds' ? 'Пауза · недостаточно баланса'
+      : phase === 'betting' ? 'Ставки · ' + (target.steps ?? 0)
+      : 'Серия <x' + x + ': ' + (target.streak ?? 0) + '/' + (target.trigger ?? 3);
+    document.getElementById('demo-target-preview').textContent = summary;
+    document.getElementById('target-streak-state').textContent = summary;
+    const next = target.next_stake_cents ?? target.stake_cents ?? 0;
+    document.getElementById('target-streak-progress').textContent = enabled
+      ? 'Автовывод x' + x + ' · Следующая ставка: ' + window.formatDemoMoney(next, currency)
+      : 'Автовывод x' + x;
+    document.getElementById('target-streak-outcome').textContent = (balanceVerified === false
+      ? 'Баланс не подтверждён. ' : '') +
+      (target.last_outcome ? 'Последний цикл: ' + target.last_outcome : '');
+    document.getElementById('target-streak-state-detail').textContent =
+      'Старт после ' + (target.trigger ?? 3) + ' результатов подряд ниже x' + x +
+      '. Первая ставка: ' + window.formatDemoMoney(target.stake_cents ?? 0, currency) +
+      '. После проигрышей цель — вернуть все потери плюс первоначальную ставку. ' +
+      'При x менее 2 первая успешная ставка приносит меньше первоначальной суммы.';
+  }
+  window.renderTargetStreakSnapshot = renderTargetStreak;
   function message(text, error = false) {
     const target = !document.getElementById('page-demo').hidden ? demoStatus : settingsStatus;
     target.textContent = String(text || '');
@@ -100,6 +132,7 @@
       : 'Выключена';
     demoPanel.hidden = false;
     highPanel.hidden = false;
+    targetPanel.hidden = false;
     settingsPanel.hidden = false;
     probeArea.hidden = !data.admin;
     if (data.probe) showProbe(data.probe);
@@ -122,6 +155,21 @@
         'Текущая серия <2x: ' + demo.low_streak + ' из ' + demo.trigger;
     const high = data.high_gap || {};
     renderHighGap(high, demo.currency, demo.balance_verified);
+    const target = data.target_streak || {};
+    renderTargetStreak(target, demo.currency, demo.balance_verified);
+    document.getElementById('target-streak-toggle').textContent =
+      target.enabled ? 'Выключить стратегию №3' : 'Включить стратегию №3';
+    for (const [id, val] of Object.entries({
+      'target-streak-x': target.target || '1.57',
+      'target-streak-trigger': target.trigger ?? 3,
+      'target-streak-stake': ((target.stake_cents ?? demo.base_stake_cents) / 100)
+        .toFixed(demo.currency === 'KRW' ? 0 : 2),
+    })) {
+      const field = document.getElementById(id);
+      if (document.activeElement !== field) field.value = String(val);
+    }
+    document.getElementById('target-streak-stake-label').textContent =
+      'Первая ставка, ' + (demo.currency || 'USD');
     document.getElementById('high-gap-toggle').textContent = high.enabled ?
       'Выключить стратегию №2' : 'Включить стратегию №2';
     const fields = {
@@ -164,12 +212,25 @@
       document.getElementById('settings-high-' + name).textContent =
         (highEvents[name] ?? fallback) ? 'ВКЛ' : 'ВЫКЛ';
     }
+    const targetPrefs = data.target_streak_notifications || {};
+    const targetEvents = targetPrefs.events || {};
+    const targetEnabled = targetPrefs.enabled !== false;
+    document.getElementById('target-streak-notice-preview').textContent = targetEnabled ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('settings-target-enabled').textContent = targetEnabled ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('settings-target-sound').textContent = targetPrefs.sound !== false ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('settings-target-delete').value = String(targetPrefs.delete_delay ?? 10);
+    for (const [name, fallback] of Object.entries({armed:true,betting:true,loss:false,goal:true,stopped:true})) {
+      document.getElementById('settings-target-' + name).textContent =
+        (targetEvents[name] ?? fallback) ? 'ВКЛ' : 'ВЫКЛ';
+    }
     for (const node of all) node.disabled = busy || (
       demo.active && (node.id === 'demo-trigger-select' || node.id === 'demo-stake-input' ||
         node.id === 'demo-stake-save' || (node.id === 'demo-toggle' && demo.enabled))
     ) || (high.active && ['high-gap-reference', 'high-gap-wait',
       'high-gap-filter-enabled', 'high-gap-filter-threshold', 'high-gap-filter-limit',
-      'high-gap-target', 'high-gap-stake', 'high-gap-save'].includes(node.id));
+      'high-gap-target', 'high-gap-stake', 'high-gap-save'].includes(node.id)) ||
+      (target.active && ['target-streak-x', 'target-streak-trigger',
+        'target-streak-stake', 'target-streak-save'].includes(node.id));
   }
   async function request(method = 'GET', payload) {
     if (!window.canUsePremium?.()) throw new Error('Требуется Premium.');
@@ -276,6 +337,17 @@
     action('high_gap_config', {reference, wait_rounds: Number(waitText), target, stake,
       filter_enabled, filter_threshold, filter_limit});
   });
+  document.getElementById('target-streak-toggle').addEventListener('click', () =>
+    action('target_streak_toggle'));
+  document.getElementById('target-streak-save').addEventListener('click', () => {
+    const target = document.getElementById('target-streak-x').value.trim();
+    const trigger = Number(document.getElementById('target-streak-trigger').value);
+    const stake = document.getElementById('target-streak-stake').value.trim();
+    if (!target || !stake || !Number.isInteger(trigger) || trigger < 2 || trigger > 10) {
+      message('Проверь целевой X, серию и первую ставку.', true); return;
+    }
+    action('target_streak_config', {target, trigger, stake});
+  });
   const resetModal = document.getElementById('demo-reset-modal');
   const resetForm = document.getElementById('demo-reset-form');
   const resetCurrency = document.getElementById('demo-reset-currency');
@@ -336,6 +408,14 @@
       'click', () => action('high_gap_notice_event', event));
   }
   document.getElementById('settings-high-test').addEventListener('click', () => action('high_gap_notice_test'));
+  document.getElementById('settings-target-enabled').addEventListener('click', () => action('target_notice_toggle'));
+  document.getElementById('settings-target-sound').addEventListener('click', () => action('target_notice_sound'));
+  selectAction('settings-target-delete', 'target_notice_delete_delay');
+  for (const event of ['armed','betting','loss','goal','stopped']) {
+    document.getElementById('settings-target-' + event).addEventListener(
+      'click', () => action('target_notice_event', event));
+  }
+  document.getElementById('settings-target-test').addEventListener('click', () => action('target_notice_test'));
   document.getElementById('settings-notifications').addEventListener('click', () => action('notifications_toggle'));
   document.getElementById('settings-sound').addEventListener('click', () => action('sound_toggle'));
   selectAction('settings-threshold', 'notification_threshold');
@@ -350,7 +430,7 @@
     generation++;
     latest = null; loadedAt = 0;
     resetModal.hidden = true;
-    demoPanel.hidden = true; highPanel.hidden = true; settingsPanel.hidden = true;
+    demoPanel.hidden = true; highPanel.hidden = true; targetPanel.hidden = true; settingsPanel.hidden = true;
     probeArea.hidden = true;
     demoStatus.textContent = 'Нет доступа';
     settingsStatus.textContent = 'Нет доступа';

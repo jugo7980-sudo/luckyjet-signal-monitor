@@ -11,6 +11,7 @@ from luckyjet_signal.demo_ledger import MAX_HISTORY
 ARCHIVE_CYCLES = 'luckyjet:demo:archive:cycles:'
 ARCHIVE_ENTRIES = 'luckyjet:demo:archive:entries:'
 HIGH_COMPLETED = 'luckyjet:demo:high_completed_cycles'
+TARGET_COMPLETED = 'luckyjet:demo:target_completed_cycles'
 
 
 def _cycle_archival_record(entry):
@@ -32,6 +33,7 @@ class DemoPersistence:
     def __init__(self):
         self.saved_history = {}
         self.saved_high_history = {}
+        self.saved_target_history = {}
         self.locks = {}
 
     async def save(self, redis, user_id, ledger):
@@ -46,13 +48,16 @@ class DemoPersistence:
             pipe = redis.pipeline()
             histories = {}
             high_histories = {}
+            target_histories = {}
             for uid, ledger in ledgers.items():
                 state = ledger.dump()
                 state_history = state.pop('history')
                 high_state_history = state.pop('high_history', [])
+                target_state_history = state.pop('target_history', [])
                 pending_archive = state.pop('pending_archive_cycles', [])
                 history = json.dumps(state_history, separators=(',', ':'))
                 high_history = json.dumps(high_state_history, separators=(',', ':'))
+                target_history = json.dumps(target_state_history, separators=(',', ':'))
                 raw = json.dumps(state, separators=(',', ':'))
                 pipe.hset('luckyjet:demo_sessions', uid, raw)
                 if self.saved_history.get(str(uid)) != history:
@@ -79,6 +84,18 @@ class DemoPersistence:
                                 pipe.hsetnx(ARCHIVE_ENTRIES + str(uid), key, payload)
                                 pipe.zadd(ARCHIVE_CYCLES + str(uid), {key: stamp}, nx=True)
                     high_histories[str(uid)] = high_history
+                if target_state_history or self.saved_target_history.get(str(uid)) is not None:
+                    if self.saved_target_history.get(str(uid)) != target_history:
+                        pipe.hset(TARGET_COMPLETED, uid, target_history)
+                        if hasattr(pipe, 'hsetnx') and hasattr(pipe, 'zadd'):
+                            for entry in target_state_history:
+                                record = _cycle_archival_record(entry)
+                                if record is None:
+                                    continue
+                                key, stamp, payload = record
+                                pipe.hsetnx(ARCHIVE_ENTRIES + str(uid), key, payload)
+                                pipe.zadd(ARCHIVE_CYCLES + str(uid), {key: stamp}, nx=True)
+                    target_histories[str(uid)] = target_history
                 if hasattr(pipe, 'hsetnx') and hasattr(pipe, 'zadd'):
                     for entry in pending_archive:
                         record = _cycle_archival_record(entry)
@@ -91,6 +108,7 @@ class DemoPersistence:
             await pipe.execute()
             self.saved_history.update(histories)
             self.saved_high_history.update(high_histories)
+            self.saved_target_history.update(target_histories)
             for ledger in ledgers.values():
                 ledger.pending_archive_cycles.clear()
 
@@ -141,6 +159,29 @@ class DemoPersistence:
             self.saved_high_history[str(uid)] = raw
             if hasattr(redis, 'zadd') and hasattr(redis, 'hsetnx'):
                 for entry in ledger.high_history:
+                    record = _cycle_archival_record(entry)
+                    if record is None:
+                        continue
+                    key, stamp, payload = record
+                    await redis.hsetnx(ARCHIVE_ENTRIES + str(uid), key, payload)
+                    await redis.zadd(ARCHIVE_CYCLES + str(uid), {key: stamp}, nx=True)
+
+        target_histories = await redis.hgetall(TARGET_COMPLETED)
+        for uid, raw in target_histories.items():
+            ledger = ledgers.get(int(uid))
+            if ledger is None:
+                continue
+            try:
+                records = json.loads(raw)
+                if not isinstance(records, list) or any(not isinstance(x, dict) for x in records):
+                    raise ValueError('Invalid Strategy 3 history')
+            except (ValueError, TypeError):
+                logging.getLogger(__name__).error('Corrupt Strategy 3 history skipped')
+                continue
+            ledger.target_history = records[:MAX_HISTORY]
+            self.saved_target_history[str(uid)] = raw
+            if hasattr(redis, 'zadd') and hasattr(redis, 'hsetnx'):
+                for entry in ledger.target_history:
                     record = _cycle_archival_record(entry)
                     if record is None:
                         continue

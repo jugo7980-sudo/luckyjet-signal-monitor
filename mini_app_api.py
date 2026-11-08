@@ -172,5 +172,6 @@ async def overview(authorization, gate, token, query=''):
                  'base_stake_cents': ledger.base_stake_cents, 'active': ledger.active,
                  'step': len(ledger.cycle_rounds) + 1 if ledger.active else None,
                  'trigger': ledger.trigger_streak,
-                 'high_gap': ledger.high_gap.public()},
+                 'high_gap': ledger.high_gap.public(),
+                 'target_streak': ledger.target_streak.public(ledger.currency)},
     })

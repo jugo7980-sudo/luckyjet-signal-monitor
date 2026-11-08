@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 from .demo_money import CURRENCIES, valid_amount, format_money
 from .high_gap_demo import HighGapStrategy
+from .target_streak_demo import TargetStreakStrategy
 
 
 DEFAULT_BALANCE_CENTS = 1_000_000  # $10,000.00
@@ -62,9 +63,14 @@ class DemoLedger:
         self.cycle_rounds = list(state.get("cycle_rounds", []))[-100:]
         self.history = list(state.get("history", []))
         self.high_history = list(state.get("high_history") or [])[:MAX_HISTORY]
+        self.target_history = list(state.get("target_history") or [])[:MAX_HISTORY]
         self.pending_archive_cycles = list(state.get("pending_archive_cycles") or [])
         self.high_gap = HighGapStrategy(
             state.get("high_gap"), min_stake=self.minimum_stake_cents,
+            default_stake=self.base_stake_cents,
+        )
+        self.target_streak = TargetStreakStrategy(
+            state.get("target_streak"), currency=self.currency,
             default_stake=self.base_stake_cents,
         )
         self.daily_max_steps = dict(state.get("daily_max_steps", {}))
@@ -141,6 +147,8 @@ class DemoLedger:
             "cycle_rounds": self.cycle_rounds,
             "history": self.history,
             "high_history": self.high_history,
+            "target_history": self.target_history,
+            "target_streak": self.target_streak.dump(),
             "pending_archive_cycles": self.pending_archive_cycles,
             "high_gap": self.high_gap.dump(),
             "daily_max_steps": self.daily_max_steps,
@@ -217,6 +225,11 @@ class DemoLedger:
             not high_committed or
             self.balance_cents >= legacy_commit + self.high_gap.stake_cents
         )
+        # Funding precedence: existing Strategy 1, then Strategy 2, then #3.
+        # Reserve simultaneous pre-result stakes before any of them settles.
+        high_commit = self.high_gap.stake_cents if high_committed and high_funded else 0
+        target_funded = (self.balance_cents >= legacy_commit + high_commit +
+                         self.target_streak.next_stake_cents)
         event = self.process_round(coefficient, now=now) if self.enabled and not before_reset else None
         if not before_reset:
             self.balance_cents, high_cycle = self.high_gap.on_round(
@@ -226,6 +239,13 @@ class DemoLedger:
             if high_cycle is not None:
                 self.high_history.insert(0, high_cycle)
                 self.high_history = self.high_history[:MAX_HISTORY]
+            self.balance_cents, target_cycle = self.target_streak.on_round(
+                coefficient, round_id=identifier, balance=self.balance_cents,
+                currency=self.currency, now=now, allow_funding=target_funded,
+            )
+            if target_cycle is not None:
+                self.target_history.insert(0, target_cycle)
+                self.target_history = self.target_history[:MAX_HISTORY]
         self.last_archived_round_id = identifier
         if position is not None:
             self.last_archived_stream_id = str(stream_id)
@@ -304,6 +324,8 @@ class DemoLedger:
         old_currency = self.currency
         high_was_enabled = self.high_gap.enabled
         high_settings = self.high_gap.dump()
+        target_was_enabled = self.target_streak.enabled
+        target_settings = self.target_streak.dump()
         # Preserve every available pre-reset cycle, including any that was
         # open at the moment of reset. The saved current journal still clears.
         if self.active:
@@ -315,7 +337,23 @@ class DemoLedger:
             if closed:
                 self.high_history.insert(0, closed)
                 self.high_history = self.high_history[:MAX_HISTORY]
-        pending = self.pending_archive_cycles + self.history + self.high_history
+        if self.target_streak.rounds:
+            closed = self.target_streak.stop(balance=self.balance_cents, currency=self.currency)
+            if closed:
+                self.target_history.insert(0, closed)
+                self.target_history = self.target_history[:MAX_HISTORY]
+        pending = self.pending_archive_cycles + self.history + self.high_history + self.target_history
+        target_settings['enabled'] = target_was_enabled
+        target_settings['phase'] = 'waiting'
+        target_settings['streak'] = 0
+        target_settings['rounds'] = []
+        target_settings['started_at'] = None
+        target_settings['balance_before_cents'] = None
+        target_settings['total_stake_cents'] = 0
+        target_settings['next_stake_cents'] = target_settings['stake_cents']
+        if currency != old_currency:
+            target_settings['stake_cents'] = base_stake_cents
+            target_settings['next_stake_cents'] = base_stake_cents
         # Reset never silently changes the user's on/off preference.
         high_settings["enabled"] = high_was_enabled
         high_settings["phase"] = "waiting_reference"
@@ -341,6 +379,8 @@ class DemoLedger:
             consecutive_below_two=ongoing_streak,
             high_gap=high_settings,
             high_history=[],
+            target_streak=target_settings,
+            target_history=[],
             pending_archive_cycles=pending,
             last_archived_round_id=last_round_id,
             last_archived_stream_id=last_stream_id,

@@ -16,11 +16,15 @@ from mini_app_api import json_response, telegram_user
 from luckyjet_signal.demo_ledger import DemoLedger, TRIGGER_OPTIONS, parse_dollars
 from luckyjet_signal.demo_money import MAX_AMOUNT
 from high_gap_notifications import EVENTS as HIGH_GAP_NOTICE_EVENTS, DELETE_DELAYS as HIGH_GAP_NOTICE_DELAYS, normalize as normalize_high_gap_notices
+from target_streak_notifications import EVENTS as TARGET_NOTICE_EVENTS, DELETE_DELAYS as TARGET_NOTICE_DELAYS, normalize as normalize_target_notices
 
 
 ACTIONS = {
     'demo_toggle', 'demo_trigger', 'demo_stake', 'demo_reset',
     'high_gap_toggle', 'high_gap_config',
+    'target_streak_toggle', 'target_streak_config',
+    'target_notice_toggle', 'target_notice_sound', 'target_notice_delete_delay',
+    'target_notice_event', 'target_notice_test',
     'high_gap_notice_toggle', 'high_gap_notice_sound',
     'high_gap_notice_delete_delay', 'high_gap_notice_event', 'high_gap_notice_test',
     'notifications_toggle', 'sound_toggle', 'notification_threshold',
@@ -55,6 +59,8 @@ def snapshot(gate, uid):
             'next_stake_cents': ledger.next_stake_cents if ledger.active else None,
         },
         'high_gap': ledger.high_gap.public(),
+        'target_streak': ledger.target_streak.public(ledger.currency),
+        'target_streak_notifications': normalize_target_notices(gate.target_notice_settings.get(uid)),
         'high_gap_notifications': normalize_high_gap_notices(gate.high_gap_notice_settings.get(uid)),
         'settings': {
             'notifications': uid not in gate.notifications_disabled,
@@ -113,6 +119,24 @@ async def _seed_high_gap(redis, ledger):
         after_anchor.append(coefficient)
         elapsed += 1
     return False
+
+async def _seed_target_streak(redis, ledger):
+    """Seed the current streak from confirmed history, never charge old bets."""
+    if redis is None or not ledger.last_archived_stream_id:
+        return False
+    events = await redis.xrevrange(STREAM_KEY, max=ledger.last_archived_stream_id,
+                                   count=ledger.target_streak.trigger + 2)
+    prior = []
+    for _id, fields in events:
+        if fields.get('type') in ('gap', 'baseline'):
+            break
+        if fields.get('type') == 'round':
+            prior.append(fields.get('coefficient'))
+        if len(prior) >= ledger.target_streak.trigger:
+            break
+    ledger.target_streak.seed_streak(prior)
+    return True
+
 
 async def controls(authorization, gate, token, method='GET', body=None):
     if not authorization.startswith('tma '):
@@ -180,6 +204,47 @@ async def controls(authorization, gate, token, method='GET', body=None):
                 return json_response('429 Too Many Requests', {'error': 'Повторная проверка через минуту.'})
             probe.start()
             message = 'Проверка запущена. Результат появится после чтения страницы мониторинга.'
+        elif action == 'target_streak_toggle':
+            strategy = ledger.target_streak
+            if strategy.enabled:
+                finished = strategy.stop(balance=ledger.balance_cents,
+                                         currency=ledger.currency)
+                if finished:
+                    ledger.target_history.insert(0, finished)
+                    ledger.target_history = ledger.target_history[:100]
+            else:
+                if ledger.balance_verified is False:
+                    return json_response('409 Conflict', {
+                        'error': 'Баланс не подтверждён. Сначала сбрось DEMO.',
+                    })
+                if not ledger.last_archived_stream_id:
+                    return json_response('409 Conflict', {
+                        'error': 'Ожидание первого подтверждённого раунда.',
+                    })
+                strategy.reset_progress()
+                strategy.enabled = True
+                await _seed_target_streak(gate.redis, ledger)
+            await gate._persist_demo(uid)
+        elif action == 'target_streak_config':
+            if not isinstance(value, dict) or set(value) != {'target', 'trigger', 'stake'}:
+                return json_response('400 Bad Request', {
+                    'error': 'Укажи целевой X, серию подряд и первую ставку.',
+                })
+            amount = parse_money(value['stake'], ledger.currency)
+            if (amount is None or not isinstance(value['target'], str)
+                    or type(value['trigger']) is not int
+                    or amount > ledger.balance_cents):
+                return json_response('400 Bad Request', {'error': 'Проверь ставку и параметры.'})
+            if not ledger.target_streak.configure(
+                target=value['target'], trigger=value['trigger'], stake_cents=amount,
+                currency=ledger.currency,
+            ):
+                return json_response('409 Conflict', {
+                    'error': 'Недопустимый X (1.01–10000) или активный цикл.',
+                })
+            if ledger.target_streak.enabled:
+                await _seed_target_streak(gate.redis, ledger)
+            await gate._persist_demo(uid)
         elif action == 'high_gap_toggle':
             if ledger.high_gap.enabled:
                 completed = ledger.high_gap.stop(
@@ -280,6 +345,37 @@ async def controls(authorization, gate, token, method='GET', body=None):
             gate.demo_ledgers[uid] = replacement
             gate._demo_history_views.pop(uid, None)
             message = 'DEMO сброшено вместе с историей и статистикой.'
+        elif action in {'target_notice_toggle', 'target_notice_sound',
+                         'target_notice_delete_delay', 'target_notice_event'}:
+            prefs = normalize_target_notices(gate.target_notice_settings.get(uid))
+            if action == 'target_notice_toggle':
+                prefs['enabled'] = not prefs['enabled']
+            elif action == 'target_notice_sound':
+                prefs['sound'] = not prefs['sound']
+            elif action == 'target_notice_delete_delay':
+                if type(value) is not int or value not in TARGET_NOTICE_DELAYS:
+                    return json_response('400 Bad Request', {'error': 'Удаление: 0, 10, 30 или 60 секунд.'})
+                prefs['delete_delay'] = value
+            else:
+                if not isinstance(value, str) or value not in TARGET_NOTICE_EVENTS:
+                    return json_response('400 Bad Request', {'error': 'Недопустимое событие №3.'})
+                prefs['events'][value] = not prefs['events'][value]
+            gate.target_notice_settings[uid] = prefs
+            await gate._persist_user(uid)
+        elif action == 'target_notice_test':
+            if gate.chats.get(uid) != uid or not callable(gate.request):
+                return json_response('409 Conflict', {'error': 'Открой личный чат бота через /start.'})
+            sent = getattr(gate, '_mini_app_target_test_sent_at', None)
+            if sent is None:
+                gate._mini_app_target_test_sent_at = sent = {}
+            now = time.monotonic()
+            if now - sent.get(uid, float('-inf')) < 30:
+                return json_response('429 Too Many Requests', {'error': 'Тест доступен раз в 30 секунд.'})
+            if not await gate._send_target_notice(uid, 'test',
+                    'Тест уведомлений стратегии №3', test=True):
+                return json_response('502 Bad Gateway', {'error': 'Telegram не принял сообщение.'})
+            sent[uid] = now
+            message = 'Тест уведомлений стратегии №3 отправлен.'
         elif action in {'high_gap_notice_toggle', 'high_gap_notice_sound',
                         'high_gap_notice_delete_delay', 'high_gap_notice_event'}:
             prefs = normalize_high_gap_notices(gate.high_gap_notice_settings.get(uid))
@@ -374,6 +470,7 @@ async def controls(authorization, gate, token, method='GET', body=None):
             gate.notifications_disabled.discard(uid)
             gate.silent_users.discard(uid)
             gate.high_gap_notice_settings.pop(uid, None)
+            gate.target_notice_settings.pop(uid, None)
             await gate._persist_user(uid)
             message = 'Настройки восстановлены; DEMO сохранено.'
         return json_response('200 OK', {'message': message, **snapshot(gate, uid)})

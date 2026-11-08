@@ -715,8 +715,9 @@
           item('Статистика DEMO', 'Результаты по сохранённым сессиям',
             () => navigate(viewFor('demo_stats'), data.day ? {day: data.day} : {}, true));
         }
-        if (!data.items.length) note('Завершённых циклов пока нет.');
         const cycleListStart = root.childNodes.length;
+        // Keep an expandable cycle-history section even when its list is empty.
+        if (!data.items.length) note('Завершённых циклов пока нет.');
         for (const c of data.items) {
           currency = c.currency || 'USD';
           const result = c.outcome === 'incomplete_data' || c.net_cents == null
@@ -860,6 +861,9 @@
     }
   }
   async function navigate(view, extra = {}, push = false) {
+    // Archive/reset never remains expanded after entering another history view.
+    const management = document.getElementById('history-management');
+    if (management) management.open = false;
     if (push && current) stack.push({data: current, args: {...args}, folds: openedFoldIds()});
     const restoring = !push && view === args.view ? openedFoldIds() : [];
     const nextArgs = {view, page: 0, ...extra};
@@ -1040,6 +1044,7 @@
     }
   };
   window.openHistoryTab = () => {
+    document.getElementById('history-management').open = false;
     if (!current || Date.now() - lastLoad > 30000) navigate(args.view, {...args});
   };
   window.openHighGapHistory = () => {
@@ -1047,14 +1052,26 @@
     stack = []; current = null;
     navigate('high_cycles');
   };
-  window.openStrategyHistory = number => {
+  window.openStrategyHistory = async number => {
     const index = Number(number) - 1;
     const keys = ['classic', 'high_gap', 'target_streak', 'recovery_streak'];
     const views = ['cycles', 'high_cycles', 'target_cycles', 'recovery_cycles'];
     if (!Number.isInteger(index) || index < 0 || index >= keys.length) return;
+    const view = views[index];
     openDemoStrategy = keys[index];
+    document.getElementById('history-management').open = false;
     stack = []; current = null;
-    navigate(views[index]);
+    // Select and load this strategy, rather than opening generic history.
+    // Await the actual response before expanding; a stale request can't open it.
+    await navigate(view);
+    if (args.view !== view || openDemoStrategy !== keys[index] ||
+        document.getElementById('page-history').hidden || !current) return;
+    const cycles = root.querySelector('#history-demo-cycles');
+    if (cycles) {
+      cycles.open = true;
+      setPager(current);
+      cycles.scrollIntoView({block:'start', behavior:'instant'});
+    }
   };
   window.historyBackInApp = goBack;
   window.resetHistoryCache = () => {

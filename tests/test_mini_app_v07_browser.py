@@ -105,3 +105,121 @@ def test_guest_locks_and_premium_telegram_upgrade_mobile_browser():
             await browser.close()
 
     asyncio.run(run())
+
+
+def test_telegram_logout_persists_after_reload_and_explicit_login_restores_premium():
+    from playwright.async_api import async_playwright, expect
+    from urllib.parse import urlparse
+
+    async def run():
+        async with async_playwright() as p:
+            browser=await p.chromium.launch(headless=True)
+            page=await browser.new_page(viewport={'width':390,'height':844})
+            errors,actions=[],[]
+            signed_out=False
+            private_calls=[]
+            page.on('pageerror',lambda e:errors.append(str(e)))
+
+            async def route(req):
+                nonlocal signed_out
+                url=urlparse(req.request.url)
+                path=url.path
+                if path=='/app':
+                    await req.fulfill(content_type='text/html',body=response('/app')[2])
+                elif path in ('/access.js','/history.js','/controls.js','/summary.js',
+                              '/admin.js','/site.js','/strategy-tiles.js'):
+                    await req.fulfill(content_type='application/javascript',
+                                      body=response(path)[2])
+                elif path=='/api/access':
+                    if req.request.method=='POST':
+                        action=req.request.post_data_json.get('action')
+                        actions.append(action)
+                        if action=='logout':
+                            signed_out=True
+                        elif action=='login':
+                            signed_out=False
+                    data=({'verified':False,'registered':False,'premium':False,
+                           'username':None,'signed_out':True,'balance_cents':None}
+                          if signed_out else
+                          {'verified':True,'registered':True,'premium':True,
+                           'username':'tester_42','currency':'KRW','balance_cents':7018500,
+                           'balance_verified':True})
+                    await req.fulfill(content_type='application/json',body=json.dumps(data))
+                elif path=='/api/public':
+                    await req.fulfill(content_type='application/json',
+                        body=json.dumps({'coefficients':['1.10x','1.33x'],
+                                         'limit':20,'last_round_at':None}))
+                elif path in ('/api/overview','/api/controls','/api/history',
+                              '/api/round-summary','/api/admin','/api/site'):
+                    private_calls.append(path)
+                    if signed_out:
+                        await req.fulfill(status=401,content_type='application/json',
+                            body='{"error":"Сначала войди через Telegram."}')
+                    elif path=='/api/overview':
+                        await req.fulfill(content_type='application/json',
+                            body=json.dumps({'coefficients':['1.10x','1.33x'],
+                                'status':{'fresh':True,'age_seconds':1},
+                                'demo':{'balance_cents':7018500,'currency':'KRW',
+                                  'enabled':False,'active':False,
+                                  'balance_verified':True,'base_stake_cents':100000,
+                                  'trigger':3},'last_round_at':None}))
+                    elif path=='/api/controls':
+                        await req.fulfill(content_type='application/json',
+                            body=json.dumps({'demo':{'currency':'KRW','enabled':False,
+                                'active':False,'balance_cents':7018500,
+                                'balance_verified':True,'base_stake_cents':100000,
+                                'trigger':3},'settings':{'notifications':True,'sound':True,
+                                'threshold':3,'history_size':20,'delete_delay':10}}))
+                    elif path=='/api/history':
+                        await req.fulfill(content_type='application/json',
+                            body='{"view":"days","days":[],"items":[],"total":0,"page":0}')
+                    else:
+                        await req.fulfill(status=403,content_type='application/json',
+                            body='{"error":"Недоступно."}')
+                else:
+                    await req.fulfill(content_type='application/javascript',
+                        body="window.Telegram={WebApp:{initData:'fixture',ready(){},"
+                             "expand(){},setHeaderColor(){},setBackgroundColor(){},"
+                             "close(){},BackButton:{onClick(){},hide(){},show(){}},"
+                             "HapticFeedback:{selectionChanged(){}}}}")
+
+            await page.route('**/*',route)
+            await page.goto('https://example.test/app')
+            await page.wait_for_function("document.body.dataset.access === 'premium'")
+            await page.locator('nav [data-tab=account]').click()
+            await expect(page.locator('#account-logout')).to_be_visible()
+            await page.locator('#account-logout').click()
+            await expect(page.locator('#account-logout-confirm')).to_be_visible()
+            await page.locator('#account-logout-cancel').click()
+            await expect(page.locator('#account-logout-confirm')).to_be_hidden()
+            assert actions==[]  # Cancel does not revoke auth.
+            await page.locator('#account-logout').click()
+            await page.locator('#account-logout-confirm-button').click()
+            await page.wait_for_function("document.body.dataset.access === 'guest'")
+            assert actions==['logout']
+            await expect(page.locator('#header-balance')).to_have_text('—')
+            await expect(page.locator('#account-logout-card')).to_be_hidden()
+            await expect(page.locator('#page-account .access-open')).to_have_text(
+                'Войти через Telegram')
+            count=len(private_calls)
+
+            # New navigation/reload stays signed out even though Telegram initData
+            # is still present. No private account data should be fetched.
+            await page.reload()
+            await page.wait_for_function("document.body.dataset.access === 'guest'")
+            await page.locator('nav [data-tab=account]').click()
+            await expect(page.locator('#account-logout-card')).to_be_hidden()
+            await expect(page.locator('#page-account .access-open')).to_be_visible()
+            assert len(private_calls)==count
+            await page.locator('#page-account .access-open').click()
+            await expect(page.locator('#access-telegram-login')).to_be_visible()
+            await page.locator('#access-telegram-login').click()
+            await page.wait_for_function("document.body.dataset.access === 'premium'")
+            assert actions==['logout','login']
+            await expect(page.locator('#header-balance')).not_to_have_text('—')
+            await expect(page.locator('#account-logout')).to_be_visible()
+            assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            assert not errors,errors
+            await browser.close()
+
+    asyncio.run(run())

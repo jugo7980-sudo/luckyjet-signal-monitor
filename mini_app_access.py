@@ -20,6 +20,9 @@ SESSION_AGE = 30 * 86400
 SESSION_COOKIE = 'lj_session'
 SESSION_KEY = 'luckyjet:web_session:after-reset-20261107:'
 REGISTRY_KEY = 'luckyjet:web_registered'
+# Per-Telegram-ID Mini App sign-out state.  Does NOT revoke the actual Premium
+# membership, delete DEMO, or affect Telegram's own sign-in.
+APP_LOGOUT_PREFIX = 'luckyjet:web_signed_out:v1:'
 AUTH_DAYS = 30
 LIMITS = {'20', '30', '50', '100'}
 
@@ -94,9 +97,26 @@ def _sign_tma(uid, bot_token):
 
 
 async def effective_auth(authorization, cookie, gate, token):
+    """Do not authorize private endpoints while a LuckyJet account is signed out.
+
+    Signed Telegram initData is still a valid identity credential, but a
+    deliberate LuckyJet logout must keep private APIs locked after reload.
+    The access endpoint verifies the same Telegram signature separately and
+    exposes an explicit re-login action.
+    """
     if authorization.startswith('tma '):
+        try:
+            uid = telegram_user(authorization[4:], token)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return authorization  # Let the endpoint return its usual 401.
+        if (gate is not None and gate.redis is not None and
+                await gate.redis.exists(APP_LOGOUT_PREFIX + str(uid))):
+            return ''
         return authorization
     uid = await cookie_user(cookie, gate)
+    if (uid and gate is not None and gate.redis is not None and
+            await gate.redis.exists(APP_LOGOUT_PREFIX + str(uid))):
+        return ''
     return _sign_tma(uid, token) if uid and token else ''
 
 
@@ -176,6 +196,10 @@ async def access(authorization, cookie, gate, bot_token, method='GET', body=None
     if method == 'GET':
         if not profile:
             return json_response('200 OK', await _status(gate, None))
+        if await gate.redis.exists(APP_LOGOUT_PREFIX + str(profile['id'])):
+            return json_response('200 OK', {
+                **(await _status(gate, None)), 'signed_out': True,
+            })
         saved = await _registered(gate.redis, profile['id'])
         if saved:
             profile = {**saved, **{k: v for k,v in profile.items() if v}}
@@ -201,6 +225,7 @@ async def access(authorization, cookie, gate, bot_token, method='GET', body=None
         if uid in gate.blocked and not gate.is_admin(uid):
             return json_response('403 Forbidden', {'error': 'Доступ заблокирован.'})
         await gate.redis.hset(REGISTRY_KEY, str(uid), json.dumps(signed_profile))
+        await gate.redis.delete(APP_LOGOUT_PREFIX + str(uid))
         session = secrets.token_urlsafe(32)
         await gate.redis.setex(_redis_session_key(session), SESSION_AGE, str(uid))
         return _no_store_response('200 OK', await _status(gate, signed_profile, registered=True),
@@ -211,6 +236,21 @@ async def access(authorization, cookie, gate, bot_token, method='GET', body=None
     uid = profile['id']
     if uid in gate.blocked and not gate.is_admin(uid):
         return json_response('403 Forbidden', {'error': 'Доступ заблокирован.'})
+
+    # Explicit Mini App login restores only this LuckyJet account's access
+    # session. It must NOT re-grant/revoke Premium or reset any stored data.
+    if action == 'login' and set(data) == {'action'}:
+        if not authorization.startswith('tma '):
+            return json_response('400 Bad Request', {'error': 'Войди через Telegram.'})
+        await gate.redis.delete(APP_LOGOUT_PREFIX + str(uid))
+        registered = await _registered(gate.redis, uid)
+        if registered:
+            profile = {**registered, **{k: v for k, v in profile.items() if v}}
+        return json_response('200 OK', await _status(gate, profile, registered=bool(registered)))
+
+    if (await gate.redis.exists(APP_LOGOUT_PREFIX + str(uid)) and
+            action != 'logout'):
+        return json_response('401 Unauthorized', {'error': 'Сначала войди через Telegram.'})
 
     if action == 'register' and set(data) == {'action'}:
         await gate.redis.hset(REGISTRY_KEY, str(uid), json.dumps(profile))
@@ -253,11 +293,16 @@ async def access(authorization, cookie, gate, bot_token, method='GET', body=None
         return json_response('200 OK', await _status(gate, profile, registered=True))
 
     if action == 'logout' and set(data) == {'action'}:
-        # Logout ends website browser session; it does not revoke Premium membership.
+        # End the LuckyJet session, not the Telegram identity or Premium grant.
+        if authorization.startswith('tma '):
+            await gate.redis.set(APP_LOGOUT_PREFIX + str(uid), '1')
+            return json_response('200 OK', {
+                **(await _status(gate, None)), 'signed_out': True,
+            })
         secret = _cookie_token(cookie)
-        if secret and not authorization.startswith('tma '):
+        if secret:
             await gate.redis.delete(_redis_session_key(secret))
             return _no_store_response('200 OK', await _status(gate, None),
                 {'Set-Cookie': f'{SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'})
-        return json_response('409 Conflict', {'error': 'В Telegram вход выполняется автоматически.'})
+        return json_response('401 Unauthorized', {'error': 'Сначала войди через Telegram.'})
     return json_response('400 Bad Request', {'error': 'Неизвестная команда.'})

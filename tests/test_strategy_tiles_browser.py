@@ -15,6 +15,8 @@ def test_four_live_tiles_sheet_and_navigation_on_small_phones():
             for width in (390, 320):
                 page = await browser.new_page(viewport={'width': width, 'height': 844})
                 errors, actions, history_views = [], [], []
+                overview_gate = {'hold': False}
+                overview_started, overview_release = asyncio.Event(), asyncio.Event()
                 page.on('pageerror', lambda e: errors.append(str(e)))
                 tiles = [
                     {'id':1,'enabled':True,'phase':'waiting','progress':'3/5','stake_cents':100000,
@@ -56,11 +58,17 @@ def test_four_live_tiles_sheet_and_navigation_on_small_phones():
                     elif path in ('/site.js','/admin.js'):
                         await req.fulfill(content_type='application/javascript', body='')
                     elif path == '/api/overview':
-                        await req.fulfill(content_type='application/json',
-                            body=json.dumps({'coefficients':['1.20x','1.38x'],'last_round_at':1794000000,
-                                'strategy_tiles':tiles,'demo':demo,
-                                'status':{'age_seconds':1,'fresh':True,'streak_count':0,
-                                          'threshold':3,'uptime_seconds':120}}))
+                        # Freeze a pre-action GET and deliver it after the POST
+                        # to reproduce the race that reverted power colors.
+                        body = json.dumps({'coefficients':['1.20x','1.38x'],
+                            'last_round_at':1794000000,'strategy_tiles':tiles,'demo':demo,
+                            'status':{'age_seconds':1,'fresh':True,'streak_count':0,
+                                      'threshold':3,'uptime_seconds':120}})
+                        if overview_gate['hold']:
+                            overview_gate['hold'] = False
+                            overview_started.set()
+                            await overview_release.wait()
+                        await req.fulfill(content_type='application/json', body=body)
                     elif path == '/api/controls':
                         if req.request.method == 'POST':
                             action = req.request.post_data_json['action']
@@ -110,11 +118,42 @@ def test_four_live_tiles_sheet_and_navigation_on_small_phones():
                 assert abs(buttons[1]['width'] - buttons[2]['width']) < 2
                 assert buttons[0]['x'] < buttons[1]['x'] < buttons[2]['x']
                 assert await page.locator('#strategy-sheet-power').get_attribute('data-enabled') == 'false'
+                async def power_css():
+                    return await page.locator('#strategy-sheet-power').evaluate("""node => {
+                        const style = getComputedStyle(node);
+                        return {rgb: style.backgroundColor.match(/\\d+/g).slice(0,3).map(Number),
+                                opacity: Number(style.opacity)};
+                    }""")
+                off = await power_css()
+                assert off['rgb'][0] > off['rgb'][1], off  # red OFF, not neutral
+                assert off['opacity'] == 1
+                # Start a stale poll BEFORE pressing ON; release it AFTER POST.
+                overview_gate['hold'] = True
+                await asyncio.wait_for(overview_started.wait(), timeout=6)
                 await page.locator('#strategy-sheet-power').click()
                 await expect(page.locator('#strategy-sheet-power')).to_have_attribute('data-enabled','true')
+                on = await power_css()
+                assert on['rgb'][1] > on['rgb'][0], on  # green ON
+                assert on['opacity'] == 1
                 assert actions[-1] == 'recovery_streak_toggle'
+                await page.evaluate("""() => {
+                    window.__powerWentRedAgain = false;
+                    new MutationObserver(() => {
+                        if (document.getElementById('strategy-sheet-power').dataset.enabled === 'false')
+                            window.__powerWentRedAgain = true;
+                    }).observe(document.getElementById('strategy-sheet-power'),
+                               {attributes:true, attributeFilter:['data-enabled']});
+                }""")
+                overview_release.set()
+                await page.wait_for_timeout(280)
+                assert not await page.evaluate('window.__powerWentRedAgain')
+                on = await power_css()
+                assert on['rgb'][1] > on['rgb'][0], on
                 await page.locator('#strategy-sheet-power').click()
                 await expect(page.locator('#strategy-sheet-power')).to_have_attribute('data-enabled','false')
+                off_again = await power_css()
+                assert off_again['rgb'][0] > off_again['rgb'][1], off_again
+                assert off_again['opacity'] == 1
                 assert '1' in await page.locator('#strategy-sheet-result').inner_text()
 
                 # Main navigation remains clickable while overlay is present.

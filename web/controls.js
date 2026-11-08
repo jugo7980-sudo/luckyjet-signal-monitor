@@ -79,8 +79,10 @@
     window.renderDemoBalance?.(data.demo);
     const demo = data.demo, settings = data.settings;
     const quality = document.getElementById('demo-quality');
-    quality.textContent = demo.balance_verified === false ? 'Не подтверждён' : 'По архиву';
-    quality.dataset.state = demo.balance_verified === false ? 'warn' : 'good';
+    quality.textContent = demo.balance_verified === false ? 'Не подтверждён'
+      : demo.balance_verified === true ? 'По архиву' : 'Проверка';
+    quality.dataset.state = demo.balance_verified === false ? 'warn'
+      : demo.balance_verified === true ? 'good' : 'unknown';
     document.getElementById('demo-quality-help').textContent = demo.balance_verified === false
       ? 'Баланс DEMO не подтверждён: источник пропустил раунды. Точная сумма неизвестна.'
       : 'Виртуальный баланс рассчитан по доступным сохранённым раундам. Полнота истории самой игры не доказана.';

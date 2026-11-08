@@ -100,28 +100,40 @@
     const enabled = Boolean(recovery.enabled);
     const phase = recovery.phase || 'waiting';
     const x = recovery.target || '1.32';
+    const endX = recovery.target_max || x;
+    const floating = Boolean(recovery.continuous_session);
+    const displayRange = floating && endX !== x ? x + '–' + endX : x;
+    const counted = recovery.counted_losses ?? recovery.losses ?? 0;
+    const safe = recovery.safe_losses ?? 2;
     const summary = !enabled ? 'Выключена'
       : phase === 'paused_gap' ? 'Пауза · разрыв архива'
       : phase === 'paused_funds' ? 'Пауза · недостаточно баланса'
       : phase === 'betting' ? 'Автоставки · ' + (recovery.steps ?? 0) +
-        (recovery.safe_losses === 0 ? ' · сейф выкл' :
-          ' · сейф ' + (recovery.losses ?? 0) + '/' + (recovery.safe_losses ?? 2))
+        (safe === 0 ? ' · сейв выкл' : ' · сейв ' + counted + '/' + safe)
       : 'Серия <x' + x + ': ' + (recovery.streak ?? 0) + '/' + (recovery.trigger ?? 3);
     document.getElementById('demo-recovery-preview').textContent = summary;
     document.getElementById('recovery-streak-state').textContent = summary;
     const next = recovery.next_stake_cents ?? recovery.stake_cents ?? 0;
+    const nextX = floating ? (recovery.next_target || x) : x;
     document.getElementById('recovery-streak-progress').textContent = enabled
-      ? 'Автовывод x' + x + ' · Следующая ставка: ' + window.formatDemoMoney(next, currency)
-      : 'Автовывод x' + x;
+      ? 'X ' + displayRange + ' · Следующий x' + nextX +
+        ' · Ставка: ' + window.formatDemoMoney(next, currency)
+      : 'Диапазон x' + displayRange;
+    const running = floating && phase === 'betting'
+      ? ' · Итог сессии: ' +
+        window.formatDemoMoney(recovery.session_net_cents ?? 0, currency) : '';
     document.getElementById('recovery-streak-outcome').textContent = (balanceVerified === false
       ? 'Баланс не подтверждён. ' : '') +
-      (recovery.last_outcome ? 'Последний цикл: ' + recovery.last_outcome : '');
+      (recovery.last_outcome ? 'Последний цикл: ' + recovery.last_outcome : '') + running;
     document.getElementById('recovery-streak-state-detail').textContent =
       'Старт после ' + (recovery.trigger ?? 3) + ' результатов подряд ниже x' + x +
       '. Фиксированная ставка: ' + window.formatDemoMoney(recovery.stake_cents ?? 0, currency) +
-      '. После входа ставка идёт КАЖДЫЙ раунд до целевого X' +
-      (recovery.safe_losses === 0 ? ' (сейф выключен).' :
-      ' или ' + (recovery.safe_losses ?? 2) + ' проигрышей (сейф).') +
+      '. ' + (floating
+        ? 'Каждый раунд до срабатывания сейва. Выигрыш не завершает сессию. X заранее меняется в диапазоне x' +
+          displayRange + ' (минимум, середина, максимум). Сейв: ' +
+          (safe === 0 ? 'выключен' : counted + '/' + safe +
+            (recovery.safe_mode === 'consecutive' ? ' проигрышей подряд' : ' проигрышей за сессию')) + '.'
+        : 'После входа ставка идёт каждый раунд до целевого X или сейва.') +
       ' После закрытия сессии снова ожидается первоначальный сигнал.';
   }
   window.renderRecoveryStreakSnapshot = renderRecoveryStreak;
@@ -214,8 +226,10 @@
       recovery.enabled ? 'Выключить стратегию №4' : 'Включить стратегию №4';
     for (const [id, val] of Object.entries({
       'recovery-streak-x': recovery.target || '1.32',
+      'recovery-streak-x-max': recovery.target_max || recovery.target || '1.32',
       'recovery-streak-trigger': recovery.trigger ?? 3,
       'recovery-streak-safe': recovery.safe_losses ?? 2,
+      'recovery-streak-safe-mode': recovery.safe_mode || 'total',
       'recovery-streak-stake': ((recovery.stake_cents ?? demo.base_stake_cents) / 100)
         .toFixed(demo.currency === 'KRW' ? 0 : 2),
     })) {
@@ -296,8 +310,10 @@
       'high-gap-target', 'high-gap-stake', 'high-gap-save'].includes(node.id)) ||
       (target.active && ['target-streak-x', 'target-streak-trigger',
         'target-streak-stake', 'target-streak-save'].includes(node.id)) ||
-      (recovery.active && ['recovery-streak-x', 'recovery-streak-trigger',
-        'recovery-streak-stake', 'recovery-streak-save'].includes(node.id));
+      (recovery.active && ['recovery-streak-x', 'recovery-streak-x-max',
+        'recovery-streak-trigger', 'recovery-streak-safe',
+        'recovery-streak-safe-mode', 'recovery-streak-stake',
+        'recovery-streak-save'].includes(node.id));
   }
   async function request(method = 'GET', payload) {
     if (!window.canUsePremium?.()) throw new Error('Требуется Premium.');
@@ -421,15 +437,25 @@
   document.getElementById('recovery-streak-toggle').addEventListener('click', () =>
     action('recovery_streak_toggle'));
   document.getElementById('recovery-streak-save').addEventListener('click', () => {
-    const target = document.getElementById('recovery-streak-x').value.trim();
+    const target = document.getElementById('recovery-streak-x').value.trim().replace(',', '.');
+    const target_max = document.getElementById('recovery-streak-x-max').value.trim().replace(',', '.');
     const trigger = Number(document.getElementById('recovery-streak-trigger').value);
     const stake = document.getElementById('recovery-streak-stake').value.trim();
     const safe_losses = Number(document.getElementById('recovery-streak-safe').value);
-    if (!target || !stake || !Number.isInteger(trigger) || trigger < 2 || trigger > 10 ||
-        !Number.isInteger(safe_losses) || safe_losses < 0 || safe_losses > 10) {
-      message('Проверь целевой X, ставку, шаг входа и лимит сейфа.', true); return;
+    const safe_mode = document.getElementById('recovery-streak-safe-mode').value;
+    const numberPattern = /^\\d+(?:\\.\\d+)?$/;
+    if (!numberPattern.test(target) || !numberPattern.test(target_max) || !stake ||
+        Number(target) < 1.01 || Number(target_max) < Number(target) ||
+        Number(target_max) > 10000 ||
+        !Number.isInteger(trigger) || trigger < 2 || trigger > 10 ||
+        !Number.isInteger(safe_losses) || safe_losses < 0 || safe_losses > 10 ||
+        !['total', 'consecutive'].includes(safe_mode)) {
+      message('Проверь диапазон X, фиксированную ставку, шаг и сейв.', true); return;
     }
-    action('recovery_streak_config', {target, trigger, stake, safe_losses});
+    action('recovery_streak_config', {
+      target, target_max, trigger, stake, safe_losses, safe_mode,
+      continuous_session: true,
+    });
   });
   const resetModal = document.getElementById('demo-reset-modal');
   const resetForm = document.getElementById('demo-reset-form');

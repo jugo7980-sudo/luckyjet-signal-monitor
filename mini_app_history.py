@@ -19,7 +19,7 @@ from luckyjet_signal.demo_ledger import DemoLedger, DEFAULT_BALANCE_CENTS, MAX_H
 TZ = ZoneInfo('Asia/Vladivostok')
 VIEWS = {'days', 'day', 'high_days', 'high_day', 'high_item',
          'cycles', 'cycle', 'high_cycles', 'high_cycle',
-         'target_cycles', 'target_cycle', 'demo_stats',
+         'target_cycles', 'target_cycle', 'demo_finance', 'demo_stats',
          'max_steps', 'max_step_day', 'archive'} | FACTUAL_VIEWS
 DAY_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 ITEM_PATTERN = re.compile(r'^[0-9a-f]{16}$')
@@ -341,7 +341,11 @@ async def history(authorization, gate, token, query=''):
         return json_response('403 Forbidden', {'error': 'Сначала получи доступ в чате бота.'})
     try:
         args = parse_qs(query, keep_blank_values=True, max_num_fields=6)
-        if any(len(v) != 1 for v in args.values()) or not set(args) <= {'view', 'page', 'day', 'index', 'id', 'cursor'}:
+        if any(len(v) != 1 for v in args.values()) or not set(args) <= {
+                'view', 'page', 'day', 'index', 'id', 'cursor',
+                'period', 'strategy', 'flow'}:
+            raise ValueError('Invalid parameters')
+        if any(key in args for key in ('period', 'strategy', 'flow')) and args.get('view', ['days'])[0] != 'demo_finance':
             raise ValueError('Invalid parameters')
         view = args.get('view', ['days'])[0]
         if view not in VIEWS:
@@ -351,6 +355,8 @@ async def history(authorization, gate, token, query=''):
         index = _number(args['index'][0], MAX_HISTORY - 1) if 'index' in args else None
         item_id = args.get('id', [None])[0]
         cursor = args.get('cursor', [None])[0]
+        if view == 'demo_finance' and (index is not None or item_id is not None or cursor is not None):
+            raise ValueError('Invalid finance parameters')
         if cursor is not None and (view != 'archive' or not CURSOR_PATTERN.fullmatch(cursor)):
             raise ValueError('Invalid archive cursor')
         if item_id is not None and not (
@@ -365,6 +371,23 @@ async def history(authorization, gate, token, query=''):
             raise ValueError('Required parameter missing')
     except (ValueError, KeyError, TypeError):
         return json_response('400 Bad Request', {'error': 'Некорректные параметры истории.'})
+
+    if view == 'demo_finance':
+        from mini_app_finance import demo_finance
+        redis = getattr(gate, 'redis', None)
+        if redis is None:
+            return json_response('503 Service Unavailable', {'error': 'Хранилище DEMO недоступно.'})
+        period = args.get('period', ['all'])[0]
+        strategy = args.get('strategy', ['all'])[0]
+        flow = args.get('flow', ['all'])[0]
+        try:
+            result = await demo_finance(
+                redis, uid, gate.demo_ledgers.get(uid) or DemoLedger(),
+                page=page, period=period, strategy=strategy, flow=flow, day=day,
+            )
+        except ValueError:
+            return json_response('400 Bad Request', {'error': 'Проверь фильтры доходов и расходов.'})
+        return json_response('200 OK', result)
 
     if view in FACTUAL_VIEWS:
         redis = getattr(gate, 'redis', None)

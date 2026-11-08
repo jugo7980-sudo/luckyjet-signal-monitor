@@ -142,7 +142,7 @@ def test_strategies_get_separate_stats_from_their_own_saved_journals():
                             balance_cents=1200000, initial_balance_cents=1000000)
         classic = {'currency': 'KRW', 'outcome': 'recovered', 'net_cents': 30000,
                    'rounds': [{'coefficient': '2', 'stake_cents': 15000}]}
-        high = {'currency': 'KRW', 'outcome': 'insufficient_balance', 'net_cents': -45000,
+        high = {'currency': 'KRW', 'strategy': 'high_gap', 'outcome': 'insufficient_balance', 'net_cents': -45000,
                 'rounds': [{'coefficient': '2', 'stake_cents': 45000}]}
         ledger.history = [classic, classic]
         ledger.high_history = [high]

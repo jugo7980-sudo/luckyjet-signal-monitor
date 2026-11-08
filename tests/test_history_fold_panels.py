@@ -130,7 +130,7 @@ def test_mobile_history_folded_strategy_stats_full_long_cycle_distribution_and_a
                 await outcome.locator('summary').click()
                 await expect(steps).not_to_have_attribute('open', '')
                 await expect(outcome).to_have_attribute('open', '')
-                await expect(outcome.get_by_text('Чистый итог')).to_be_visible()
+                await expect(outcome.locator('.history-fold-summary')).to_contain_text('Чистый итог')
                 await params.locator('summary').click()
                 await expect(outcome).not_to_have_attribute('open', '')
                 await expect(params).to_have_attribute('open', '')

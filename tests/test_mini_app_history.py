@@ -243,6 +243,7 @@ def test_history_static_asset_and_mobile_flow():
             await page.route('**/*', route)
             await page.goto('https://example.test/app')
             await page.locator('nav [data-tab=history]').click()
+            await page.locator('#history-days-list > summary').click()
             await page.get_by_text('06.11.2026').first.wait_for()
             assert await page.locator('#history-date').input_value() == '2026-11-06'
             assert not await page.locator('#history-content .history-date-search').evaluate('(n) => n.open')
@@ -288,7 +289,7 @@ def test_history_static_asset_and_mobile_flow():
             await page.get_by_text('Среднее шагов').wait_for()
             await page.locator('#history-demo-cycles > summary').click()
             await page.locator('#history-content button.history-item').first.click()
-            await page.get_by_text('Чистый итог').wait_for()
+            await page.locator('#history-cycle-outcome > summary').wait_for()
 
             await page.locator('[data-history-view=max_steps]').click()
             await page.locator('#history-max-step-days > summary').click()

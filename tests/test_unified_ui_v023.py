@@ -125,7 +125,26 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 assert await page.locator("#summary-help-body").is_visible()
                 assert await page.locator("#summary-explainer").evaluate(
                     "(n) => n.closest('#summary-accordion') !== null")
-                await page.locator("#summary-help-toggle").click()
+                await page.locator("#summary-help-close").click()
+                assert await page.locator("#summary-help-body").is_hidden()
+                # All expanded help is separated from the main page into compact ? dialogs.
+                await page.locator('[data-summary-help-for="ind-target-hint"]').click()
+                assert "100x и выше" in await page.locator("#summary-metric-text").inner_text()
+                await page.locator("#summary-metric-close").click()
+                assert await page.locator("#summary-metric-popup").is_hidden()
+                await page.locator('[data-summary-help-for="ind-summary-status-detail"]').click()
+                assert "истории самого игрового сайта" in await page.locator(
+                    "#summary-metric-text").inner_text()
+                await page.locator("#summary-metric-close").click()
+                # Changing loading text must never push the card grid down.
+                before = await page.locator(".ind-summary-cards .ind-stat").first.bounding_box()
+                async with page.expect_response(lambda res: "/api/round-summary" in res.url):
+                    await page.locator("#ind-summary-apply").click()
+                after = await page.locator(".ind-summary-cards .ind-stat").first.bounding_box()
+                assert abs(before["y"] - after["y"]) <= 1
+                assert abs(before["height"] - after["height"]) <= 1
+                assert await page.locator("#ind-summary-status").evaluate(
+                    "(n) => n.getBoundingClientRect().height <= 20")
                 await page.locator("#summary-accordion summary").click()
                 assert await page.locator("#summary-preview-results").is_visible()
                 await page.locator("#monitoring-accordion summary").click()

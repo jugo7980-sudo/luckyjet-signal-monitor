@@ -21,7 +21,7 @@ def test_mobile_archive_and_reset_controls():
                 if url.endswith('/access.js'):
                     await request.fulfill(content_type='application/javascript',
                         body="window.accessState={premium:true,registered:true,username:'tester'};document.body.dataset.access='premium';window.canUsePremium=()=>true;")
-                elif url.endswith('/history.js'):
+                elif url.split('?', 1)[0].endswith('/history.js'):
                     await request.fulfill(content_type='application/javascript', body=response('/history.js')[2])
                 elif url.startswith('https://example.test/app'):
                     await request.fulfill(content_type='text/html', body=response('/app')[2])

@@ -150,6 +150,56 @@ def _after_cycle_reset(entry, marker):
         return False
 
 
+def _distribution_bucket(value):
+    """Non-overlapping coefficient ranges: 1.5–1.99, 2–2.99, ..., 150–150.99."""
+    if not math.isfinite(value) or value < 1:
+        return None
+    if value < 1.5:
+        return 'below_1_5'
+    if value < 2:
+        return '1.5'
+    if value < 151:
+        return str(int(value))
+    return 'above_150'
+
+
+def _new_distribution():
+    result = {'below_1_5': 0, '1.5': 0, 'above_150': 0}
+    result.update({str(n): 0 for n in range(2, 151)})
+    return result
+
+
+async def _day_distribution(redis, day, marker=None):
+    """Read-only stream scan, bounded to avoid heavy loads or fabricated totals."""
+    start = datetime.strptime(day, '%Y-%m-%d').replace(tzinfo=TZ)
+    end = start + timedelta(days=1)
+    first = f'{int(start.timestamp() * 1000)}-0'
+    if marker:
+        reset_id = marker['stream_id']
+        if tuple(map(int, reset_id.split('-'))) >= tuple(map(int, first.split('-'))):
+            first = '(' + reset_id
+    events = await redis.xrange(STREAM_KEY, min=first,
+                                max=f'({int(end.timestamp() * 1000)}-0',
+                                count=MAX_RESET_EVENTS + 1)
+    if len(events) > MAX_RESET_EVENTS:
+        return {'complete_scan': False, 'counts': None, 'total': None}
+    counts = _new_distribution()
+    total = 0
+    for _event_id, raw in events:
+        fields = {_string(k): _string(v) for k, v in raw.items()}
+        if fields.get('type') != 'round':
+            continue
+        try:
+            value = float(fields.get('coefficient', ''))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        bucket = _distribution_bucket(value)
+        if bucket is not None:
+            counts[bucket] += 1
+            total += 1
+    return {'complete_scan': True, 'counts': counts, 'total': total}
+
+
 async def _after_reset_day(redis, day, marker):
     """Rebuild post-reset visible counters from immutable source receipts."""
     start = datetime.strptime(day, '%Y-%m-%d').replace(tzinfo=TZ)
@@ -383,8 +433,11 @@ async def history(authorization, gate, token, query=''):
             summary, _ = await _after_reset_day(redis, day, marker)
             if summary is None:
                 return json_response('200 OK', {'view': view, 'day': day, 'summary': {}, 'truncated': True, 'view_reset': True})
-            return json_response('200 OK', {'view': view, 'day': day, 'summary': summary, 'view_reset': True})
+            distribution = await _day_distribution(redis, day, marker)
+            return json_response('200 OK', {'view': view, 'day': day, 'summary': summary,
+                                            'distribution': distribution, 'view_reset': True})
         summary = await stats.summary(day)
+        distribution = await _day_distribution(redis, day)
         evidence = await archive_day_evidence(
             redis, day, legacy_total=summary.get('total'),
         )

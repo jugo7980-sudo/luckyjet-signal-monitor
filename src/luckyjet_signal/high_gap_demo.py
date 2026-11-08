@@ -46,6 +46,20 @@ class HighGapStrategy:
         except (TypeError, ValueError, OverflowError):
             stake = default_stake
         self.stake_cents = stake if stake >= min_stake else max(min_stake, default_stake)
+        # Entry filter is opt-in: existing saved strategies retain original behaviour.
+        self.filter_enabled = bool(raw.get('filter_enabled', False))
+        self.filter_threshold = as_multiplier(raw.get('filter_threshold', '10'), default='10')
+        try:
+            filter_limit = int(raw.get('filter_limit', 3))
+        except (TypeError, ValueError, OverflowError):
+            filter_limit = 3
+        self.filter_limit = filter_limit if filter_limit >= 1 else 3
+        try:
+            filter_count = int(raw.get('filter_count', 0))
+        except (TypeError, ValueError, OverflowError):
+            filter_count = 0
+        self.filter_count = max(0, filter_count)
+        self.filter_rejected = bool(raw.get('filter_rejected', False))
 
         allowed = {'waiting_reference', 'waiting', 'betting', 'paused_gap', 'paused_funds'}
         self.phase = raw.get('phase') if raw.get('phase') in allowed else 'waiting_reference'
@@ -65,6 +79,11 @@ class HighGapStrategy:
             'enabled': self.enabled, 'reference': str(self.reference),
             'target': str(self.target), 'wait_rounds': self.wait_rounds,
             'stake_cents': self.stake_cents, 'phase': self.phase,
+            'filter_enabled': self.filter_enabled,
+            'filter_threshold': str(self.filter_threshold),
+            'filter_limit': str(self.filter_limit),
+            'filter_count': self.filter_count,
+            'filter_rejected': self.filter_rejected,
             'reference_id': self.reference_id,
             'reference_value': self.reference_value,
             'reference_at': self.reference_at, 'elapsed': self.elapsed,
@@ -80,6 +99,11 @@ class HighGapStrategy:
             'reference': str(self.reference), 'target': str(self.target),
             'wait_rounds': self.wait_rounds,
             'stake_cents': self.stake_cents, 'elapsed': self.elapsed,
+            'filter_enabled': self.filter_enabled,
+            'filter_threshold': str(self.filter_threshold),
+            'filter_limit': str(self.filter_limit),
+            'filter_count': self.filter_count,
+            'filter_rejected': self.filter_rejected,
             'remaining': max(0, self.wait_rounds - self.elapsed)
             if self.phase == 'waiting' else None,
             'reference_value': self.reference_value,
@@ -97,12 +121,15 @@ class HighGapStrategy:
         self.reference_value = ''
         self.reference_at = None
         self.elapsed = 0
+        self.filter_count = 0
+        self.filter_rejected = False
         self.started_at = None
         self.balance_before_cents = None
         self.rounds = []
         self.total_stake_cents = 0
 
-    def configure(self, reference, wait_rounds, target, stake_cents, *, min_stake):
+    def configure(self, reference, wait_rounds, target, stake_cents, *, min_stake,
+                  filter_enabled=None, filter_threshold=None, filter_limit=None):
         if self.enabled and self.phase == 'betting':
             return False
         watch = parse_multiplier(reference)
@@ -111,6 +138,30 @@ class HighGapStrategy:
                 or not 0 <= wait_rounds <= 100000
                 or type(stake_cents) is not int or stake_cents < min_stake):
             return False
+        if filter_enabled is None:
+            filter_enabled = self.filter_enabled
+        if filter_threshold is None:
+            filter_threshold = str(self.filter_threshold)
+        if filter_limit is None:
+            filter_limit = self.filter_limit
+        threshold = parse_multiplier(filter_threshold)
+        if type(filter_enabled) is not bool or threshold is None or type(filter_limit) is bool:
+            return False
+        # No arbitrary upper bound on the number of allowed matches.
+        if type(filter_limit) is str and (
+                not filter_limit.isascii() or not filter_limit.isdigit()):
+            return False
+        if type(filter_limit) not in (int, str):
+            return False
+        try:
+            limit = int(filter_limit)
+        except (ValueError, OverflowError):
+            return False
+        if limit < 1:
+            return False
+        self.filter_enabled = filter_enabled
+        self.filter_threshold = threshold
+        self.filter_limit = limit
         self.reference = watch
         self.target = cashout
         self.wait_rounds = wait_rounds
@@ -118,13 +169,15 @@ class HighGapStrategy:
         self.reset_progress()  # A new trigger must never reuse old evidence.
         return True
 
-    def arm_from_source(self, *, round_id, coefficient, elapsed, observed_at=None):
+    def arm_from_source(self, *, round_id, coefficient, elapsed, observed_at=None, filter_count=0):
         """Read-only backfill. Past bets are NEVER simulated or charged."""
         if self.enabled:
             self.reference_id = str(round_id)
             self.reference_value = str(coefficient)
             self.reference_at = observed_at
             self.elapsed = max(0, int(elapsed))
+            self.filter_count = max(0, int(filter_count))
+            self.filter_rejected = False
             self.phase = 'betting' if self.elapsed >= self.wait_rounds else 'waiting'
 
     def _remember_reference(self, round_id, coefficient, at):
@@ -132,6 +185,8 @@ class HighGapStrategy:
         self.reference_value = str(coefficient)
         self.reference_at = at
         self.elapsed = 0
+        self.filter_count = 0
+        self.filter_rejected = False
         self.phase = 'betting' if self.wait_rounds == 0 else 'waiting'
 
     def _complete(self, outcome, *, currency, balance, at, payout_cents=None,
@@ -206,6 +261,13 @@ class HighGapStrategy:
                 self._remember_reference(round_id, multiplier, at)
             else:
                 self.elapsed += 1
+                if self.filter_enabled and multiplier > self.filter_threshold:
+                    self.filter_count += 1
+                    if self.filter_count >= self.filter_limit:
+                        # Cancel BEFORE the first virtual stake and wait for a new anchor.
+                        self.reset_progress()
+                        self.filter_rejected = True
+                        return balance, None
                 if self.elapsed >= self.wait_rounds:
                     self.phase = 'betting'
             return balance, None

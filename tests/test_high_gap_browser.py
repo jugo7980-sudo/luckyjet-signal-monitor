@@ -108,11 +108,16 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
             await page.locator('#high-gap-wait').fill('100')
             await page.locator('#high-gap-target').fill('1.50')
             await page.locator('#high-gap-stake').fill('1000')
+            await page.locator('#high-gap-filter-enabled').check()
+            await page.locator('#high-gap-filter-threshold').fill('10')
+            await page.locator('#high-gap-filter-limit').fill('999999999999999999999999')
             await page.locator('#high-gap-save').click()
             await page.get_by_text('Сохранено.', exact=True).wait_for()
             assert posted[0] == {'action': 'high_gap_config', 'value': {
                 'reference': '100', 'wait_rounds': 100,
                 'target': '1.50', 'stake': '1000',
+                'filter_enabled': True, 'filter_threshold': '10',
+                'filter_limit': '999999999999999999999999',
             }}
             await page.locator('#high-gap-toggle').click()
             from playwright.async_api import expect

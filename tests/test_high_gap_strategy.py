@@ -282,3 +282,125 @@ def test_reset_preserves_high_gap_enabled_status_and_keeps_pre_reset_cycle():
     assert ledger.high_gap.stake_cents == 10000  # currency changed
     assert ledger.pending_archive_cycles[0]['currency'] == 'USD'
     assert ledger.pending_archive_cycles[0]['net_cents'] == -1000
+
+
+
+def test_entry_filter_rejects_third_high_x_and_only_rearms_on_new_reference():
+    ledger = ledger_with_high(wait=4, target='100.05')
+    high = ledger.high_gap
+    assert high.configure('100', 4, '100.05', 1000, min_stake=1000,
+                          filter_enabled=True, filter_threshold='10', filter_limit='3')
+    balance = ledger.balance_cents
+    advance(ledger, 1, 120)
+    for i, value in enumerate((11, 12, 13), 2):
+        advance(ledger, i, value)
+    assert high.phase == 'waiting_reference'
+    assert high.filter_rejected and not high.rounds
+    assert ledger.balance_cents == balance
+    advance(ledger, 5, 1.2)
+    assert high.phase == 'waiting_reference'
+    advance(ledger, 6, 130)
+    for i, value in enumerate((10, 12, 9, 1.2), 7):
+        advance(ledger, i, value)
+    assert high.phase == 'betting'
+    assert high.filter_count == 1  # x10 exactly is not >x10
+    advance(ledger, 11, 90)
+    advance(ledger, 12, 20)  # high X no longer affects a started cycle
+    assert high.phase == 'betting'
+    assert high.filter_count == 1
+    assert len(high.rounds) == 2 and ledger.balance_cents == balance - 2000
+
+
+def test_entry_filter_unbounded_limit_survives_restart_without_early_stakes():
+    ledger = ledger_with_high(wait=3, target='100.05')
+    number = '1234567890123456789012345678901234567890'
+    high = ledger.high_gap
+    assert high.configure('100', 3, '100.05', 1000, min_stake=1000,
+                          filter_enabled=True, filter_threshold='10', filter_limit=number)
+    advance(ledger, 1, 120)
+    advance(ledger, 2, 11)
+    replica = DemoLedger(**ledger.dump())
+    assert replica.high_gap.filter_count == 1
+    assert replica.high_gap.public()['filter_limit'] == number
+    advance(replica, 3, 12)
+    advance(replica, 4, 13)
+    assert replica.high_gap.phase == 'betting'
+    assert replica.balance_cents == ledger.balance_cents
+    advance(replica, 5, 20)
+    assert len(replica.high_gap.rounds) == 1
+
+
+def test_entry_filter_invalid_config_is_atomic_and_legacy_configuration_compatible():
+    high = HighGapStrategy()
+    original = high.dump()
+    for limit in ('0', '-1', '2.5', ''):
+        assert not high.configure('100', 2, '100', 1000, min_stake=1000,
+                                  filter_enabled=True, filter_threshold='10',
+                                  filter_limit=limit)
+        assert high.dump() == original
+    assert not high.filter_enabled
+    assert high.configure('100', 2, '100', 1000, min_stake=1000,
+                          filter_enabled=True, filter_threshold='10', filter_limit='2')
+    assert high.configure('100', 4, '100', 1000, min_stake=1000)
+    assert high.filter_enabled and high.filter_limit == 2
+
+
+def test_entry_filter_backfill_rejects_old_anchor_and_preserves_pending_count():
+    from mini_app_controls import _seed_high_gap
+    from round_archive import STREAM_KEY
+    async def run():
+        redis = FakeRedis(decode_responses=True)
+        ledger = ledger_with_high(wait=4, target='100.05')
+        assert ledger.high_gap.configure(
+            '100', 4, '100.05', 1000, min_stake=1000,
+            filter_enabled=True, filter_threshold='10', filter_limit='2')
+        for i, value in enumerate((120, 11, 1.2, 12), 1):
+            await redis.xadd(STREAM_KEY, {'type': 'round', 'coefficient': str(value),
+                                         'round_id': str(i), 'observed_at': str(i * 1000)},
+                             id=f'{i * 1000}-0')
+        ledger.last_archived_stream_id = '4000-0'
+        assert not await _seed_high_gap(redis, ledger)
+        assert ledger.high_gap.phase == 'waiting_reference'
+        assert ledger.high_gap.filter_rejected
+        for i, value in enumerate((130, 11, 1.2), 5):
+            await redis.xadd(STREAM_KEY, {'type': 'round', 'coefficient': str(value),
+                                         'round_id': str(i), 'observed_at': str(i * 1000)},
+                             id=f'{i * 1000}-0')
+        ledger.last_archived_stream_id = '7000-0'
+        assert await _seed_high_gap(redis, ledger)
+        assert ledger.high_gap.phase == 'waiting'
+        assert ledger.high_gap.reference_id == '5'
+        assert ledger.high_gap.elapsed == 2
+        assert ledger.high_gap.filter_count == 1
+        assert ledger.balance_cents == ledger.initial_balance_cents
+        await redis.aclose()
+    asyncio.run(run())
+
+
+def test_entry_filter_api_accepts_settings_and_rejects_bad_limit():
+    async def run():
+        gate = ReliableTelegramPasswordGate(None)
+        gate.authorized.add(42)
+        gate.redis = FakeRedis(decode_responses=True)
+        ledger = gate._demo_ledger(42)
+        config = {'reference': '100', 'wait_rounds': 50, 'target': '100.05',
+                  'stake': '10', 'filter_enabled': True, 'filter_threshold': '10',
+                  'filter_limit': '3'}
+        code, _, body = await controls(
+            signed(42), gate, 'fixture', 'POST',
+            json.dumps({'action': 'high_gap_config', 'value': config}).encode())
+        assert code == '200 OK', body
+        assert ledger.high_gap.public()['filter_limit'] == '3'
+        original = ledger.high_gap.dump()
+        for invalid in (dict(config, filter_limit='0'),
+                        dict(config, filter_enabled='true'),
+                        dict(config, filter_threshold='0.5')):
+            code, _, _ = await controls(
+                signed(42), gate, 'fixture', 'POST',
+                json.dumps({'action': 'high_gap_config', 'value': invalid}).encode())
+            assert code != '200 OK'
+            assert ledger.high_gap.dump() == original
+        await gate.redis.aclose()
+        gate.redis = None
+        await gate.close()
+    asyncio.run(run())

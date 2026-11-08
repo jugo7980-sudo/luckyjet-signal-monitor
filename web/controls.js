@@ -37,9 +37,15 @@
     document.getElementById('demo-high-preview').textContent = compact;
     // Detailed strategy state keeps its original precise wording for existing integrations.
     document.getElementById('high-gap-state').textContent = state;
-    const progress = high.reference_value
+    const filterStatus = high.filter_enabled && phase === 'waiting'
+      ? ' · Фильтр >x' + high.filter_threshold + ': ' + (high.filter_count ?? 0) +
+        ' / ' + high.filter_limit : '';
+    const progress = high.filter_rejected && phase === 'waiting_reference'
+      ? 'Сигнал отменён фильтром. Ожидание нового опорного X'
+      : high.reference_value
       ? 'Последний >x' + high.reference + ': x' + high.reference_value +
-        ' · Раундов после: ' + high.elapsed + ' / ' + high.wait_rounds : 'Нет подтверждённого опорного раунда';
+        ' · Раундов после: ' + high.elapsed + ' / ' + high.wait_rounds +
+        filterStatus : 'Нет подтверждённого опорного раунда';
     document.getElementById('high-gap-progress').textContent = progress;
     const money = window.formatDemoMoney;
     const output = high.steps ? ('Ставок: ' + high.steps + ' · Сумма: ' +
@@ -121,6 +127,8 @@
     const fields = {
       'high-gap-reference': high.reference || '100',
       'high-gap-wait': high.wait_rounds ?? 100,
+      'high-gap-filter-threshold': high.filter_threshold || '10',
+      'high-gap-filter-limit': high.filter_limit ?? '3',
       'high-gap-target': high.target || '100',
       'high-gap-stake': ((high.stake_cents ?? demo.base_stake_cents) / 100)
         .toFixed(demo.currency === 'KRW' ? 0 : 2),
@@ -128,6 +136,10 @@
     for (const [id, val] of Object.entries(fields)) {
       const field = document.getElementById(id);
       if (document.activeElement !== field) field.value = String(val);
+    }
+    const filterCheckbox = document.getElementById('high-gap-filter-enabled');
+    if (document.activeElement !== filterCheckbox) {
+      filterCheckbox.checked = high.filter_enabled === true;
     }
     const highStakeLabel = document.getElementById('high-gap-stake-label');
     // Keep the help button: do not rebuild the label on every control refresh.
@@ -155,6 +167,7 @@
       demo.active && (node.id === 'demo-trigger-select' || node.id === 'demo-stake-input' ||
         node.id === 'demo-stake-save' || (node.id === 'demo-toggle' && demo.enabled))
     ) || (high.active && ['high-gap-reference', 'high-gap-wait',
+      'high-gap-filter-enabled', 'high-gap-filter-threshold', 'high-gap-filter-limit',
       'high-gap-target', 'high-gap-stake', 'high-gap-save'].includes(node.id));
   }
   async function request(method = 'GET', payload) {
@@ -252,10 +265,15 @@
     const target = document.getElementById('high-gap-target').value.trim();
     const waitText = document.getElementById('high-gap-wait').value.trim();
     const stake = document.getElementById('high-gap-stake').value.trim();
-    if (!/^\d{1,6}$/.test(waitText) || !reference || !target || !stake) {
-      message('Проверь коэффициенты, число раундов и сумму ставки.', true); return;
+    const filter_enabled = document.getElementById('high-gap-filter-enabled').checked;
+    const filter_threshold = document.getElementById('high-gap-filter-threshold').value.trim();
+    const filter_limit = document.getElementById('high-gap-filter-limit').value.trim();
+    if (!/^\d{1,6}$/.test(waitText) || !reference || !target || !stake ||
+        !filter_threshold || !/^[0-9]+$/.test(filter_limit) || !/[1-9]/.test(filter_limit)) {
+      message('Проверь коэффициенты, число раундов и фильтр входа.', true); return;
     }
-    action('high_gap_config', {reference, wait_rounds: Number(waitText), target, stake});
+    action('high_gap_config', {reference, wait_rounds: Number(waitText), target, stake,
+      filter_enabled, filter_threshold, filter_limit});
   });
   document.getElementById('high-gap-history').addEventListener('click', () => {
     document.querySelector('nav [data-tab="history"]').click();

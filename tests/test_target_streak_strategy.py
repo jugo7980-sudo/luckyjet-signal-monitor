@@ -189,10 +189,9 @@ def test_target_controls_and_separate_history_and_notices_api():
         assert json.loads(change[2])['target_streak_notifications']['events']['loss'] is True
         await gate._persist_user(42)
         assert await gate.redis.hexists('luckyjet:target_streak_notices:v1', '42')
-        ledger.target_streak.enabled = False
+        ledger.target_streak.reset_progress()
         for i in (1, 2, 3):
             advance(ledger, i, '1.10')
-        ledger.target_streak.enabled = True
         advance(ledger, 4, '1.10')
         advance(ledger, 5, '1.57')
         assert (await history('tma '+signed(), gate, 'fixture', 'view=target_cycles'))[0] == '200 OK'

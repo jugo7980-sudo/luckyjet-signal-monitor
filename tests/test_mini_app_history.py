@@ -241,6 +241,7 @@ def test_history_static_asset_and_mobile_flow():
             await page.locator('nav [data-tab=history]').click()
             await page.get_by_text('06.11.2026').first.wait_for()
             assert await page.locator('#history-date').input_value() == '2026-11-06'
+            assert not await page.locator('#history-content .history-date-search').evaluate('(n) => n.open')
             await page.locator('#history-content button.history-item').first.click()
             await page.get_by_text('Всего раундов').wait_for()
             warning = page.locator('#history-content .history-note-critical').first

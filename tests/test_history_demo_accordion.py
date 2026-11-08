@@ -7,7 +7,7 @@ from mini_app import response
 
 
 def test_mobile_demo_history_two_exclusive_accordions_and_own_stats():
-    from playwright.async_api import async_playwright
+    from playwright.async_api import async_playwright, expect
 
     async def run():
         async with async_playwright() as playwright:
@@ -96,15 +96,15 @@ def test_mobile_demo_history_two_exclusive_accordions_and_own_stats():
 
             await classic.click()
             await page.locator('#history-content .history-item').wait_for()
-            assert await classic.get_attribute('aria-expanded') == 'true'
-            assert await high.get_attribute('aria-expanded') == 'false'
+            await expect(classic).to_have_attribute('aria-expanded', 'true')
+            await expect(high).to_have_attribute('aria-expanded', 'false')
             assert '30' in await page.locator('#history-content').inner_text()
             assert 'cycles' in requests
 
             await high.click()
             await page.locator('#history-content .history-item').wait_for()
-            assert await classic.get_attribute('aria-expanded') == 'false'
-            assert await high.get_attribute('aria-expanded') == 'true'
+            await expect(classic).to_have_attribute('aria-expanded', 'false')
+            await expect(high).to_have_attribute('aria-expanded', 'true')
             assert 'high_cycles' in requests
             assert await page.locator('#history-content .history-item').count() == 1
             assert 'Статистика' in await page.locator('#history-content').inner_text()
@@ -117,7 +117,7 @@ def test_mobile_demo_history_two_exclusive_accordions_and_own_stats():
             await high.click()
             await page.locator('#history-content .history-item').click()
             assert 'high_cycle' in requests
-            assert await high.get_attribute('aria-expanded') == 'true'
+            await expect(high).to_have_attribute('aria-expanded', 'true')
             await page.locator('#history-back').click()
             assert await high.get_attribute('aria-expanded') == 'true'
             assert await page.locator('#history-content .history-item').count() == 1

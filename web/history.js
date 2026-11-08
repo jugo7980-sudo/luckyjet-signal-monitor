@@ -185,7 +185,7 @@
     document.getElementById('history-prev').disabled = page <= 0;
     document.getElementById('history-next').disabled = page + 1 >= pages;
   }
-  function datePicker(view, available = []) {
+  function datePicker(view, available = [], host = root) {
     const wrap = el('div', 'history-date-row');
     const label = el('label', '', 'Дата');
     label.htmlFor = 'history-date';
@@ -214,7 +214,17 @@
         {day: input.value}, true);
     });
     wrap.append(label, input, button);
-    root.appendChild(wrap);
+    host.appendChild(wrap);
+  }
+  function dateSearch(view, available = []) {
+    // Day lists already have clickable day cards. Keep arbitrary-date lookup
+    // available without rendering a duplicate date field next to each card.
+    const details = el('details', 'history-date-search');
+    details.appendChild(el('summary', '', 'Найти другую дату'));
+    const hasDays = Array.isArray(available) && available.length > 0;
+    details.open = !hasDays;
+    datePicker(view, available, details);
+    root.appendChild(details);
   }
   function render(data) {
     root.replaceChildren();
@@ -267,7 +277,7 @@
         break;
       }
       case 'days':
-        datePicker('days', data.days);
+        dateSearch('days', data.days);
         if (!data.days.length) note('Нет сохранённых дней.');
         for (const row of data.days) {
           const day = typeof row === 'string' ? row : row.day;
@@ -374,7 +384,7 @@
           info('Последний >100x', String(data.last_high.value) + 'x', formatTime(data.last_high.stamp));
         if (!archive && data.last_high)
           info('Раундов после >100x', data.gap ? 'Неполные данные' : data.since_high);
-        datePicker('high_days', data.days);
+        dateSearch('high_days', data.days);
         if (!data.days.length) note('Нет сохранённых дней.');
         for (const row of data.days) {
           const day = typeof row === 'string' ? row : row.day;
@@ -495,7 +505,7 @@
       case 'max_steps':
         heading('Максимальный шаг', 'По дням · Владивосток, UTC+10');
         if (!archive && data.view_reset) note('Данные после сброса.');
-        datePicker('max_steps', data.days);
+        dateSearch('max_steps', data.days);
         if (!data.days.length) note('Нет сохранённых дней.');
         for (const d of data.days) item(formatDay(d.day),
           archive ? 'Сохранённые раунды · полнота не подтверждена' : 'Показать максимум',

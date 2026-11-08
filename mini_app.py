@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 DEFAULT_APP_URL = 'https://luckyjet-signal-monitor-production.up.railway.app/app'
-APP_VERSION = '0.2.15'
+APP_VERSION = '0.2.16'
 
 
 def app_url():

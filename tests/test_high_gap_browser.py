@@ -41,7 +41,7 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
                 elif url.endswith('/controls.js'):
                     await request.fulfill(content_type='application/javascript',
                         body=response('/controls.js')[2])
-                elif url.endswith('/history.js'):
+                elif url.split('?', 1)[0].endswith('/history.js'):
                     await request.fulfill(content_type='application/javascript',
                         body=response('/history.js')[2])
                 elif url.startswith('https://example.test/app'):

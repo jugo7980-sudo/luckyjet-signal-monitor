@@ -85,14 +85,18 @@
     if (detail) root.appendChild(el('p', 'history-subtitle', detail));
   }
   function note(value) {
-    // Keep the full audit note accessible without expanding the live layout.
-    const row = el('p', 'history-note');
-    const message = el('span', 'history-note-text', value);
-    const help = el('button', 'summary-question', '?');
-    help.type = 'button';
-    help.setAttribute('aria-label', 'Полное пояснение к истории');
-    help.setAttribute('data-help-text', String(value));
-    row.append(message, help);
+    const text = String(value);
+    const important = /непол|разрыв|пропуск|недоступ|не подтвержд|не гарант|неизвест|превышен|превышает|разное число|недостаточно данных|не удалось|ошиб|отсутству|нет сохранённых|нет записей|не совпад|нельзя подтвердить/i.test(text);
+    const row = el('p', important ? 'history-note history-note-critical' : 'history-note');
+    row.appendChild(el('span', 'history-note-text', text));
+    // Critical archive warnings cannot be hidden behind ellipsis or the help button.
+    if (!important) {
+      const help = el('button', 'summary-question', '?');
+      help.type = 'button';
+      help.setAttribute('aria-label', 'Полное пояснение к истории');
+      help.setAttribute('data-help-text', text);
+      row.appendChild(help);
+    }
     root.appendChild(row);
   }
   function pollCoverage(check) {
@@ -158,10 +162,16 @@
       guide.textContent = (views[active] || views.days)
         + ' Время: Владивосток. Неизвестные раунды не восстанавливаются.';
     }
-    for (const button of tabs)
-      button.setAttribute('aria-selected', String(button.dataset.historyView === active));
-    for (const button of archiveTabs)
-      button.setAttribute('aria-selected', String(button.dataset.archiveView === 'archive_' + active));
+    for (const button of tabs) {
+      const selected = button.dataset.historyView === active;
+      button.setAttribute('aria-selected', String(selected));
+      button.tabIndex = selected ? 0 : -1;
+    }
+    for (const button of archiveTabs) {
+      const selected = button.dataset.archiveView === 'archive_' + active;
+      button.setAttribute('aria-selected', String(selected));
+      button.tabIndex = selected ? 0 : -1;
+    }
   }
   function setPager(data) {
     const page = Number(data.page || 0);
@@ -491,14 +501,19 @@
       JSON.stringify(args) === JSON.stringify(nextArgs);
     args = nextArgs;
     back.hidden = stack.length === 0;
-    if (!sameView) {
-      root.replaceChildren();
-      pager.hidden = true;
-    }
+    // Preserve the old DOM dimensions under a loading mask until the response arrives.
+    if (!sameView) pager.hidden = true;
+    root.dataset.loading = 'true';
+    root.setAttribute('aria-busy', 'true');
     setTabs();
     const seq = ++requestNo;
     status.textContent = 'Загрузка истории…';
-    if (!window.canUsePremium?.()) { status.textContent = 'Требуется Premium.'; return; }
+    if (!window.canUsePremium?.()) {
+      status.textContent = 'Требуется Premium.';
+      delete root.dataset.loading;
+      root.removeAttribute('aria-busy');
+      return;
+    }
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), 8000);
     try {
@@ -530,10 +545,15 @@
     } catch (error) {
       if (seq !== requestNo) return;
       current = null;
+      if (!sameView) root.replaceChildren();
       status.textContent = error.name === 'AbortError'
         ? 'Сервер не ответил. Нажми «Обновить».' : String(error.message);
     } finally {
       clearTimeout(timeout);
+      if (seq === requestNo) {
+        delete root.dataset.loading;
+        root.removeAttribute('aria-busy');
+      }
     }
   }
   function goBack() {
@@ -548,6 +568,19 @@
   for (const button of tabs) button.addEventListener('click', () => {
     stack = []; current = null; navigate(button.dataset.historyView);
   });
+  // Roving tabindex and arrow keys for both history and archive tablists.
+  function bindKeyboardTabs(buttons) {
+    buttons.forEach((button, index) => button.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+        : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next].focus();
+      buttons[next].click();
+    }));
+  }
+  bindKeyboardTabs(tabs);
+  bindKeyboardTabs(archiveTabs);
   back.addEventListener('click', goBack);
   document.getElementById('history-archive').addEventListener('click', () => {
     stack = []; current = null; navigate('archive_days');
@@ -622,6 +655,7 @@
   window.resetHistoryCache = () => {
     ++requestNo; current = null; stack = []; lastLoad = 0;
     root.replaceChildren(); pager.hidden = true; back.hidden = true;
+    delete root.dataset.loading; root.removeAttribute('aria-busy');
     status.textContent = '';
   };
   window.clearHistoryData = () => {

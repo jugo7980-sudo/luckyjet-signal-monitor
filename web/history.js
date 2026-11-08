@@ -183,7 +183,7 @@
       ['classic', 'Стратегия №1', 'Серия ниже 2x'],
       ['high_gap', 'Стратегия №2', 'Высокий X'],
       ['target_streak', 'Стратегия №3', 'Серия ниже выбранного X'],
-      ['recovery_streak', 'Стратегия №4', 'Догон ниже выбранного X'],
+      ['recovery_streak', 'Стратегия №4', 'Фиксированная ставка после новой серии ниже X'],
       ['finance', 'Доход / Расход', 'Ставки и выплаты всех стратегий'],
     ]) {
       const expanded = openDemoStrategy === key;
@@ -754,7 +754,9 @@
           'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
         const paramsStart = root.childNodes.length;
         if (c.strategy === 'recovery_streak') {
-          info('Стратегия', 'Фиксированная ставка после N ниже x' + (c.cashout_multiplier || '1.32'));
+          info('Стратегия', (c.stake_mode === 'fixed' ?
+            'Фиксированная ставка после N ниже x' : 'Ранее: догон после N ниже x') +
+            (c.cashout_multiplier || '1.32'));
           info('Условие входа', (c.trigger_streak || 3) + ' подряд');
           info('Автовывод', 'x' + (c.cashout_multiplier || '1.32'));
           info(c.stake_mode === 'fixed' ? 'Фиксированная ставка' : 'Первая ставка', money(c.base_stake_cents));

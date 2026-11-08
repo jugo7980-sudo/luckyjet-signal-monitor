@@ -118,9 +118,9 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
                         body="window.accessState={premium:true,registered:true,username:'tester'};document.body.dataset.access='premium';window.canUsePremium=()=>true;window.refreshAccessOverview?.();")
                     return
                 url = request.request.url
-                if url.endswith('/controls.js') or url.split('?', 1)[0].endswith('/history.js'):
+                if url.split('?', 1)[0].endswith('/controls.js') or url.split('?', 1)[0].endswith('/history.js'):
                     await request.fulfill(content_type='application/javascript',
-                                          body=response('/controls.js' if url.endswith('/controls.js') else '/history.js')[2])
+                                          body=response('/controls.js' if url.split('?', 1)[0].endswith('/controls.js') else '/history.js')[2])
                 elif url.startswith('https://example.test/app'):
                     await request.fulfill(content_type='text/html', body=response('/app')[2])
                 elif '/api/controls' in url:

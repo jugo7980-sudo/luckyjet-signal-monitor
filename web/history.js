@@ -495,7 +495,7 @@
       case 'max_steps':
         heading('Максимальный шаг', 'По дням · Владивосток, UTC+10');
         if (!archive && data.view_reset) note('Данные после сброса.');
-        datePicker('max_steps');
+        datePicker('max_steps', data.days);
         if (!data.days.length) note('Нет сохранённых дней.');
         for (const d of data.days) item(formatDay(d.day),
           archive ? 'Сохранённые раунды · полнота не подтверждена' : 'Показать максимум',

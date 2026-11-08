@@ -2,9 +2,12 @@
 import hashlib
 import hmac
 import json
+import logging
 import math
 import time
 from urllib.parse import parse_qsl, parse_qs
+
+log = logging.getLogger('luckyjet.mini_app_api')
 
 
 def telegram_user(raw, token, *, now=None):
@@ -63,6 +66,44 @@ def _summary(values):
     }
 
 
+async def _recent_from_archive(redis, limit):
+    """Read actual latest completed rounds, newest first, without touching ledgers.
+
+    The Mini App's live in-memory buffer may have only 20 entries right after
+    startup. The persistent collector stream has the preceding rounds already.
+    Skip baseline/gap records, not legitimate repeated coefficient values.
+    """
+    from round_archive import STREAM_KEY
+    result = []
+    upper = '+'
+    batch_size = max(128, limit * 2)
+    # Bounded scan avoids a slow HTTP endpoint if the stream contains many gaps.
+    for _ in range(4):
+        batch = await redis.xrevrange(STREAM_KEY, max=upper, min='-', count=batch_size)
+        if not batch:
+            break
+        for _stream_id, fields in batch:
+            kind = fields.get('type', fields.get(b'type'))
+            if kind not in ('round', b'round'):
+                continue
+            raw = fields.get('coefficient', fields.get(b'coefficient'))
+            try:
+                number = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(number) and number >= 1:
+                result.append(f'{number:.2f}x')
+                if len(result) >= limit:
+                    return result
+        if len(batch) < batch_size:
+            break
+        last_id = batch[-1][0]
+        if isinstance(last_id, bytes):
+            last_id = last_id.decode('ascii')
+        upper = '(' + str(last_id)
+    return result
+
+
 async def overview(authorization, gate, token, query=''):
     if not authorization.startswith('tma '):
         return json_response('401 Unauthorized', {'error': 'Открой приложение через Telegram.'})
@@ -88,6 +129,16 @@ async def overview(authorization, gate, token, query=''):
     ledger = gate.demo_ledgers.get(uid) or DemoLedger()
     raw_history = list(gate.history_provider() or []) if gate.history_provider else []
     history = raw_history[:limit]
+    # Requesting 30/50/100 must retrieve earlier persisted rounds immediately,
+    # not wait for new rounds to fill the live buffer after a restart.
+    if len(history) < limit and getattr(gate, 'redis', None) is not None:
+        try:
+            archived = await _recent_from_archive(gate.redis, limit)
+            if len(archived) > len(history):
+                history = archived
+        except Exception:
+            # Continue serving available live data; never mutate or invent history.
+            log.exception('Failed to backfill recent coefficients from Redis archive')
     now = time.time()
     last_at = getattr(gate, 'last_round_at', None)
     age = max(0, int(now - last_at)) if isinstance(last_at, (float, int)) else None

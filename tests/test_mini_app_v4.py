@@ -231,8 +231,15 @@ def test_home_colors_removed_quick_access_and_site_web_form():
             await page.wait_for_function("document.querySelector('#monitor-uptime').textContent === '01:01:40'")
             assert await page.locator('#monitor-uptime').inner_text() == '01:01:40'
             assert await page.locator('.coef.high').evaluate('(e)=>getComputedStyle(e).color') != await page.locator('.coef.mid').evaluate('(e)=>getComputedStyle(e).color')
-            await page.locator('#recent-limit').select_option('50')
-            await page.wait_for_function("document.querySelectorAll('#coef-grid .coef').length === 50")
+            # A selector change returns ALL previously saved values immediately.
+            # This mock never produces a new round; filling by future rounds fails.
+            for limit in (30, 50, 100, 20):
+                await page.locator('#recent-limit').select_option(str(limit))
+                await page.wait_for_function(
+                    '(count) => document.querySelectorAll("#coef-grid .coef").length === count',
+                    arg=limit,
+                )
+                assert await page.locator('#coef-grid .coef').count() == limit
             await page.locator('nav [data-tab=account]').click()
             await page.locator('#site-connection-panel').wait_for(state='visible')
             assert not await page.locator('#site-connection-panel').evaluate('(e) => e.open')

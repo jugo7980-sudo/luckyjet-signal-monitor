@@ -142,6 +142,38 @@
     } else button.disabled = true;
     root.appendChild(button);
   }
+  // Wrap already-rendered read-only DOM rows in one compact, native disclosure.
+  // Section names enforce one expanded sibling at a time, including on mobile.
+  function foldFrom(start, title, preview = '', id = '', group = '', compactSteps = false) {
+    const nodes = [...root.childNodes].slice(start);
+    if (!nodes.length) return null;
+    const panel = el('details', 'history-fold' + (compactSteps ? ' history-fold-steps' : ''));
+    if (id) panel.id = id;
+    if (group) panel.name = group;
+    const summary = el('summary', 'history-fold-summary');
+    const labels = el('span', 'history-fold-label');
+    labels.appendChild(el('strong', '', title));
+    if (preview) labels.appendChild(el('small', '', preview));
+    summary.append(labels, el('span', 'history-fold-chevron', '⌄'));
+    const body = el('div', 'history-fold-body');
+    for (const node of nodes) body.appendChild(node);
+    panel.append(summary, body);
+    root.appendChild(panel);
+    panel.addEventListener('toggle', () => {
+      if (current && ['cycles', 'high_cycles'].includes(current.view)) setPager(current);
+    });
+    return panel;
+  }
+  function openedFoldIds() {
+    return [...root.querySelectorAll('details.history-fold[open]')].map(node => node.id).filter(Boolean);
+  }
+  function restoreFolds(ids) {
+    for (const id of ids || []) {
+      const panel = root.querySelector('details.history-fold#' + id);
+      if (panel) panel.open = true;
+    }
+    if (current) setPager(current);
+  }
   function demoStrategySwitcher(view) {
     const wrap = el('div', 'demo-history-switcher');
     wrap.setAttribute('role', 'group');
@@ -181,7 +213,7 @@
     const s = data.stats;
     if (!s) { note('Статистика недоступна. Обнови историю.'); return; }
     currency = s.currency || 'USD';
-    heading('Статистика');
+    const start = root.childNodes.length;
     if (s.view_reset) note('Показаны циклы после сброса вкладки. Фактический архив сохранён.');
     info('Валюта', currency);
     info('Всего сессий', s.total);
@@ -192,6 +224,8 @@
     if (s.reference_changed) info('Новый опорный коэффициент', s.reference_changed);
     info('По истории', signedMoney(s.history_net_cents));
     info('Среднее шагов', s.average_steps);
+    foldFrom(start, 'Статистика', s.total + ' циклов · ' + signedMoney(s.history_net_cents),
+      'history-demo-stats', 'history-demo-sections');
   }
   function setTabs() {
     const archive = isArchive(args.view);
@@ -234,7 +268,9 @@
     const visible = ['days', 'high_days', 'high_day', 'cycles', 'high_cycles', 'max_steps'].includes(isArchive(data.view) ? data.view.slice(8) : data.view);
     const demoVisible = data.view === 'cycles' ? openDemoStrategy === 'classic'
       : data.view === 'high_cycles' ? openDemoStrategy === 'high_gap' : true;
-    pager.hidden = !visible || pages <= 1 || !demoVisible;
+    const cyclesVisible = ['cycles', 'high_cycles'].includes(data.view)
+      ? Boolean(root.querySelector('#history-demo-cycles[open]')) : true;
+    pager.hidden = !visible || pages <= 1 || !demoVisible || !cyclesVisible;
     if (!visible) return;
     document.getElementById('history-page-number').textContent = (page + 1) + ' / ' + pages;
     document.getElementById('history-prev').disabled = page <= 0;
@@ -296,22 +332,30 @@
         datePicker('archive', data.day);
         info('Выбранная дата', formatDay(data.day));
         if (data.aggregate) {
+          const archiveAggregateStart = root.childNodes.length;
           const a = data.aggregate;
           info('Раундов по архиву', a.total);
           info('<2x', a.lt2);
           for (const t of LIMITS) info('>' + t + 'x', a[String(t)] ?? 0);
           info('Максимальная серия <2x', data.max_low_streak ?? 'Нет данных');
+          foldFrom(archiveAggregateStart, 'Сводка по архиву',
+            a.total + ' сохранённых раундов', 'history-archive-summary', 'history-archive-sections');
           note('Подсчёт по времени получения записей, а не по неподтверждённому времени игры.');
         } else if (data.truncated) note('Слишком много событий для полного подсчёта за один запрос. Записи ниже доступны постранично.');
         if (data.integrity) {
+          const archiveIntegrityStart = root.childNodes.length;
           const e = data.integrity;
           info('Записано раундов', e.archived_rounds ?? 'Нет данных');
           info('Разрывы в архиве', e.gaps ?? 'Нет данных');
           pollCoverage(e);
+          foldFrom(archiveIntegrityStart, 'Проверка полноты',
+            'Состояние: ' + (e.status === 'verified' ? 'согласовано' : 'требует проверки'),
+            'history-archive-integrity', 'history-archive-sections');
           note(e.status === 'verified' ? 'Сохранённые записи согласуются по времени и счётчикам; полнота истории самой игры не доказана.' :
             'Полнота данных источника не гарантирована. ' + ((e.reasons || []).join('; ') || 'Данные ещё не проверены.') + '.');
         }
         if (!data.items.length) note('За выбранную дату нет записей в архиве.');
+        const archiveRecordsStart = root.childNodes.length;
         for (const record of data.items) {
           const received = Number(record.observed_at);
           const time = Number.isFinite(received) && received > 0 ? formatTime(received / 1000) : 'Время неизвестно';
@@ -329,17 +373,22 @@
           more.addEventListener('click', () => navigate('archive', {day: data.day, cursor: data.next_cursor}, true));
           root.appendChild(more);
         }
+        foldFrom(archiveRecordsStart, 'Записи архива', data.items.length + ' на странице',
+          'history-archive-records', 'history-archive-sections');
         break;
       }
       case 'days':
         dateSearch('days', data.days);
         if (!data.days.length) note('Нет сохранённых дней.');
+        const daysStart = root.childNodes.length;
         for (const row of data.days) {
           const day = typeof row === 'string' ? row : row.day;
           item(formatDay(day), archive ? (row.has_records ? 'Неполные данные' : 'Нет записей · неполные данные')
             : 'Коэффициенты и количество раундов',
             () => navigate(viewFor('day'), {day}, true));
         }
+        foldFrom(daysStart, 'Дни с коэффициентами', data.days.length + ' дат',
+          'history-days-list', 'history-date-lists');
         break;
       case 'day': {
         const s = data.summary || {};
@@ -351,9 +400,9 @@
         if (!distribution || !distribution.complete_scan || !distribution.counts) {
           note('Распределение по X недоступно: архив за дату превышает предел безопасной проверки либо отсутствует.');
         } else {
-          heading('Распределение коэффициентов');
           if (Number(s.total) !== Number(distribution.total))
             note('В прежней сводке и фактическом архиве разное число раундов. Ниже учитываются только записи архива.');
+          const distributionStart = root.childNodes.length;
           note('Каждый сохранённый раунд учитывается один раз. Диапазон x5 = 5.00–5.99x.');
           const counts = distribution.counts;
           const total = Number(distribution.total) || 0;
@@ -369,6 +418,7 @@
           ];
           for (const [title, entries] of groups) {
             const details = el('details', 'history-distribution-group');
+            details.name = 'history-coefficient-bands';
             const sum = el('summary', '', title);
             const groupTotal = entries.reduce((n, [key]) => n + (Number(counts[key]) || 0), 0);
             sum.appendChild(el('span', '', groupTotal + ' раз'));
@@ -383,6 +433,7 @@
           }
           // Large coefficients use the same collapsible cards as x2–x150.
           // Counts are exclusive bands from immutable receipts, not cumulative >X.
+          let highBandsMismatch = false;
           const highBands = [
             ['151-199', 'x151–x199'], ['200-299', 'x200–x299'],
             ['300-499', 'x300–x499'], ['500-799', 'x500–x799'],
@@ -395,6 +446,7 @@
           } else {
             for (const [key, title] of highBands) {
               const details = el('details', 'history-distribution-group');
+              details.name = 'history-coefficient-bands';
               const sum = el('summary', '', title);
               const n = Number(distribution.high_ranges[key]) || 0;
               sum.appendChild(el('span', '', n + ' раз'));
@@ -419,9 +471,12 @@
               root.appendChild(details);
             }
             const highSum = highBands.reduce((sum, [key]) => sum + (Number(distribution.high_ranges[key]) || 0), 0);
-            if (highSum !== (Number(counts.above_150) || 0))
-              note('Внимание: суммы высоких коэффициентов не совпадают. Проверьте данные архива.');
+            highBandsMismatch = highSum !== (Number(counts.above_150) || 0);
           }
+          foldFrom(distributionStart, 'Распределение коэффициентов',
+            total + ' раундов · 18 диапазонов', 'history-coeff-distribution', 'history-day-sections');
+          if (highBandsMismatch)
+            note('Внимание: суммы высоких коэффициентов не совпадают. Проверьте данные архива.');
           note('Учтено в архиве: ' + total + ' раундов. Подсчёт по времени получения, полнота истории источника не гарантирована.');
         }
         const check = data.integrity;
@@ -441,22 +496,28 @@
           info('Раундов после >100x', data.gap ? 'Неполные данные' : data.since_high);
         dateSearch('high_days', data.days);
         if (!data.days.length) note('Нет сохранённых дней.');
+        const highDaysStart = root.childNodes.length;
         for (const row of data.days) {
           const day = typeof row === 'string' ? row : row.day;
           item(formatDay(day), archive ?
             (row.count ? row.count + ' событий · интервалы могут быть неполными' : 'Нет подтверждённых интервалов') :
             'Посмотреть интервалы', () => navigate(viewFor('high_day'), {day}, true));
         }
+        foldFrom(highDaysStart, 'Дни с высокими X', data.days.length + ' дат',
+          'history-high-days-list', 'history-date-lists');
         break;
       case 'high_day':
         heading(formatDay(data.day), 'Интервалы >100x · новые сначала');
         if (!data.items.length) note('За этот день нет сохранённых интервалов.');
         if (data.truncated) note('Неполные данные: превышен предел проверки.');
+        const highEventsStart = root.childNodes.length;
         for (const entry of data.items) {
           const count = entry.rounds == null ? 'Данные неполные' : entry.rounds + ' раундов';
           item(String(entry.value) + 'x', count + ' · ' + formatTime(entry.stamp),
             () => navigate(viewFor('high_item'), archive ? {day: data.day, id: entry.id} : {id: entry.id}, true));
         }
+        foldFrom(highEventsStart, 'Интервалы и коэффициенты',
+          data.items.length + ' результатов', 'history-high-event-list', 'history-day-sections');
         break;
       case 'high_item': {
         const e = data.item;
@@ -473,7 +534,6 @@
           demoStrategySwitcher(view);
           if (openDemoStrategy !== (view === 'high_cycles' ? 'high_gap' : 'classic')) break;
           demoStrategyStats(data);
-          heading('История циклов', data.total + ' циклов · новые сначала');
         } else {
           heading('История DEMO', data.total + ' циклов · новые сначала');
           datePicker('cycles', data.days || data.day);
@@ -481,6 +541,7 @@
             () => navigate(viewFor('demo_stats'), data.day ? {day: data.day} : {}, true));
         }
         if (!data.items.length) note('Завершённых циклов пока нет.');
+        const cycleListStart = root.childNodes.length;
         for (const c of data.items) {
           currency = c.currency || 'USD';
           const result = c.outcome === 'incomplete_data' || c.net_cents == null
@@ -491,6 +552,10 @@
             () => navigate(view === 'high_cycles' ? 'high_cycle' : viewFor('cycle'),
               archive ? {id: c.id} : {index: c.index}, true), result);
         }
+        foldFrom(cycleListStart, 'История циклов', data.total + ' циклов · новые сначала',
+          archive ? 'history-archive-cycles' : 'history-demo-cycles',
+          archive ? 'history-archive-sections' : 'history-demo-sections');
+        setPager(data);
         break;
       case 'high_cycle':
       case 'cycle': {
@@ -502,6 +567,7 @@
           reference_changed: 'Новый опорный коэффициент'};
         heading(archive ? 'Цикл DEMO' : view === 'high_cycle' ? 'Стратегия №2 · цикл' :
           'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
+        const paramsStart = root.childNodes.length;
         if (c.strategy === 'high_gap') {
           info('Стратегия', 'После >x' + (c.reference_threshold || '100'));
           info('Период ожидания', (c.wait_rounds ?? '—') + ' раундов');
@@ -512,17 +578,25 @@
         info('Начало', formatTime(c.started_at));
         info('Завершение', formatTime(c.ended_at));
         info('Шагов', c.steps);
+        foldFrom(paramsStart, 'Параметры', c.steps + ' шагов · ' + currency,
+          'history-cycle-params', 'history-cycle-sections');
+        const resultStart = root.childNodes.length;
         info('Результат', reasons[c.outcome] || 'Неизвестно');
-        (c.rounds || []).forEach((r, i) => {
-          const amount = r.payout_cents ? Number(r.payout_cents) - Number(r.stake_cents)
-            : -Number(r.stake_cents);
-          info('Шаг ' + (i + 1) + ' · ' + r.coefficient + 'x', signedMoney(amount));
-        });
         info('Всего поставлено', money(c.total_stake_cents));
         info('Выплата', c.payout_cents == null ? 'Нет данных' : money(c.payout_cents));
         info('Чистый итог', signedMoney(c.net_cents));
         info('Баланс до', money(c.balance_before_cents));
         info('Баланс после', money(c.balance_after_cents));
+        foldFrom(resultStart, 'Результат', 'Чистый итог: ' + signedMoney(c.net_cents) +
+          ' · ' + (reasons[c.outcome] || 'Неизвестно'), 'history-cycle-outcome', 'history-cycle-sections');
+        const stepsStart = root.childNodes.length;
+        (c.rounds || []).forEach((r, i) => {
+          const amount = r.payout_cents ? Number(r.payout_cents) - Number(r.stake_cents)
+            : -Number(r.stake_cents);
+          info('Шаг ' + (i + 1) + ' · ' + r.coefficient + 'x', signedMoney(amount));
+        });
+        foldFrom(stepsStart, 'Пошаговые ставки', (c.rounds || []).length +
+          ' записей · открыть полный список', 'history-cycle-steps', 'history-cycle-sections', true);
         break;
       }
       case 'demo_stats': {
@@ -531,7 +605,7 @@
           if (data.truncated) { note('Неполные данные: слишком много записей.'); break; }
           const strategies = data.strategies || {classic: data.currencies || {}};
           for (const [strategy, groups] of Object.entries(strategies)) {
-            heading(strategy === 'high_gap' ? 'Стратегия №2' : 'Стратегия №1');
+            const archiveStatsStart = root.childNodes.length;
             for (const [code, group] of Object.entries(groups)) {
               currency = code;
               info('Валюта', code);
@@ -544,6 +618,9 @@
               info('По истории', signedMoney(group.history_net_cents));
               info('Среднее шагов', group.average_steps);
             }
+            foldFrom(archiveStatsStart, strategy === 'high_gap' ? 'Стратегия №2' : 'Стратегия №1',
+              Object.keys(groups).length + ' валют',
+              'history-archive-stats-' + strategy, 'history-archive-stats');
           }
           if (!data.total) note('Нет сохранённых циклов.');
           break;
@@ -568,10 +645,13 @@
         if (!archive && data.view_reset) note('Данные после сброса.');
         dateSearch('max_steps', data.days);
         if (!data.days.length) note('Нет сохранённых дней.');
+        const stepsDaysStart = root.childNodes.length;
         for (const d of data.days) item(formatDay(d.day),
           archive ? 'Сохранённые раунды · полнота не подтверждена' : 'Показать максимум',
           () => navigate(viewFor('max_step_day'), {day: d.day}, true),
           d.steps == null ? 'Нет данных' : d.steps + ' шаг.');
+        foldFrom(stepsDaysStart, 'Максимальные шаги по дням', data.days.length + ' дат',
+          'history-max-step-days', 'history-date-lists');
         break;
       case 'max_step_day':
         heading(formatDay(data.day), 'Максимальный шаг · Владивосток, UTC+10');
@@ -582,7 +662,8 @@
     }
   }
   async function navigate(view, extra = {}, push = false) {
-    if (push && current) stack.push({data: current, args: {...args}});
+    if (push && current) stack.push({data: current, args: {...args}, folds: openedFoldIds()});
+    const restoring = !push && view === args.view ? openedFoldIds() : [];
     const nextArgs = {view, page: 0, ...extra};
     const sameView = Boolean(current) && !push &&
       JSON.stringify(args) === JSON.stringify(nextArgs);
@@ -622,6 +703,7 @@
         ) : null;
         const scrollTop = sameView ? window.scrollY : null;
         render(result);
+        restoreFolds(restoring);
         if (openGroups) {
           for (const node of root.querySelectorAll('details.history-distribution-group')) {
             if (openGroups.has(node.querySelector('summary')?.firstChild?.textContent?.trim())) node.open = true;
@@ -650,6 +732,7 @@
     args = previous.args;
     status.textContent = '';
     render(previous.data);
+    restoreFolds(previous.folds);
     return true;
   }
   for (const button of tabs) button.addEventListener('click', () => {

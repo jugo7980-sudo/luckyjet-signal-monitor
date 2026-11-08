@@ -95,6 +95,7 @@ def test_mobile_demo_history_two_exclusive_accordions_and_own_stats():
             assert await page.locator('#history-content .history-item').count() == 0
 
             await classic.click()
+            await page.locator('#history-demo-cycles > summary').click()
             await page.locator('#history-content .history-item').wait_for()
             await expect(classic).to_have_attribute('aria-expanded', 'true')
             await expect(high).to_have_attribute('aria-expanded', 'false')
@@ -102,6 +103,7 @@ def test_mobile_demo_history_two_exclusive_accordions_and_own_stats():
             assert 'cycles' in requests
 
             await high.click()
+            await page.locator('#history-demo-cycles > summary').click()
             await page.locator('#history-content .history-item').wait_for()
             await expect(classic).to_have_attribute('aria-expanded', 'false')
             await expect(high).to_have_attribute('aria-expanded', 'true')
@@ -115,6 +117,7 @@ def test_mobile_demo_history_two_exclusive_accordions_and_own_stats():
             assert await page.locator('#history-pager').is_hidden()
 
             await high.click()
+            await page.locator('#history-demo-cycles > summary').click()
             await page.locator('#history-content .history-item').click()
             assert 'high_cycle' in requests
             await expect(high).to_have_attribute('aria-expanded', 'true')

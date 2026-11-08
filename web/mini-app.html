@@ -818,6 +818,24 @@ button:active:not(:disabled){transform:scale(.985)}
 #page-history .demo-history-choice-label small{font-size:11px;color:#c7b5d9;line-height:1.3}
 #page-history .demo-history-chevron{color:#c6a7e8;font-size:20px;flex:none}
 #page-history .demo-history-choice:focus-visible{outline:2px solid #bc91ef;outline-offset:2px}
+/* v0.2.20: compact, native folding for dense factual-history views. */
+#page-history .history-fold{margin:7px 0;border:0;border-radius:13px;background:#251c34;overflow:hidden}
+#page-history .history-fold-summary{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:57px;list-style:none;cursor:pointer;padding:10px 13px;color:#e5d9ef}
+#page-history .history-fold-summary::-webkit-details-marker{display:none}
+#page-history .history-fold-label{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+#page-history .history-fold-label>strong{font-size:13px;font-weight:650;line-height:1.3}
+#page-history .history-fold-label>small{font-size:11px;color:#b9a9ca;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#page-history .history-fold-chevron{font-size:18px;color:#c49ae2;flex:none;transition:transform .15s}
+#page-history .history-fold[open]>.history-fold-summary .history-fold-chevron{transform:rotate(180deg)}
+#page-history .history-fold[open]{background:#291f39}
+#page-history .history-fold-summary:focus-visible{outline:2px solid #ac7bd6;outline-offset:-2px}
+#page-history .history-fold-body{padding:2px 9px 11px}
+#page-history .history-fold-body>.history-heading{font-size:13px;margin:8px 0 4px}
+#page-history .history-fold-body>.history-note{margin:5px 0}
+#page-history .history-fold-steps .history-metric{min-height:43px!important;margin:3px 0!important;padding:7px 9px!important;border-radius:8px}
+#page-history .history-fold-steps .history-metric>span{font-size:12px;line-height:1.3}
+#page-history .history-fold-steps .history-metric>strong{font-size:12px;font-variant-numeric:tabular-nums}
+#page-history .history-fold .history-distribution-group{margin:4px 0}
 </style></head><body data-access="guest">
 <svg style="display:none" aria-hidden="true"><symbol id="plane" viewBox="0 0 24 24"><path d="m21 3-6 18-4-8-8-4 18-6Z"/><path d="m11 13 10-10"/></symbol><symbol id="home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/></symbol><symbol id="demo" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4 19a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2L14 9V3M7 15h10"/></symbol><symbol id="history" viewBox="0 0 24 24"><path d="M4 4v5h5M4 9a8 8 0 1 1 0 7M12 7v5l3 2"/></symbol><symbol id="settings" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="#15131d"/><circle cx="15" cy="12" r="2" fill="#15131d"/><circle cx="9" cy="18" r="2" fill="#15131d"/></symbol><symbol id="account" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol><symbol id="rocket" viewBox="0 0 24 24"><path d="M5 16.5 3.5 21 8 19.5M9 15l-3-3 3-5c3-3 7-4 12-4 0 5-1 9-4 12l-5 3-3-3Z"/><circle cx="15.5" cy="8.5" r="2"/></symbol></svg>
 <div class="wrap"><header class="topbar"><div class="app-context" aria-label="Счёт DEMO"><span class="app-context-label">DEMO</span><small id="header-premium" class="premium-only">Premium</small></div><div class="topbar-right"><div class="top-balance"><strong id="header-balance">—</strong></div><div class="top-actions"><button type="button" class="top-premium" id="top-premium" hidden>Premium</button><button type="button" class="top-login" id="top-login">Войти</button></div></div></header>

@@ -17,10 +17,10 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                 errors, actions, views = [], [], []
                 page.on('pageerror', lambda e: errors.append(str(e)))
                 target = {'enabled': False, 'target': '1.32', 'trigger': 3,
-                          'stake_cents': 15000, 'phase': 'waiting', 'streak': 2,
+                          'stake_cents': 15000, 'safe_losses': 2, 'phase': 'waiting', 'streak': 2,
                           'steps': 0, 'total_stake_cents': 0, 'next_stake_cents': 15000}
                 prefs = {'enabled': True, 'sound': True, 'delete_delay': 10,
-                         'events': {'armed':True,'betting':True,'loss':False,'goal':True,'stopped':True}}
+                         'events': {'armed':True,'betting':True,'loss':False,'goal':True,'safe':True,'stopped':True}}
                 demo = {'currency': 'KRW', 'enabled': False, 'active': False,
                         'balance_cents': 10000000, 'balance_verified': True,
                         'base_stake_cents': 15000, 'trigger': 3, 'low_streak': 0,
@@ -54,7 +54,8 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                             if payload['action'] == 'recovery_streak_config':
                                 cfg = payload['value']
                                 target.update(target=cfg['target'],trigger=cfg['trigger'],
-                                              stake_cents=int(cfg['stake'])*100)
+                                              stake_cents=int(cfg['stake'])*100,
+                                              safe_losses=cfg['safe_losses'])
                             elif payload['action'] == 'recovery_streak_toggle':
                                 target['enabled'] = not target['enabled']
                             elif payload['action'] == 'recovery_notice_event':
@@ -106,7 +107,11 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                 await page.locator('#recovery-streak-x').fill('1.43')
                 await page.locator('#recovery-streak-trigger').select_option('4')
                 await page.locator('#recovery-streak-stake').fill('150')
+                await page.locator('#recovery-streak-safe').select_option('2')
                 await page.locator('#recovery-streak-save').click()
+                assert actions[-1]['value'] == {
+                    'target':'1.43','trigger':4,'stake':'150','safe_losses':2}
+                await expect(page.locator('#recovery-streak-safe')).to_have_value('2')
                 await page.wait_for_function('document.getElementById("recovery-streak-x").value === "1.43"')
                 await expect(page.locator('#demo-recovery-preview')).to_contain_text('Выключена')
                 await page.locator('#recovery-streak-toggle').click()
@@ -118,6 +123,7 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                 await expect(page.locator('#settings-recovery-enabled')).to_be_visible()
                 await page.locator('#settings-recovery-loss').click()
                 await expect(page.locator('#settings-recovery-loss')).to_have_text('ВКЛ')
+                await expect(page.locator('#settings-recovery-safe')).to_have_text('ВКЛ')
                 await page.locator('nav [data-tab=history]').click()
                 assert not await page.locator('#recovery-streak-notice-options').evaluate('(n) => n.open')
                 await page.locator('[data-history-view=cycles]').click()

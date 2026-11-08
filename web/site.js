@@ -4,6 +4,8 @@
   const tg = window.Telegram && window.Telegram.WebApp;
   const page = document.getElementById('page-account');
   const section = document.getElementById('site-section');
+  const disclosure = document.getElementById('site-connection-panel');
+  const preview = document.getElementById('site-connect-preview');
   const status = document.getElementById('site-status-text');
   const notice = document.getElementById('site-message');
   const login = document.getElementById('site-login-form');
@@ -38,6 +40,8 @@
     state = data;
     visible = true;
     section.hidden = false;
+    if (disclosure) disclosure.hidden = false;
+    if (preview) preview.textContent = labels[data.phase] || 'Проверка';
     status.textContent = labels[data.phase] || 'Состояние неизвестно.';
     if (data.error) status.textContent += ' ' + data.error;
     login.hidden = ['connecting', 'code', 'retry_code'].includes(data.phase);
@@ -496,6 +500,8 @@
   window.clearSiteData = () => {
     clearTimeout(timer);
     section.hidden = true;
+    if (disclosure) { disclosure.hidden = true; disclosure.open = false; }
+    if (preview) preview.textContent = '—';
     visible = false;
     lastLoad = 0;
     state = null;

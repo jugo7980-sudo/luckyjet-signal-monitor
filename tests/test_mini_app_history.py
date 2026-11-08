@@ -242,6 +242,10 @@ def test_history_static_asset_and_mobile_flow():
             await page.get_by_text('06.11.2026').first.wait_for()
             await page.locator('#history-content button.history-item').first.click()
             await page.get_by_text('Всего раундов').wait_for()
+            warning = page.locator('#history-content .history-note-critical').first
+            assert 'разное число' in await warning.inner_text()
+            assert await warning.locator('.history-note-text').evaluate(
+                "(n) => getComputedStyle(n).whiteSpace === 'normal'")
             await page.get_by_text('x151–x199').click()
             await page.get_by_text('x151.00').wait_for()
             assert await page.get_by_text('x151.00').count() == 1

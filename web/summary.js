@@ -275,10 +275,40 @@
     const expanded = byId('summary-help-toggle').getAttribute('aria-expanded') === 'true';
     if (expanded) byId('summary-help-toggle').click();
   }
-  byId('summary-help-close').addEventListener('click', closeOverviewHelp);
-  byId('summary-help-body').addEventListener('click', event => { if (event.target === event.currentTarget) closeOverviewHelp(); });
+  const overviewButton = byId('summary-help-toggle');
+  const overviewBody = byId('summary-help-body');
+  const overviewClose = byId('summary-help-close');
+  overviewButton.addEventListener('click', () => {
+    if (!overviewBody.hidden) overviewClose.focus();
+    else overviewButton.focus();
+  });
+  overviewClose.addEventListener('click', () => {
+    closeOverviewHelp();
+    overviewButton.focus();
+  });
+  overviewBody.addEventListener('click', event => {
+    if (event.target === event.currentTarget) {
+      closeOverviewHelp();
+      overviewButton.focus();
+    }
+  });
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { closeMetricPopup(); closeOverviewHelp(); }
+    if (event.key === 'Tab') {
+      // Help dialogs have one actionable control. Keep keyboard focus inside.
+      if (!popup.hidden) {
+        event.preventDefault();
+        byId('summary-metric-close').focus();
+      } else if (!overviewBody.hidden) {
+        event.preventDefault();
+        overviewClose.focus();
+      }
+    } else if (event.key === 'Escape') {
+      if (!popup.hidden) closeMetricPopup();
+      else if (!overviewBody.hidden) {
+        closeOverviewHelp();
+        overviewButton.focus();
+      }
+    }
   });
   button.addEventListener('click', load);
   fields.forEach(id => byId(id).addEventListener('change', safeStore));

@@ -194,9 +194,12 @@ async def access(authorization, cookie, gate, bot_token, method='GET', body=None
             saved = await _registered(gate.redis, uid)
             profile = saved or _identity(uid)
     if method == 'GET':
-        if (not profile or
-                await gate.redis.exists(APP_LOGOUT_PREFIX + str(profile['id']))):
+        if not profile:
             return json_response('200 OK', await _status(gate, None))
+        if await gate.redis.exists(APP_LOGOUT_PREFIX + str(profile['id'])):
+            return json_response('200 OK', {
+                **(await _status(gate, None)), 'signed_out': True,
+            })
         saved = await _registered(gate.redis, profile['id'])
         if saved:
             profile = {**saved, **{k: v for k,v in profile.items() if v}}
@@ -293,7 +296,9 @@ async def access(authorization, cookie, gate, bot_token, method='GET', body=None
         # End the LuckyJet session, not the Telegram identity or Premium grant.
         if authorization.startswith('tma '):
             await gate.redis.set(APP_LOGOUT_PREFIX + str(uid), '1')
-            return json_response('200 OK', await _status(gate, None))
+            return json_response('200 OK', {
+                **(await _status(gate, None)), 'signed_out': True,
+            })
         secret = _cookie_token(cookie)
         if secret:
             await gate.redis.delete(_redis_session_key(secret))

@@ -967,7 +967,7 @@ if(app){app.ready();app.expand();try{app.setHeaderColor('#15131d');app.setBackgr
 
 const MIN_REFRESH_MS=100; // Earliest next request; actual freshness also depends on network and source.
 let refreshTimer=null,feedbackTimer=null,loading=false,allowed=true;
-let failedPolls=0,lastCoefficientKey='',lastProbeKey='',lastSuccessfulCheck=null,hasData=false,manualRequested=false;
+let failedPolls=0,lastCoefficientKey='',lastProbeKey='',lastSuccessfulCheck=null,hasData=false,manualRequested=false,pendingLimitRefresh=false;
 const refreshButton=document.getElementById('refresh-data');
 const recentLimit=document.getElementById('recent-limit');
 const isLiveTab=()=>!document.getElementById('page-home').hidden||((window.accessState?.premium||false)&&!document.getElementById('page-demo').hidden);
@@ -1003,7 +1003,7 @@ async function loadOverview(manual=false){
     }
     throw new Error(data.error||'Не удалось обновить данные.');
   }
-  if(premium!==Boolean(window.accessState?.premium))return;
+  if(premium!==Boolean(window.accessState?.premium)||chosenLimit!==recentLimit.value)return;
   failedPolls=0;succeeded=true;hasData=true;
   const coefficientKey=chosenLimit+':'+JSON.stringify(data.coefficients);
   if(coefficientKey!==lastCoefficientKey){
@@ -1058,12 +1058,13 @@ async function loadOverview(manual=false){
  }finally{
   clearTimeout(timeout);loading=false;
   const showFeedback=manual||manualRequested;manualRequested=false;
+  if(pendingLimitRefresh){pendingLimitRefresh=false;clearTimeout(refreshTimer);loadOverview();return;}
   if(succeeded){if(showFeedback)flashSuccess();else if(refreshButton.dataset.state!=='success')refreshState('idle')}
   if(allowed&&!document.hidden)refreshTimer=setTimeout(()=>loadOverview(),succeeded?(isLiveTab()?MIN_REFRESH_MS:2000):Math.min(5000,MIN_REFRESH_MS*Math.pow(2,failedPolls)));
  }
 }
 refreshButton.addEventListener('click',()=>{if(loading){manualRequested=true;refreshState('loading')}else{allowed=true;loadOverview(true)}});
-recentLimit.addEventListener('change',()=>{clearTimeout(refreshTimer);lastCoefficientKey='';if(!loading)loadOverview()});
+recentLimit.addEventListener('change',()=>{clearTimeout(refreshTimer);lastCoefficientKey='';if(loading)pendingLimitRefresh=true;else loadOverview()});
 document.addEventListener('visibilitychange',()=>{clearTimeout(refreshTimer);if(!document.hidden&&allowed)loadOverview()});
 window.refreshAccessOverview=()=>{clearTimeout(refreshTimer);allowed=true;lastCoefficientKey='';lastProbeKey='';if(!loading)loadOverview();else manualRequested=true;};
 loadOverview();

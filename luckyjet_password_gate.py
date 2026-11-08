@@ -41,6 +41,7 @@ VLADIVOSTOK_TIME = timezone(timedelta(hours=10), name="Asia/Vladivostok")
 from history_panels import HistoryPanels
 from notification_queue import streak_view
 from telegram_delivery import interactive
+from high_gap_notifications import changed_events, format_event, normalize as normalize_high_gap_notices
 
 
 class TelegramPasswordGate(HistoryPanels):
@@ -72,6 +73,8 @@ class TelegramPasswordGate(HistoryPanels):
         self.menu_deadlines = {}
         self._menu_tasks = {}
         self.notifications_disabled = set()
+        self.high_gap_notice_settings = {}
+        self._high_gap_notice_pending = {}
         self.silent_users = set()
         self.thresholds = {}
         self.delete_seconds = {}
@@ -272,6 +275,12 @@ class TelegramPasswordGate(HistoryPanels):
         self.notifications_disabled = {
             int(x) for x in await self.redis.smembers("luckyjet:notifications_disabled")
         }
+        self.high_gap_notice_settings = {}
+        for user, raw in (await self.redis.hgetall("luckyjet:high_gap_notices:v1")).items():
+            try:
+                self.high_gap_notice_settings[int(user)] = normalize_high_gap_notices(json.loads(raw))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                log.warning("Ignoring invalid Strategy 2 notification preferences")
         self.history_hidden = {int(x) for x in await self.redis.smembers("luckyjet:history_hidden")}
         self.silent_users = {int(x) for x in await self.redis.smembers("luckyjet:silent_users")}
         self.chats = {
@@ -359,6 +368,12 @@ class TelegramPasswordGate(HistoryPanels):
         pipe.hset("luckyjet:thresholds", uid, str(self.user_threshold(user_id)))
         pipe.hset("luckyjet:delete_seconds", uid, str(self.user_delete_seconds(user_id)))
         pipe.hset("luckyjet:history_sizes", uid, str(self.user_history_size(user_id)))
+        if user_id in self.high_gap_notice_settings:
+            pipe.hset("luckyjet:high_gap_notices:v1", uid,
+                      json.dumps(normalize_high_gap_notices(self.high_gap_notice_settings[user_id]),
+                                 separators=(",", ":")))
+        else:
+            pipe.hdel("luckyjet:high_gap_notices:v1", uid)
         await pipe.execute()
 
     async def is_authorized(self, user_id):
@@ -2094,6 +2109,62 @@ class TelegramPasswordGate(HistoryPanels):
         except (httpx.HTTPError, RuntimeError):
             log.warning("Demo warning delivery failed: user_id=%s", user_id)
 
+    async def _send_high_gap_notice(self, user_id, event, text, round_id=None, *, test=False):
+        """Separate Strategy 2 delivery. Redis dedup survives monitor restarts."""
+        user_id = int(user_id)
+        if (not callable(self.request) or self.chats.get(user_id) != user_id
+                or user_id not in self.authorized or user_id in self.blocked):
+            return False
+        prefs = normalize_high_gap_notices(self.high_gap_notice_settings.get(user_id))
+        if not test and (not prefs['enabled'] or not prefs['events'].get(event, False)):
+            return False
+        try:
+            if not test and round_id is not None and self.redis is not None:
+                token = f"luckyjet:high-gap-notice:v1:{user_id}:{event}:{round_id}"
+                claimed = await self.redis.set(token, "1", ex=30 * 86400, nx=True)
+                if not claimed:
+                    return False
+            result = await self.request("sendMessage", {
+                "chat_id": user_id,
+                "text": text,
+                "disable_notification": not prefs['sound'],
+            })
+            message_id = result.get("result", {}).get("message_id")
+            if message_id is not None and prefs['delete_delay'] > 0:
+                task = asyncio.create_task(
+                    self._schedule_delete(user_id, int(message_id), prefs['delete_delay'])
+                )
+                self._deletion_tasks.add(task)
+                task.add_done_callback(self._deletion_tasks.discard)
+            return True
+        except Exception:
+            # Telegram or Redis must never interrupt source ingestion or DEMO.
+            log.exception("Strategy 2 notification failed: user_id=%s event=%s", user_id, event)
+            return False
+
+    def _queue_high_gap_notices(self, user_id, events, round_id):
+        """Order notices per user without awaiting Telegram in the round processor."""
+        previous = self._high_gap_notice_pending.get(user_id)
+
+        async def deliver():
+            if previous is not None:
+                try:
+                    await previous
+                except Exception:
+                    log.exception("Previous Strategy 2 notification task failed")
+            for event, text in events:
+                await self._send_high_gap_notice(user_id, event, text, round_id)
+
+        task = asyncio.create_task(deliver())
+        self._high_gap_notice_pending[user_id] = task
+        self._refresh_tasks.add(task)
+
+        def finished(done):
+            self._refresh_tasks.discard(done)
+            if self._high_gap_notice_pending.get(user_id) is done:
+                self._high_gap_notice_pending.pop(user_id, None)
+        task.add_done_callback(finished)
+
     async def _refresh_open_demo_history(self, user_id):
         if self.demo_history_pages.get(user_id) != 0 or user_id not in self.menu_messages:
             return
@@ -2108,15 +2179,28 @@ class TelegramPasswordGate(HistoryPanels):
         async with lock:
             # Keep the maximum-step series even when DEMO is switched off.
             ledger = self._demo_ledger(user_id)
+            notices = []
             if round_id is not None:
+                previous_high = ledger.high_gap.dump()
+                previous_cycle = ledger.high_history[0] if ledger.high_history else None
                 event, changed = ledger.process_archived_round(round_id, coefficient, now=now, stream_id=stream_id)
                 if not changed:
                     return None
+                completed = (ledger.high_history[0]
+                             if ledger.high_history and ledger.high_history[0] is not previous_cycle
+                             else None)
+                current_high = ledger.high_gap.dump()
+                notices = [
+                    (kind, format_event(kind, current_high, ledger.currency, completed))
+                    for kind in changed_events(previous_high, current_high, completed)
+                ]
             else:
                 if not ledger.track_max_step(coefficient):
                     return None
                 event = ledger.process_round(coefficient) if ledger.enabled else None
             await self._persist_demo(user_id)
+        if notices and not silent:
+            self._queue_high_gap_notices(user_id, notices, round_id)
         if not event or silent:
             return event
         if event.get("type") == "insufficient_balance" and event.get("entry"):

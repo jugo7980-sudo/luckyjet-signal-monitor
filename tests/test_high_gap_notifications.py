@@ -1,6 +1,10 @@
 """Regression coverage for isolated, source-backed Strategy 2 Telegram notices."""
 import asyncio
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 from fakeredis.aioredis import FakeRedis
 

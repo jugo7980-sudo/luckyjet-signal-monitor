@@ -103,7 +103,9 @@
     const summary = !enabled ? 'Выключена'
       : phase === 'paused_gap' ? 'Пауза · разрыв архива'
       : phase === 'paused_funds' ? 'Пауза · недостаточно баланса'
-      : phase === 'betting' ? 'Ставки · ' + (recovery.steps ?? 0)
+      : phase === 'betting' ? 'Автоставки · ' + (recovery.steps ?? 0) +
+        (recovery.safe_losses === 0 ? ' · сейф выкл' :
+          ' · сейф ' + (recovery.losses ?? 0) + '/' + (recovery.safe_losses ?? 2))
       : 'Серия <x' + x + ': ' + (recovery.streak ?? 0) + '/' + (recovery.trigger ?? 3);
     document.getElementById('demo-recovery-preview').textContent = summary;
     document.getElementById('recovery-streak-state').textContent = summary;

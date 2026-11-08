@@ -187,8 +187,9 @@ def test_history_static_asset_and_mobile_flow():
                         body="window.accessState={premium:true,registered:true,username:'tester'};document.body.dataset.access='premium';window.canUsePremium=()=>true;window.refreshAccessOverview?.();")
                     return
                 url = request.request.url
-                if url.split('?', 1)[0].endswith('/history.js'):
-                    await request.fulfill(content_type='application/javascript', body=response('/history.js')[2])
+                if url.split('?', 1)[0].endswith(('/history.js', '/summary.js')):
+                    await request.fulfill(content_type='application/javascript',
+                                          body=response('/' + url.split('/')[-1])[2])
                 elif url.startswith('https://example.test/app'):
                     await request.fulfill(content_type='text/html', body=response('/app')[2])
                 elif '/api/history' in url:
@@ -245,6 +246,21 @@ def test_history_static_asset_and_mobile_flow():
             await page.get_by_text('x151.00').wait_for()
             assert await page.get_by_text('x151.00').count() == 1
             assert await page.locator('.history-distribution-group').count() >= 18
+            await page.evaluate("""() => {
+                window.savedHistoryGroup = [...document.querySelectorAll(
+                    '#history-content details.history-distribution-group'
+                )].find(n => n.querySelector('summary').textContent.includes('x151–x199'));
+            }""")
+            async with page.expect_response(lambda r: '/api/history?' in r.url and 'view=day' in r.url):
+                await page.locator('#history-refresh').click()
+            await page.wait_for_function("document.querySelector('#history-status').textContent === ''")
+            assert await page.evaluate("""() => window.savedHistoryGroup ===
+                [...document.querySelectorAll('#history-content details.history-distribution-group')]
+                    .find(n => n.querySelector('summary').textContent.includes('x151–x199'))
+                && window.savedHistoryGroup.open""")
+            await page.locator('#history-content .history-metric .summary-question').first.click()
+            assert "прежней сводке" in await page.locator('#summary-metric-text').inner_text()
+            await page.locator('#summary-metric-close').click()
             await page.locator('#history-back').click()
 
             await page.locator('[data-history-view=high_days]').click()

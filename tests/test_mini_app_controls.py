@@ -201,6 +201,8 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             await page.locator('nav [data-tab=account]').click()
             await page.locator('#open-settings').click()
             await page.locator('#settings-controls').wait_for(state='visible')
+            assert not await page.locator('#low-streak-notice-options').evaluate('(el) => el.open')
+            await page.locator('#low-streak-notice-options > summary').click()
             await page.locator('#settings-notifications').click()
             await page.locator('#settings-sound').click()
             await page.locator('#settings-threshold').select_option('8')

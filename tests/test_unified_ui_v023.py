@@ -284,6 +284,8 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 assert await page.locator("#site-connection-panel").count() == 1
                 assert await page.locator("#app-release-notes").count() == 1
                 assert APP_VERSION in await page.locator("#app-release-notes").inner_text()
+                assert not await page.locator("#low-streak-notice-options").evaluate("(n) => n.open")
+                await page.locator("#low-streak-notice-options > summary").click()
                 await page.locator('[data-summary-help-for="settings-notifications-hint"]').click()
                 assert "серии ниже 2x" in await page.locator("#summary-metric-text").inner_text()
                 await page.locator("#summary-metric-close").click()

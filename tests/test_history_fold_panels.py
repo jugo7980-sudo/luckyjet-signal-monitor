@@ -168,6 +168,7 @@ def test_mobile_history_folded_strategy_stats_full_long_cycle_distribution_and_a
                 await expect(page.locator('#history-max-step-days .history-item')).to_be_visible()
 
                 await page.locator('[data-history-view=days]').click()
+                await page.locator('#history-management > summary').click()
                 await page.locator('#history-archive').click()
                 await page.locator('#history-days-list > summary').click()
                 await page.locator('#history-days-list .history-item').first.click()

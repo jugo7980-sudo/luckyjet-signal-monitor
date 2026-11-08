@@ -433,6 +433,7 @@
           }
           // Large coefficients use the same collapsible cards as x2–x150.
           // Counts are exclusive bands from immutable receipts, not cumulative >X.
+          let highBandsMismatch = false;
           const highBands = [
             ['151-199', 'x151–x199'], ['200-299', 'x200–x299'],
             ['300-499', 'x300–x499'], ['500-799', 'x500–x799'],
@@ -470,11 +471,12 @@
               root.appendChild(details);
             }
             const highSum = highBands.reduce((sum, [key]) => sum + (Number(distribution.high_ranges[key]) || 0), 0);
-            if (highSum !== (Number(counts.above_150) || 0))
-              note('Внимание: суммы высоких коэффициентов не совпадают. Проверьте данные архива.');
+            highBandsMismatch = highSum !== (Number(counts.above_150) || 0);
           }
           foldFrom(distributionStart, 'Распределение коэффициентов',
             total + ' раундов · 18 диапазонов', 'history-coeff-distribution', 'history-day-sections');
+          if (highBandsMismatch)
+            note('Внимание: суммы высоких коэффициентов не совпадают. Проверьте данные архива.');
           note('Учтено в архиве: ' + total + ' раундов. Подсчёт по времени получения, полнота истории источника не гарантирована.');
         }
         const check = data.integrity;

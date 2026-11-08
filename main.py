@@ -488,7 +488,9 @@ async def health_server(gate=None, bot_token=None) -> None:
                                 raise ValueError('Invalid request origin')
                         if path == '/api/access':
                             from mini_app_access import access
-                            result = await access(auth_header if auth[0:1] else '',
+                            # Access checks the raw signed Telegram identity itself. Signed-out
+                            # users must still reach /api/access to log in explicitly.
+                            result = await access(auth[0] if auth else '',
                                 cookies[0] if cookies else '', gate, bot_token, method, payload)
                             status, content_type, body = result[:3]
                             if len(result) == 4:

@@ -141,9 +141,10 @@ def test_funding_priority_preserves_existing_three_strategies():
     )
     tick(ledger,1)
     assert ledger.balance_cents == 10000
-    assert ledger.recovery_history and ledger.recovery_history[0]['outcome']=='insufficient_balance'
-    assert ledger.recovery_history[0]['rounds'] == [] if ledger.recovery_history else True
+    # Nothing was wagered by #4: no empty cycle may be archived.
+    assert ledger.recovery_history == []
     assert not ledger.recovery_streak.enabled
+    assert ledger.recovery_streak.phase == 'paused_funds'
 
 
 def test_dedup_reset_archived_history_and_finance_no_reset_incomes():

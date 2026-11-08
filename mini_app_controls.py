@@ -293,27 +293,37 @@ async def controls(authorization, gate, token, method='GET', body=None):
                 await _seed_recovery_streak(gate.redis, ledger)
             await gate._persist_demo(uid)
         elif action == 'recovery_streak_config':
-            if not isinstance(value, dict) or set(value) not in (
-                    {'target', 'trigger', 'stake', 'safe_losses'},
-                    {'target', 'trigger', 'stake'}):
+            allowed = {'target', 'trigger', 'stake', 'safe_losses',
+                       'target_max', 'safe_mode', 'continuous_session'}
+            if (not isinstance(value, dict) or
+                    not {'target', 'trigger', 'stake'} <= set(value) or
+                    not set(value) <= allowed):
                 return json_response('400 Bad Request', {
                     'error': 'Укажи целевой X, серию подряд, ставку и сейф.',
                 })
             amount = parse_money(value['stake'], ledger.currency)
             safe_losses = value.get('safe_losses', ledger.recovery_streak.safe_losses)
+            target_max = value.get('target_max')
+            safe_mode = value.get('safe_mode')
+            continuous = value.get('continuous_session')
             if (amount is None or not isinstance(value['target'], str)
+                    or (target_max is not None and not isinstance(target_max, str))
                     or type(value['trigger']) is not int
                     or type(safe_losses) is not int or not 0 <= safe_losses <= 10
+                    or (safe_mode is not None and safe_mode not in ('total', 'consecutive'))
+                    or (continuous is not None and type(continuous) is not bool)
                     or amount > ledger.balance_cents):
                 return json_response('400 Bad Request', {
-                    'error': 'Проверь ставку, серию и сейф (выкл или 1–10 проигрышей).',
+                    'error': 'Проверь ставку, серию, диапазон X и сейв.',
                 })
             if not ledger.recovery_streak.configure(
-                target=value['target'], trigger=value['trigger'], stake_cents=amount,
+                target=value['target'], target_max=target_max,
+                trigger=value['trigger'], stake_cents=amount,
                 currency=ledger.currency, safe_losses=safe_losses,
+                safe_mode=safe_mode, continuous_session=continuous,
             ):
                 return json_response('409 Conflict', {
-                    'error': 'Недопустимый X (1.01–10000) или активный цикл.',
+                    'error': 'Недопустимый диапазон X (1.01–10000) или активный цикл.',
                 })
             if ledger.recovery_streak.enabled:
                 await _seed_recovery_streak(gate.redis, ledger)

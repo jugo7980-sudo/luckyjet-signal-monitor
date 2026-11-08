@@ -2307,6 +2307,7 @@ class TelegramPasswordGate(HistoryPanels):
 
     async def on_history_gap(self, *, silent=False, stream_id=None):
         for user_id in list(self.authorized):
+            target_closed = None
             lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
             async with lock:
                 ledger = self.demo_ledgers.get(user_id)
@@ -2340,6 +2341,12 @@ class TelegramPasswordGate(HistoryPanels):
                     if had_target_bets:
                         ledger.balance_verified = False
                 await self._persist_demo(user_id)
+            if target_closed is not None and not silent:
+                state = ledger.target_streak.public(ledger.currency)
+                self._queue_target_notices(user_id, [
+                    ('stopped', format_target_event('stopped', state, ledger.currency,
+                                                    target_closed))
+                ], stream_id)
             if entry is not None and not silent:
                 await self._send_demo_warning(
                     user_id,

@@ -65,7 +65,7 @@ def test_first_virtual_wager_wins_without_losing_start_notice():
 
 def test_notice_defaults_and_independence():
     assert normalize()['events'] == {
-        'reference': False, 'threshold': True, 'betting': True, 'goal': True,
+        'reference': False, 'threshold': True, 'betting': True, 'goal': True, 'safe': True,
     }
     assert normalize({'events': {'goal': False}, 'sound': False})['events']['goal'] is False
     assert normalize({'delete_delay': -9})['delete_delay'] == 10

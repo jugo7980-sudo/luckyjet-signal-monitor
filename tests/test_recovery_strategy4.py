@@ -475,3 +475,109 @@ def test_safe_session_dedup_replayed_round_does_not_charge_twice():
     assert ledger.balance_cents == before
     assert len(ledger.recovery_history) == history_before == 1
     assert ledger.recovery_streak.phase == 'waiting'
+
+
+def test_continuous_range_stake_1000_save_one_keeps_wins_until_first_loss():
+    ledger = new_ledger(x='1.29', stake=1000, balance=10000, trigger=3, safe=1)
+    strategy = ledger.recovery_streak
+    assert strategy.configure(target='1.29', target_max='1.50', trigger=3,
+                              stake_cents=100000, currency='KRW', safe_losses=1,
+                              safe_mode='total', continuous_session=True)
+    for n in (1, 2, 3):
+        tick(ledger, n, '1.10')
+    assert strategy.phase == 'betting'
+    assert strategy.next_target() == __import__('decimal').Decimal('1.29')
+    assert strategy.rounds == []
+    tick(ledger, 4, '1.60')  # win at x1.29, +290
+    assert strategy.phase == 'betting'
+    assert ledger.recovery_history == []
+    assert ledger.balance_cents == 10290 * 100
+    assert strategy.next_target() == __import__('decimal').Decimal('1.40')
+    tick(ledger, 5, '2.10')  # win at x1.40, +400
+    assert strategy.phase == 'betting'
+    assert ledger.balance_cents == 10690 * 100
+    tick(ledger, 6, '1.15')  # loss at x1.50, -1000, safe=1
+    assert strategy.phase == 'waiting'
+    assert strategy.enabled
+    assert ledger.balance_cents == 9690 * 100
+    cycle = ledger.recovery_history[0]
+    assert cycle['outcome'] == 'safe_limit'
+    assert cycle['safe_mode'] == 'total'
+    assert cycle['net_cents'] == -310 * 100
+    assert cycle['total_stake_cents'] == 3000 * 100
+    assert cycle['payout_cents'] == (1290+1400) * 100
+    assert cycle['wins'] == 2
+    assert cycle['losses'] == 1
+    assert [r['cashout_target'] for r in cycle['rounds']] == [
+        '1.29', '1.40', '1.50']
+    assert all(r['stake_cents'] == 1000*100 for r in cycle['rounds'])
+    assert DemoLedger(**ledger.dump()).balance_cents == 9690 * 100
+
+
+def test_safe_total_vs_consecutive_with_wins_between_losses():
+    for mode, expected_close, expected_result in (
+            ('total', 5, -1600), ('consecutive', 6, -2600)):
+        ledger = new_ledger(x='1.29', stake=1000, balance=10000,
+                            trigger=2, safe=2)
+        st = ledger.recovery_streak
+        assert st.configure(target='1.29', target_max='1.50', trigger=2,
+                            stake_cents=1000*100, currency='KRW',
+                            safe_losses=2, safe_mode=mode, continuous_session=True)
+        tick(ledger, 1, '1.10')
+        tick(ledger, 2, '1.10')
+        tick(ledger, 3, '1.10')  # 1st loss
+        assert st.counted_losses == 1
+        tick(ledger, 4, '1.80')  # win -> 1400
+        assert st.losses == 1
+        assert st.counted_losses == (1 if mode == 'total' else 0)
+        tick(ledger, 5, '1.10')  # second loss, not consecutive
+        assert st.phase == ('waiting' if mode == 'total' else 'betting')
+        if mode == 'consecutive':
+            tick(ledger, 6, '1.10')
+        assert len(ledger.recovery_history) == 1
+        cycle = ledger.recovery_history[0]
+        assert cycle['outcome'] == 'safe_limit'
+        assert cycle['net_cents'] == expected_result*100
+        assert cycle['counted_losses'] == 2
+        assert len(cycle['rounds']) == expected_close - 2
+        assert all(row['stake_cents'] == 100000 for row in cycle['rounds'])
+
+
+def test_continuous_range_does_not_change_legacy_session_or_history():
+    ledger = new_ledger(x='1.32', stake=1000, balance=10000,
+                        trigger=2, safe=2)
+    assert not ledger.recovery_streak.continuous_session
+    tick(ledger, 1, '1.10')
+    tick(ledger, 2, '1.10')
+    tick(ledger, 3, '1.32')
+    assert ledger.recovery_history[0]['outcome'] == 'recovered'
+    assert ledger.recovery_history[0]['net_cents'] == 320*100
+    assert ledger.recovery_streak.phase == 'waiting'
+    assert ledger.recovery_streak.target_max == ledger.recovery_streak.target
+
+
+def test_continuous_range_invalid_config_rejected_without_changing_balance():
+    ledger = new_ledger()
+    st = ledger.recovery_streak
+    previous = st.dump()
+    for extra in (
+            {'target_max':'1.28', 'safe_mode':'total', 'continuous_session':True},
+            {'target_max':'10000.01', 'safe_mode':'total', 'continuous_session':True},
+            {'target_max':'1.50', 'safe_mode':'unlimited', 'continuous_session':True},
+            {'target_max':'1.50', 'safe_mode':'total', 'continuous_session':1},
+    ):
+        assert not st.configure(target='1.29', trigger=3,
+                                stake_cents=100000, currency='KRW',
+                                safe_losses=1, **extra)
+        assert st.dump() == previous
+
+
+def test_continuous_win_notification_is_not_false_loss():
+    before = {'enabled':True, 'phase':'betting', 'steps':1}
+    after = {'enabled':True, 'phase':'betting', 'steps':2,
+             'continuous_session':True, 'last_bet_win':True}
+    assert changed_events(before, after) == ['goal']
+    text = format_event('goal', {'target':'1.29', 'next_target':'1.50',
+            'continuous_session':True,'last_bet_profit_cents':40000}, 'KRW')
+    assert 'сессия продолжается' in text
+    assert '400' in text

@@ -60,6 +60,16 @@ class HighGapStrategy:
             filter_count = 0
         self.filter_count = max(0, filter_count)
         self.filter_rejected = bool(raw.get('filter_rejected', False))
+        # NEW, opt-in session safety. Existing stored configurations remain unchanged.
+        self.bets_limit_enabled = raw.get('bets_limit_enabled') is True
+        self.bets_limit = self._bounded_int(raw.get('bets_limit', 120), 120)
+        self.active_filter_enabled = raw.get('active_filter_enabled') is True
+        self.active_filter_threshold = as_multiplier(
+            raw.get('active_filter_threshold', '10'), default='10')
+        self.active_filter_window = self._bounded_int(
+            raw.get('active_filter_window', 50), 50)
+        self.active_filter_limit = self._bounded_int(
+            raw.get('active_filter_limit', 7), 7)
 
         allowed = {'waiting_reference', 'waiting', 'betting', 'paused_gap', 'paused_funds'}
         self.phase = raw.get('phase') if raw.get('phase') in allowed else 'waiting_reference'
@@ -74,6 +84,24 @@ class HighGapStrategy:
         self.last_outcome = raw.get('last_outcome')
         self.last_finished_at = raw.get('last_finished_at')
 
+    @staticmethod
+    def _bounded_int(value, default):
+        if type(value) is int and 1 <= value <= 100000:
+            return value
+        if type(value) is str and value.isascii() and value.isdigit():
+            parsed = int(value)
+            if 1 <= parsed <= 100000:
+                return parsed
+        return default
+
+    @property
+    def active_filter_count(self):
+        recent = self.rounds[-self.active_filter_window:]
+        return sum(
+            1 for row in recent if (v := parse_multiplier(row.get('coefficient')))
+            is not None and v > self.active_filter_threshold
+        )
+
     def dump(self):
         return {
             'enabled': self.enabled, 'reference': str(self.reference),
@@ -84,6 +112,12 @@ class HighGapStrategy:
             'filter_limit': str(self.filter_limit),
             'filter_count': self.filter_count,
             'filter_rejected': self.filter_rejected,
+            'bets_limit_enabled': self.bets_limit_enabled,
+            'bets_limit': self.bets_limit,
+            'active_filter_enabled': self.active_filter_enabled,
+            'active_filter_threshold': str(self.active_filter_threshold),
+            'active_filter_window': self.active_filter_window,
+            'active_filter_limit': self.active_filter_limit,
             'reference_id': self.reference_id,
             'reference_value': self.reference_value,
             'reference_at': self.reference_at, 'elapsed': self.elapsed,
@@ -104,6 +138,13 @@ class HighGapStrategy:
             'filter_limit': str(self.filter_limit),
             'filter_count': self.filter_count,
             'filter_rejected': self.filter_rejected,
+            'bets_limit_enabled': self.bets_limit_enabled,
+            'bets_limit': self.bets_limit,
+            'active_filter_enabled': self.active_filter_enabled,
+            'active_filter_threshold': str(self.active_filter_threshold),
+            'active_filter_window': self.active_filter_window,
+            'active_filter_limit': self.active_filter_limit,
+            'active_filter_count': self.active_filter_count if self.phase == 'betting' else 0,
             'remaining': max(0, self.wait_rounds - self.elapsed)
             if self.phase == 'waiting' else None,
             'reference_value': self.reference_value,
@@ -129,7 +170,10 @@ class HighGapStrategy:
         self.total_stake_cents = 0
 
     def configure(self, reference, wait_rounds, target, stake_cents, *, min_stake,
-                  filter_enabled=None, filter_threshold=None, filter_limit=None):
+                  filter_enabled=None, filter_threshold=None, filter_limit=None,
+                  bets_limit_enabled=None, bets_limit=None,
+                  active_filter_enabled=None, active_filter_threshold=None,
+                  active_filter_window=None, active_filter_limit=None):
         if self.enabled and self.phase == 'betting':
             return False
         watch = parse_multiplier(reference)
@@ -159,6 +203,35 @@ class HighGapStrategy:
             return False
         if limit < 1:
             return False
+        if bets_limit_enabled is None:
+            bets_limit_enabled = self.bets_limit_enabled
+        if active_filter_enabled is None:
+            active_filter_enabled = self.active_filter_enabled
+        if bets_limit is None:
+            bets_limit = self.bets_limit
+        if active_filter_threshold is None:
+            active_filter_threshold = str(self.active_filter_threshold)
+        if active_filter_window is None:
+            active_filter_window = self.active_filter_window
+        if active_filter_limit is None:
+            active_filter_limit = self.active_filter_limit
+        active_threshold = parse_multiplier(active_filter_threshold)
+        # Strict atomic validation: never partially overwrite saved settings.
+        if (type(bets_limit_enabled) is not bool
+                or type(active_filter_enabled) is not bool
+                or active_threshold is None
+                or type(bets_limit) is not int or not 1 <= bets_limit <= 100000
+                or type(active_filter_window) is not int
+                or not 1 <= active_filter_window <= 100000
+                or type(active_filter_limit) is not int
+                or not 1 <= active_filter_limit <= active_filter_window):
+            return False
+        self.bets_limit_enabled = bets_limit_enabled
+        self.bets_limit = bets_limit
+        self.active_filter_enabled = active_filter_enabled
+        self.active_filter_threshold = active_threshold
+        self.active_filter_window = active_filter_window
+        self.active_filter_limit = active_filter_limit
         self.filter_enabled = filter_enabled
         self.filter_threshold = threshold
         self.filter_limit = limit
@@ -204,6 +277,13 @@ class HighGapStrategy:
                 'reference_coefficient': self.reference_value,
                 'wait_rounds': self.wait_rounds,
                 'cashout_multiplier': str(self.target),
+                'bets_limit': self.bets_limit if self.bets_limit_enabled else None,
+                'active_filter_threshold': (str(self.active_filter_threshold)
+                                            if self.active_filter_enabled else None),
+                'active_filter_window': (self.active_filter_window
+                                         if self.active_filter_enabled else None),
+                'active_filter_limit': (self.active_filter_limit
+                                        if self.active_filter_enabled else None),
                 'started_at': self.started_at, 'ended_at': at,
                 'rounds': self.rounds[:],
                 'base_stake_cents': self.stake_cents,
@@ -313,5 +393,18 @@ class HighGapStrategy:
                                   balance=balance, at=at,
                                   final_coefficient=multiplier)
             self._remember_reference(round_id, multiplier, at)
+            return balance, done
+        # Evaluate only settled DEMO bets; the current round is already known.
+        # Both safeguards close THIS cycle only, and remain armed for the
+        # next independent >reference event. The strategy never switches OFF.
+        reason = None
+        if self.bets_limit_enabled and len(self.rounds) >= self.bets_limit:
+            reason = 'bet_limit'
+        elif (self.active_filter_enabled
+              and self.active_filter_count >= self.active_filter_limit):
+            reason = 'active_filter_limit'
+        if reason:
+            done = self._complete(reason, currency=currency, balance=balance, at=at)
+            self.phase = 'waiting_reference'
             return balance, done
         return balance, None

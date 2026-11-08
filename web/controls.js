@@ -148,6 +148,7 @@
     if (stakeText && stakeText.nodeType === 3) stakeText.textContent = caption;
     else highStakeLabel.prepend(document.createTextNode(caption));
     document.getElementById('settings-notifications').textContent = settings.notifications ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('low-streak-notice-preview').textContent = settings.notifications ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-sound').textContent = settings.sound ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-threshold').value = String(settings.threshold);
     document.getElementById('settings-history-size').value = String(settings.history_size);

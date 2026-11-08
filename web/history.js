@@ -198,7 +198,7 @@
     input.max = today;
     const dayValues = (Array.isArray(available) ? available : [available])
       .map(entry => typeof entry === 'string' ? entry : entry?.day)
-      .filter(day => /^\\d{4}-\\d{2}-\\d{2}$/.test(day) && day <= today);
+      .filter(day => /^\d{4}-\d{2}-\d{2}$/.test(day) && day <= today);
     const newestAvailable = dayValues.sort().at(-1);
     // Explicitly set the value: an empty native date field appears blank in Telegram WebView.
     input.value = preferredDates.get(view) || newestAvailable || today;

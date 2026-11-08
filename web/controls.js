@@ -140,6 +140,17 @@
     document.getElementById('settings-threshold').value = String(settings.threshold);
     document.getElementById('settings-history-size').value = String(settings.history_size);
     document.getElementById('settings-delete-delay').value = String(settings.delete_delay);
+    const highNotices = data.high_gap_notifications || {};
+    const highEvents = highNotices.events || {};
+    const highEnabled = highNotices.enabled !== false;
+    document.getElementById('high-gap-notice-preview').textContent = highEnabled ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('settings-high-enabled').textContent = highEnabled ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('settings-high-sound').textContent = highNotices.sound !== false ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('settings-high-delete').value = String(highNotices.delete_delay ?? 10);
+    for (const [name, fallback] of Object.entries({reference:false, threshold:true, betting:true, goal:true})) {
+      document.getElementById('settings-high-' + name).textContent =
+        (highEvents[name] ?? fallback) ? 'ВКЛ' : 'ВЫКЛ';
+    }
     for (const node of all) node.disabled = busy || (
       demo.active && (node.id === 'demo-trigger-select' || node.id === 'demo-stake-input' ||
         node.id === 'demo-stake-save' || (node.id === 'demo-toggle' && demo.enabled))
@@ -302,6 +313,14 @@
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }
   });
+  document.getElementById('settings-high-enabled').addEventListener('click', () => action('high_gap_notice_toggle'));
+  document.getElementById('settings-high-sound').addEventListener('click', () => action('high_gap_notice_sound'));
+  selectAction('settings-high-delete', 'high_gap_notice_delete_delay');
+  for (const event of ['reference','threshold','betting','goal']) {
+    document.getElementById('settings-high-' + event).addEventListener(
+      'click', () => action('high_gap_notice_event', event));
+  }
+  document.getElementById('settings-high-test').addEventListener('click', () => action('high_gap_notice_test'));
   document.getElementById('settings-notifications').addEventListener('click', () => action('notifications_toggle'));
   document.getElementById('settings-sound').addEventListener('click', () => action('sound_toggle'));
   selectAction('settings-threshold', 'notification_threshold');

@@ -214,6 +214,35 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
                 'notifications_toggle', 'sound_toggle', 'notification_threshold',
                 'history_size', 'delete_delay', 'settings_reset',
             ]
+            # Both strategies are now native peer rows in one Settings container.
+            # The already-visible Strategy 1 controls must remain compatible.
+            assert await page.locator('#low-streak-notice-options').evaluate('(el) => el.open')
+            assert not await page.locator('#high-gap-notice-options').evaluate('(el) => el.open')
+            for group_id in ('low-streak-notice-options', 'high-gap-notice-options'):
+                assert await page.locator('#' + group_id).evaluate(
+                    '(el) => el.parentElement.id') == 'settings-controls'
+            assert await page.locator('#low-streak-notice-preview').inner_text() == 'ВКЛ'
+            assert await page.locator('#page-account > h1').evaluate(
+                '(el) => el.getBoundingClientRect().width') <= 1
+            await page.locator('#high-gap-notice-options > summary').click()
+            assert await page.locator('#high-gap-notice-options').evaluate('(el) => el.open')
+            assert not await page.locator('#low-streak-notice-options').evaluate('(el) => el.open')
+            assert await page.locator('#settings-high-enabled').is_visible()
+            assert await page.locator('#settings-high-test').is_visible()
+            # The collapsed rows must have a matching compact geometry and
+            # must not introduce horizontal scrolling on narrow screens.
+            for width in (320, 390):
+                await page.set_viewport_size({'width': width, 'height': 844})
+                first = await page.locator('#low-streak-notice-options > summary').bounding_box()
+                second = await page.locator('#high-gap-notice-options > summary').bounding_box()
+                assert first and second
+                assert abs(first['width'] - second['width']) <= 2
+                assert 44 <= first['height'] <= 58
+                assert 44 <= second['height'] <= 58
+                assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            await page.locator('#low-streak-notice-options > summary').click()
+            assert await page.locator('#settings-sound').is_visible()
+
             # A response from the previous identity must not repaint its money after logout.
             pause_controls['active'] = True
             await page.locator('#settings-sound').click()

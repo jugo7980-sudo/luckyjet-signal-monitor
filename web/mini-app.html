@@ -896,9 +896,10 @@ body:has(#strategy-sheet-backdrop:not([hidden])) nav{z-index:70}
 .strategy-sheet-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:14px}
 .strategy-sheet-actions button{display:grid;place-items:center;min-width:0;width:100%;height:42px;border:1px solid #604e73;border-radius:9px;background:#33283f;color:#e4d6f4;padding:8px}
 .strategy-sheet-actions button svg{width:21px;height:21px}
-.strategy-sheet-actions .strategy-sheet-power[data-enabled="true"]{background:#265545;color:#8bf2c6;border-color:#42896c}
-.strategy-sheet-actions .strategy-sheet-power[data-enabled="false"]{background:#572d39;color:#ffc0cd;border-color:#a35a6d}
+.strategy-sheet-actions .strategy-sheet-power[data-enabled="true"]{background:#247252;color:#eafff4;border-color:#51aa82}
+.strategy-sheet-actions .strategy-sheet-power[data-enabled="false"]{background:#8d3548;color:#ffe7eb;border-color:#bf6477}
 .strategy-sheet-actions button:disabled{opacity:.6}
+.strategy-sheet-actions .strategy-sheet-power:disabled{opacity:1;cursor:progress}
 .strategy-sheet-error{font-size:11px;color:#f0aab8;line-height:15px}
 .strategy-sheet-error:empty{display:none}
 @media(max-width:350px){#page-home .strategy-tile-strip{gap:3px}#page-home .strategy-tile{padding:4px;height:53px}}

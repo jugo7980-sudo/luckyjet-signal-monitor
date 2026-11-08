@@ -425,8 +425,13 @@ async def history(authorization, gate, token, query=''):
                 'total': len(days), 'page': page, 'view_reset': bool(marker),
             })
         if view in {'cycles', 'high_cycles'}:
+            # Each accordion gets its own statistics from only its own saved cycles.
+            # Do not use the shared DEMO balance delta as either strategy's profit.
+            stats = _demo_stats(ledger, [record for _, record in eligible])
+            if cycle_marker:
+                stats['view_reset'] = True
             return json_response('200 OK', {
-                'view': view, 'total': len(eligible), 'page': page,
+                'view': view, 'total': len(eligible), 'page': page, 'stats': stats,
                 'items': [_cycle(row, i) for i, row in eligible[page*10:page*10+10]],
             })
         if index >= len(current_history) or not _after_cycle_reset(current_history[index], cycle_marker):

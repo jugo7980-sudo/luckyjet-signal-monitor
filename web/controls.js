@@ -276,10 +276,6 @@
     action('high_gap_config', {reference, wait_rounds: Number(waitText), target, stake,
       filter_enabled, filter_threshold, filter_limit});
   });
-  document.getElementById('high-gap-history').addEventListener('click', () => {
-    document.querySelector('nav [data-tab="history"]').click();
-    window.openHighGapHistory?.();
-  });
   const resetModal = document.getElementById('demo-reset-modal');
   const resetForm = document.getElementById('demo-reset-form');
   const resetCurrency = document.getElementById('demo-reset-currency');

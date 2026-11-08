@@ -1,4 +1,4 @@
-"""Independent Strategy 4: fresh low-X signal for each wager and actual net results."""
+"""Independent Strategy 4: entry signal, fixed autobet, safe loss cap, persistence."""
 import asyncio
 import json
 from datetime import datetime, timezone
@@ -23,78 +23,67 @@ def tick(ledger, n, x='1.10'):
     return result
 
 
-def new_ledger(*, x='1.32', stake=150, balance=70185, trigger=3):
+def new_ledger(*, x='1.32', stake=150, balance=70185, trigger=3, safe=2):
     return DemoLedger(currency='KRW', initial_balance_cents=balance*100,
         balance_cents=balance*100, base_stake_cents=10000,
         recovery_streak={'enabled': True, 'target': x, 'trigger': trigger,
-                         'stake_cents': stake*100, 'phase': 'waiting'})
+                         'stake_cents': stake*100, 'phase': 'waiting', 'safe_losses':safe})
 
 
-def test_after_each_loss_new_full_signal_is_required_and_balance_stays_nonnegative():
-    ledger = new_ledger(stake=150, balance=300)
+def test_two_losses_safe_closes_session_and_new_entry_is_required():
+    ledger = new_ledger(stake=150, balance=1000, trigger=3, safe=2)
     for n in (1, 2, 3):
-        tick(ledger, n)
+        tick(ledger,n)
     assert ledger.recovery_streak.phase == 'betting'
-    tick(ledger, 4)  # first 150 KRW loses
-    assert ledger.balance_cents == 150 * 100
+    assert not ledger.recovery_streak.rounds  # no bet on signal round
+    tick(ledger,4,'1.10')
+    assert ledger.recovery_streak.phase == 'betting'  # auto again next round
+    assert ledger.recovery_streak.public('KRW')['losses'] == 1
+    assert ledger.balance_cents == 850*100
+    tick(ledger,5,'1.12')
     assert ledger.recovery_streak.phase == 'waiting'
+    assert ledger.recovery_streak.enabled   # safe is session reset, not OFF
     assert ledger.recovery_streak.streak == 0
-    assert ledger.recovery_streak.next_stake_cents == 150 * 100
-    assert len(ledger.recovery_streak.rounds) == 1
-    tick(ledger, 5)   # 1/3
-    tick(ledger, 6, '1.50')  # interrupted signal
+    assert not ledger.recovery_streak.rounds
+    first = ledger.recovery_history[0]
+    assert first['outcome'] == 'safe_limit'
+    assert first['safe_losses'] == 2
+    assert first['net_cents'] == -300*100
+    assert first['total_stake_cents'] == 300*100
+    assert [r['stake_cents'] for r in first['rounds']] == [150*100]*2
+    tick(ledger,6,'1.20')
+    tick(ledger,7,'1.40')  # interrupted entry signal, no bet
     assert ledger.recovery_streak.streak == 0
-    for n in (7, 8):
-        tick(ledger, n)
-    assert len(ledger.recovery_streak.rounds) == 1
-    tick(ledger, 9)  # third new low result arms next round
+    tick(ledger,8,'1.10')
+    tick(ledger,9,'1.10')
+    assert len(ledger.recovery_history) == 1
+    tick(ledger,10,'1.10')
     assert ledger.recovery_streak.phase == 'betting'
-    assert len(ledger.recovery_streak.rounds) == 1
-    tick(ledger, 10)  # second bet loses
-    assert len(ledger.recovery_streak.rounds) == 2
-    assert ledger.recovery_streak.rounds[1]['stake_cents'] == 150 * 100
-    assert ledger.recovery_streak.phase == 'waiting'
-
-    # The strategy can run out of funds, but never places a bet on a
-    # wait-only round and never makes the shared balance negative.
-    n = 11
-    while ledger.recovery_streak.enabled and n < 45:
-        for _ in range(3):
-            tick(ledger, n)
-            n += 1
-        assert ledger.recovery_streak.phase == 'betting'
-        tick(ledger, n)
-        n += 1
-        assert ledger.balance_cents >= 0
-    assert not ledger.recovery_streak.enabled
-    assert ledger.recovery_history[0]['outcome'] == 'insufficient_balance'
-    assert ledger.recovery_history[0]['net_cents'] < 0
-    assert ledger.target_history == []
-    assert ledger.high_history == []
+    tick(ledger,11,'1.32')
+    assert ledger.recovery_history[0]['outcome'] == 'recovered'
+    assert ledger.recovery_history[0]['net_cents'] == 48*100
+    assert ledger.recovery_streak.enabled
+    assert ledger.balance_cents == 748*100
     assert DemoLedger(**ledger.dump()).balance_cents == ledger.balance_cents
 
-def test_each_stake_is_fixed_even_when_net_loss_is_not_recovered():
+def test_each_stake_is_fixed_with_auto_bet_even_when_net_loss_is_not_recovered():
     for stake in (1, 150, 300, 1000):
-        ledger = new_ledger(stake=stake, balance=10_000_000)
+        ledger = new_ledger(stake=stake, balance=10_000_000, safe=2)
         for n in (1, 2, 3):
-            tick(ledger, n)
-        tick(ledger, 4, '1.10')  # loss
-        assert ledger.recovery_streak.phase == 'waiting'
-        for n in (5, 6, 7):
-            tick(ledger, n)
+            tick(ledger,n)
+        tick(ledger,4,'1.10')
         assert ledger.recovery_streak.phase == 'betting'
-        tick(ledger, 8, '1.32')  # win
+        tick(ledger,5,'1.32')
         cycle = ledger.recovery_history[0]
-        payout = ledger.recovery_streak.payout(stake * 100, 'KRW')
-        assert cycle['strategy'] == 'recovery_streak'
-        assert cycle['outcome'] == 'recovered'  # target X hit, net may be negative
+        payout = ledger.recovery_streak.payout(stake*100,'KRW')
+        assert cycle['outcome'] == 'recovered'
+        assert cycle['session_mode'] == 'autobet'
         assert cycle['stake_mode'] == 'fixed'
-        assert [r['stake_cents'] for r in cycle['rounds']] == [stake * 100] * 2
-        assert cycle['net_cents'] == payout - 2 * stake * 100
+        assert [r['stake_cents'] for r in cycle['rounds']] == [stake*100]*2
+        assert cycle['net_cents'] == payout - 2*stake*100
         assert cycle['payout_cents'] == cycle['total_stake_cents'] + cycle['net_cents']
-        assert ledger.balance_cents == 10_000_000 * 100 + cycle['net_cents']
+        assert ledger.balance_cents == 10_000_000*100 + cycle['net_cents']
         assert ledger.recovery_streak.phase == 'waiting'
-        assert ledger.recovery_streak.streak == 0
 
 def test_first_win_is_only_stake_times_xminusone():
     ledger = new_ledger(stake=150)
@@ -121,53 +110,42 @@ def test_streak_is_strictly_below_selected_x_and_entry_next_round():
     assert len(ledger.recovery_history[0]['rounds']) == 1
 
 
-def test_x138_step_four_fixed_1000_yields_actual_minus_620_net_after_reentry():
-    ledger = new_ledger(x='1.38', stake=1000, balance=100_000, trigger=4)
-    for n in (1, 2, 3, 4):
-        tick(ledger, n, '1.20')
+def test_x138_step_four_fixed_1000_auto_win_on_immediate_following_round():
+    ledger = new_ledger(x='1.38',stake=1000,balance=100000,trigger=4,safe=2)
+    for n in (1,2,3,4):
+        tick(ledger,n,'1.20')
     assert ledger.recovery_streak.phase == 'betting'
-    tick(ledger, 5, '1.20')  # loss -1,000
-    assert ledger.recovery_streak.next_stake_cents == 1000 * 100
-    assert ledger.recovery_streak.phase == 'waiting'
-    tick(ledger, 6, '1.10')
-    tick(ledger, 7, '1.50')  # reset
-    assert ledger.recovery_streak.streak == 0
-    for n in (8, 9, 10):
-        tick(ledger, n, '1.20')
-    assert len(ledger.recovery_streak.rounds) == 1
-    tick(ledger, 11, '1.20')
+    tick(ledger,5,'1.20')
+    assert ledger.recovery_streak.next_stake_cents == 1000*100
     assert ledger.recovery_streak.phase == 'betting'
-    snapshot = ledger.dump()
-    restored = DemoLedger(**snapshot)
+    restored = DemoLedger(**ledger.dump())
     assert restored.recovery_streak.phase == 'betting'
-    assert restored.recovery_streak.next_stake_cents == 1000 * 100
-    tick(restored, 12, '1.38')
+    assert restored.recovery_streak.public('KRW')['losses'] == 1
+    tick(restored,6,'1.38')
     cycle = restored.recovery_history[0]
-    assert [r['stake_cents'] // 100 for r in cycle['rounds']] == [1000, 1000]
-    assert cycle['net_cents'] == -620 * 100  # -1000 + 380, not fake profit
-    assert restored.balance_cents == 99380 * 100
+    assert [r['stake_cents']//100 for r in cycle['rounds']] == [1000,1000]
+    assert cycle['net_cents'] == -620*100
+    assert restored.balance_cents == 99380*100
     assert restored.recovery_streak.phase == 'waiting'
-    assert not restored.recovery_streak.rounds
 
+def test_strategy4_accepts_x_above_149_and_legacy_session_migrates_without_deletion():
+    ledger = new_ledger(x='3.00',stake=1000,trigger=4)
+    for n in range(1,5):
+        tick(ledger,n,'1.20')
+    tick(ledger,5,'3.00')
+    assert ledger.recovery_history[0]['net_cents'] == 2000*100
 
-def test_strategy4_accepts_x_above_149_and_legacy_immediate_bet_migrates_to_waiting():
-    ledger = new_ledger(x='3.00', stake=1000, trigger=4)
-    for n in range(1, 5):
-        tick(ledger, n, '1.20')
-    tick(ledger, 5, '3.00')
-    assert ledger.recovery_history[0]['net_cents'] == 2000 * 100
-
-    migrated = new_ledger(x='1.38', stake=1000).dump()
+    migrated = new_ledger(x='1.38',stake=1000).dump()
     migrated['recovery_streak'].update(
-        phase='betting', rounds=[{'stake_cents': 100000, 'payout_cents': 0}],
-        total_stake_cents=100000, next_stake_cents=363200,
-    )
+        phase='waiting', rounds=[{'stake_cents':100000,'payout_cents':0}],
+        total_stake_cents=100000,next_stake_cents=363200)
+    migrated['recovery_streak'].pop('session_autobet',None)
     restored = DemoLedger(**migrated)
-    assert restored.recovery_streak.phase == 'waiting'
+    assert restored.recovery_streak.phase == 'betting'  # new autobet
     assert restored.recovery_streak.streak == 0
     assert restored.recovery_streak.next_stake_cents == 100000
     assert restored.recovery_streak.rounds[0]['stake_cents'] == 100000
-
+    assert not restored.recovery_streak.session_autobet
 
 def test_four_strategies_simultaneously_share_one_balance_without_double_spending():
     params = dict(
@@ -225,37 +203,37 @@ def test_funding_priority_preserves_existing_three_strategies():
 def test_dedup_reset_archived_history_and_finance_no_reset_incomes():
     async def run():
         redis = FakeRedis(decode_responses=True)
-        ledger = new_ledger()
+        ledger = new_ledger(safe=2)
         for n in (1,2,3):
             tick(ledger,n)
         tick(ledger,4,'1.10')
-        for n in (5, 6, 7):
-            tick(ledger, n, '1.10')
-        tick(ledger, 8, '1.32')
-        assert len(ledger.recovery_history) == 1
+        tick(ledger,5,'1.10')  # safe closes first session
+        assert ledger.recovery_history[0]['outcome'] == 'safe_limit'
+        for n in (6,7,8):
+            tick(ledger,n,'1.10')
+        tick(ledger,9,'1.32')  # next session wins
+        assert len(ledger.recovery_history) == 2
         store = DemoPersistence()
-        await store.save(redis, 42, ledger)
-        assert len(json.loads(await redis.hget(RECOVERY_COMPLETED,'42'))) == 1
-        assert await redis.zcard(ARCHIVE_CYCLES+'42') == 1
+        await store.save(redis,42,ledger)
+        assert len(json.loads(await redis.hget(RECOVERY_COMPLETED,'42'))) == 2
+        assert await redis.zcard(ARCHIVE_CYCLES+'42') == 2
         state = json.loads(await redis.hget('luckyjet:demo_sessions','42'))
-        restored={42:DemoLedger(**state)}
+        restored = {42:DemoLedger(**state)}
         await DemoPersistence().restore(redis,restored)
         assert restored[42].recovery_history == ledger.recovery_history
         before = await demo_finance(redis,42,restored[42])
-        assert before['total'] == 2
-        assert before['totals'][0]['net_cents'] == -10200
-        restored[42].reset(currency='RUB', balance_cents=10000000,
-                           base_stake_cents=10000)
+        assert before['total'] == 3
+        assert before['totals'][0]['net_cents'] == -25200
+        restored[42].reset(currency='RUB',balance_cents=10000000,base_stake_cents=10000)
         await store.save(redis,42,restored[42])
         after = await demo_finance(redis,42,restored[42])
-        assert after['total'] == 2
+        assert after['total'] == 3
         assert after['totals'] == before['totals']
-        assert await redis.zcard(ARCHIVE_CYCLES+'42') == 1
+        assert await redis.zcard(ARCHIVE_CYCLES+'42') == 2
         assert restored[42].recovery_streak.enabled
-        assert restored[42].recovery_streak.stake_cents == 10000
+        assert restored[42].recovery_streak.safe_losses == 2
         await redis.aclose()
     asyncio.run(run())
-
 
 def test_controls_history_notices_and_auth_isolation():
     async def run():
@@ -325,72 +303,87 @@ def test_source_gap_pauses_strategy4_and_marks_balance_unverified():
 def test_notifications_are_independent_from_strategy3():
     prefs=normalize()
     assert prefs['events']=={'armed':True,'betting':True,'loss':False,
-                              'goal':True,'stopped':True}
+                              'goal':True,'safe':True,'stopped':True}
     before={'enabled':True,'phase':'waiting','steps':0}
     after={'enabled':True,'phase':'betting','steps':0}
     assert changed_events(before,after)==['armed']
     assert 'Стратегия №4' in format_event('armed',{'target':'1.32',
          'trigger':3,'stake_cents':15000},'KRW')
-    assert changed_events(after,{'enabled':True,'phase':'waiting','steps':1})==['betting','loss']
+    first_loss={'enabled':True,'phase':'betting','steps':1}
+    assert changed_events(after,first_loss)==['betting','loss']
+    safe_cycle={'outcome':'safe_limit','net_cents':-30000,'losses':2,
+                'rounds':[{'stake_cents':15000,'payout_cents':0},
+                          {'stake_cents':15000,'payout_cents':0}]}
+    assert changed_events(first_loss,{'enabled':True,'phase':'waiting','steps':0},
+                          safe_cycle)==['loss','safe']
+    assert 'сейф сработал' in format_event('safe',
+        {'target':'1.32','trigger':3,'stake_cents':15000},'KRW',safe_cycle)
 
+def test_auto_1000_krw_five_entry_safe_two_then_new_session():
+    ledger = new_ledger(x='1.33',stake=1000,balance=10000,trigger=5,safe=2)
+    for n in range(1,6):
+        tick(ledger,n,'1.20')
+    assert ledger.recovery_streak.phase == 'betting'
+    assert ledger.balance_cents == 10000*100
+    tick(ledger,6,'1.15')
+    assert ledger.recovery_streak.phase == 'betting'
+    tick(ledger,7,'1.20')
+    safe_cycle = ledger.recovery_history[0]
+    assert safe_cycle['outcome'] == 'safe_limit'
+    assert safe_cycle['net_cents'] == -2000*100
+    assert [r['stake_cents'] for r in safe_cycle['rounds']] == [1000*100]*2
+    assert ledger.recovery_streak.enabled
+    assert ledger.recovery_streak.phase == 'waiting'
+    assert ledger.recovery_streak.streak == 0
+    # A high round interrupts the NEW first-entry count.
+    tick(ledger,8,'1.40')
+    for n in range(9,14):
+        tick(ledger,n,'1.10')
+    assert ledger.recovery_streak.phase == 'betting'
+    assert len(ledger.recovery_history) == 1
+    tick(ledger,14,'1.33')
+    win_cycle = ledger.recovery_history[0]
+    assert win_cycle['outcome'] == 'recovered'
+    assert win_cycle['net_cents'] == 330*100
+    assert win_cycle['rounds'][0]['stake_cents'] == 1000*100
+    assert ledger.balance_cents == (10000-2000+330)*100
+    assert sum(x['net_cents'] for x in ledger.recovery_history) == -1670*100
 
-def test_fixed_10000_krw_all_steps_after_new_signals_and_exact_history():
-    ledger = new_ledger(x='1.38', stake=10000, balance=100000, trigger=2)
-    for n, coef in enumerate(('1.10','1.20','1.10',
-                              '1.10','1.20','1.10',
-                              '1.10','1.20','1.38'), 1):
-        tick(ledger, n, coef)
-        # Each losing wager MUST return to waiting and require two NEW
-        # consecutive low coefficients, never another immediate wager.
-        if n in (3, 6):
-            assert ledger.recovery_streak.phase == 'waiting'
-            assert ledger.recovery_streak.streak == 0
-            assert ledger.recovery_streak.next_stake_cents == 10000 * 100
-    cycle = ledger.recovery_history[0]
-    assert cycle['stake_mode'] == 'fixed'
-    assert len(cycle['rounds']) == 3
-    assert [r['stake_cents'] for r in cycle['rounds']] == [10000 * 100] * 3
-    assert [r['payout_cents'] for r in cycle['rounds']] == [0, 0, 13800 * 100]
-    assert cycle['total_stake_cents'] == 30000 * 100
-    assert cycle['net_cents'] == -16200 * 100
-    assert ledger.balance_cents == (100000 - 16200) * 100
-    assert cycle['balance_after_cents'] == ledger.balance_cents
-    assert cycle['outcome'] == 'recovered'  # target met, *not* positive net
-
-
-def test_existing_active_old_raised_stake_migrates_to_fixed_without_rewriting_bets():
-    old_first = 10000 * 100
-    old_raised = 22141 * 100
-    initial = new_ledger(x='1.38', stake=10000, balance=60000, trigger=2)
+def test_existing_active_old_raised_stake_migrates_and_safe_closes_previously_lost_bets():
+    old_first = 10000*100
+    old_raised = 22141*100
+    initial = new_ledger(x='1.38',stake=10000,balance=60000,trigger=2,safe=2)
     snap = initial.dump()
     snap['recovery_streak'].update({
-        'phase': 'waiting',
-        'rounds': [{'round_id':'old-1','coefficient':'1.10',
-                    'stake_cents':old_first,'payout_cents':0},
-                   {'round_id':'old-2','coefficient':'1.10',
-                    'stake_cents':old_raised,'payout_cents':0}],
-        'total_stake_cents': old_first + old_raised,
-        'next_stake_cents': 99999 * 100,
+        'phase':'waiting',
+        'rounds':[{'round_id':'old-1','coefficient':'1.10',
+                   'stake_cents':old_first,'payout_cents':0},
+                  {'round_id':'old-2','coefficient':'1.10',
+                   'stake_cents':old_raised,'payout_cents':0}],
+        'total_stake_cents':old_first+old_raised,
+        'next_stake_cents':99999*100,
     })
+    snap['recovery_streak'].pop('session_autobet',None)
     migrated = DemoLedger(**snap)
     strategy = migrated.recovery_streak
     assert strategy.enabled
+    assert strategy.phase == 'betting'
     assert strategy.next_stake_cents == old_first
-    assert [r['stake_cents'] for r in strategy.rounds] == [old_first, old_raised]
+    assert [r['stake_cents'] for r in strategy.rounds] == [old_first,old_raised]
     restored = DemoLedger(**migrated.dump())
-    assert restored.recovery_streak.next_stake_cents == old_first
-    tick(restored,1,'1.10')
-    tick(restored,2,'1.20')
-    assert restored.recovery_streak.phase == 'betting'
-    tick(restored,3,'1.38')
-    cycle = restored.recovery_history[0]
-    assert [r['stake_cents'] for r in cycle['rounds']] == [
-        old_first, old_raised, old_first]
-    assert cycle['stake_mode'] == 'legacy_variable'
-    assert cycle['net_cents'] == 13800 * 100 - (
-        old_first + old_raised + old_first)
-    assert restored.recovery_streak.stake_cents == old_first
-
+    tick(restored,1,'1.10')  # close prior session, do NOT spend
+    assert restored.recovery_history[0]['outcome'] == 'safe_limit'
+    assert restored.recovery_history[0]['stake_mode'] == 'legacy_variable'
+    assert restored.recovery_history[0]['session_mode'] == 'legacy_migrated'
+    assert [r['stake_cents'] for r in restored.recovery_history[0]['rounds']] == [
+        old_first,old_raised]
+    assert restored.recovery_streak.enabled
+    assert restored.recovery_streak.phase == 'waiting'
+    tick(restored,2,'1.10')
+    tick(restored,3,'1.10')
+    tick(restored,4,'1.38')
+    assert restored.recovery_history[0]['rounds'][0]['stake_cents'] == old_first
+    assert restored.recovery_history[0]['session_mode'] == 'autobet'
 
 def test_korean_payout_exact_and_no_wager_on_trigger_round():
     ledger = new_ledger(x='1.38', stake=10000, balance=10000, trigger=2)

@@ -182,6 +182,9 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
                 "document.querySelector('#demo-reset') && !document.querySelector('#demo-reset').disabled")
             if not await page.locator('#demo-classic-accordion').evaluate('(node) => node.open'):
                 await page.locator('#demo-classic-accordion summary').click()
+            # v0.2.9 keeps destructive actions inside a separate disclosure.
+            if not await page.locator('#demo-management').evaluate('(node) => node.open'):
+                await page.locator('#demo-management summary').click()
             await page.locator('#demo-reset').click()
             await page.locator('#demo-reset-currency').select_option('RUB')
             await page.locator('#demo-reset-balance').fill('50000')
@@ -190,6 +193,9 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             await page.wait_for_function("document.getElementById('header-balance').textContent.includes('RUB')")
             assert '₽' in await page.locator('#header-balance').inner_text()
             assert await page.locator('#demo-stake-input').input_value() == '25.50'
+            # v0.2.9 keeps destructive actions inside a separate disclosure.
+            if not await page.locator('#demo-management').evaluate('(node) => node.open'):
+                await page.locator('#demo-management summary').click()
             await page.locator('#demo-reset').click()
             await page.locator('#demo-reset-currency').select_option('KRW')
             await page.locator('#demo-reset-balance').fill('1000.50')

@@ -352,7 +352,11 @@ async def controls(authorization, gate, token, method='GET', body=None):
         elif action == 'high_gap_config':
             base_fields = {'reference', 'wait_rounds', 'target', 'stake'}
             filter_fields = {'filter_enabled', 'filter_threshold', 'filter_limit'}
-            if not isinstance(value, dict) or set(value) not in (base_fields, base_fields | filter_fields):
+            safe_fields = {'bets_limit_enabled', 'bets_limit', 'active_filter_enabled',
+                           'active_filter_threshold', 'active_filter_window',
+                           'active_filter_limit'}
+            if (not isinstance(value, dict) or not base_fields <= set(value)
+                    or not set(value) <= (base_fields | filter_fields | safe_fields)):
                 return json_response('400 Bad Request', {
                     'error': 'Укажи порог, число раундов, автовывод и сумму.',
                 })
@@ -374,6 +378,12 @@ async def controls(authorization, gate, token, method='GET', body=None):
                 filter_enabled=value.get('filter_enabled'),
                 filter_threshold=value.get('filter_threshold'),
                 filter_limit=value.get('filter_limit'),
+                bets_limit_enabled=value.get('bets_limit_enabled'),
+                bets_limit=value.get('bets_limit'),
+                active_filter_enabled=value.get('active_filter_enabled'),
+                active_filter_threshold=value.get('active_filter_threshold'),
+                active_filter_window=value.get('active_filter_window'),
+                active_filter_limit=value.get('active_filter_limit'),
             ):
                 return json_response('409 Conflict', {
                     'error': 'Некорректные параметры или активный цикл. Дождись завершения.',

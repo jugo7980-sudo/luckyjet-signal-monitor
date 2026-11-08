@@ -116,10 +116,10 @@
       (recovery.last_outcome ? 'Последний цикл: ' + recovery.last_outcome : '');
     document.getElementById('recovery-streak-state-detail').textContent =
       'Старт после ' + (recovery.trigger ?? 3) + ' результатов подряд ниже x' + x +
-      '. Первая ставка: ' + window.formatDemoMoney(recovery.stake_cents ?? 0, currency) +
-      '. После проигрыша снова ждём ' + (recovery.trigger ?? 3) +
-      ' новых подряд ниже x' + x + '. Следующая ставка покрывает потери; ' +
-      'дополнительной цели прибыли нет.';
+      '. Фиксированная ставка: ' + window.formatDemoMoney(recovery.stake_cents ?? 0, currency) +
+      '. После каждого проигрыша снова ждём ' + (recovery.trigger ?? 3) +
+      ' НОВЫХ подряд ниже x' + x +
+      '. Ставка не увеличивается, прибыль или убыток считаются фактически.';
   }
   window.renderRecoveryStreakSnapshot = renderRecoveryStreak;
   function message(text, error = false) {
@@ -219,7 +219,7 @@
       if (document.activeElement !== field) field.value = String(val);
     }
     document.getElementById('recovery-streak-stake-label').textContent =
-      'Первая ставка, ' + (demo.currency || 'USD');
+      'Фиксированная ставка, ' + (demo.currency || 'USD');
     document.getElementById('high-gap-toggle').textContent = high.enabled ?
       'Выключить стратегию №2' : 'Включить стратегию №2';
     const fields = {

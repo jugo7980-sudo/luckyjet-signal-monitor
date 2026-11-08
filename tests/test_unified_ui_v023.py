@@ -207,9 +207,13 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator('nav [data-tab="history"]').click()
                 assert not await page.locator("#history-management").evaluate("(n) => n.open")
                 assert await page.locator("#history-reset-scope").is_hidden()
-                assert await page.locator("#history-guide summary").evaluate(
-                    "(n) => n.getBoundingClientRect().height >= 44")
-                await page.locator("#history-guide summary").click()
+                await page.wait_for_function(
+                    "document.body.dataset.access === 'premium' && !document.getElementById('page-history').hidden")
+                guide_trigger = page.locator("#history-guide > summary")
+                await guide_trigger.wait_for(state="visible")
+                assert await guide_trigger.evaluate(
+                    "(n) => parseFloat(getComputedStyle(n).minHeight) >= 44")
+                await guide_trigger.click()
                 await page.locator("#history-explainer").wait_for(state="visible")
                 await page.locator('[data-history-view="days"]').focus()
                 await page.keyboard.press("ArrowRight")

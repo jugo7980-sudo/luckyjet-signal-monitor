@@ -512,7 +512,21 @@
       if (!response.ok) throw new Error(result.error || 'Ошибка загрузки истории.');
       lastLoad = Date.now();
       status.textContent = '';
-      if (!sameView || JSON.stringify(current) !== JSON.stringify(result)) render(result);
+      if (!sameView || JSON.stringify(current) !== JSON.stringify(result)) {
+        // Refresh should not collapse a coefficient group that the reader opened.
+        const openGroups = sameView ? new Set(
+          [...root.querySelectorAll('details.history-distribution-group[open]')]
+            .map(node => node.querySelector('summary')?.firstChild?.textContent?.trim())
+        ) : null;
+        const scrollTop = sameView ? window.scrollY : null;
+        render(result);
+        if (openGroups) {
+          for (const node of root.querySelectorAll('details.history-distribution-group')) {
+            if (openGroups.has(node.querySelector('summary')?.firstChild?.textContent?.trim())) node.open = true;
+          }
+          if (scrollTop !== null) window.scrollTo(0, scrollTop);
+        }
+      }
     } catch (error) {
       if (seq !== requestNo) return;
       current = null;

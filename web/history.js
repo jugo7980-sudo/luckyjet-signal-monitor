@@ -551,8 +551,8 @@
       case 'demo_finance': {
         demoStrategySwitcher(view);
         if (openDemoStrategy !== 'finance') break;
-        heading('Доход / Расход', 'Общий журнал виртуальных ставок и выплат трёх стратегий');
-        note('Расход — сумма каждой виртуальной ставки. Доход — полная выплата, включая возвращённую ставку. Сбросы DEMO не учитываются.');
+        heading('Доход / Расход', 'Чистый результат каждой виртуальной ставки · стратегии №1–4');
+        note('Одна ставка = одна запись: выигрыш (+) или проигрыш (−). Чистый итог = выплата − ставка. Сбросы DEMO не учитываются.');
 
         const filters = el('div', 'history-finance-filters');
         const settings = [
@@ -560,8 +560,8 @@
             ['7d', '7 дней'], ['30d', '30 дней'], ['day', 'Выбрать дату']]],
           ['strategy', 'Стратегия', [['all', 'Все стратегии'], ['classic', '№1'],
             ['high_gap', '№2'], ['target_streak', '№3'], ['recovery_streak', '№4']]],
-          ['flow', 'Показать', [['all', 'Все операции'], ['income', 'Доходы'],
-            ['expense', 'Расходы']]],
+          ['flow', 'Показать', [['all', 'Все результаты'], ['income', 'Плюс (+)'],
+            ['expense', 'Минус (−)']]],
         ];
         const currentFilters = {period: data.period || 'all',
           strategy: data.strategy || 'all', flow: data.flow || 'all'};
@@ -630,8 +630,8 @@
           const moneyNet = (t.net_cents > 0 ? '+' : '') +
             window.formatDemoMoney(t.net_cents, t.currency);
           for (const [title, amount, style] of [
-            ['Доход', '+' + moneyIn, 'income'],
-            ['Расход', '−' + moneyOut, 'expense'],
+            ['Прибыль', '+' + moneyIn, 'income'],
+            ['Убытки', '−' + moneyOut, 'expense'],
             ['Чистый итог', moneyNet, t.net_cents >= 0 ? 'income' : 'expense']]) {
             const row = el('div', 'history-finance-summary-row');
             row.append(el('span', '', title), el('strong', 'history-finance-' + style, amount));
@@ -645,8 +645,9 @@
         const start = root.childNodes.length;
         for (const op of data.items || []) {
           const isIncome = op.type === 'income';
+          const isEven = op.type === 'even';
           const displayCurrency = op.currency || 'USD';
-          const action = isIncome ? 'Выплата' : 'Ставка';
+          const action = isEven ? 'Без изменений' : isIncome ? 'Выигрыш' : 'Проигрыш';
           const strategyLabel = op.strategy === 'recovery_streak' ? '№4'
             : op.strategy === 'target_streak' ? '№3'
             : op.strategy === 'high_gap' ? '№2' : '№1';
@@ -659,12 +660,16 @@
               (op.time ? formatTime(op.time) : 'Дата не сохранилась') +
               (op.time_exact ? '' : ' · время цикла')));
           heading.append(labels, el('strong',
-            'history-finance-' + (isIncome ? 'income' : 'expense'),
-            (isIncome ? '+' : '−') +
+            'history-finance-' + (isIncome || isEven ? 'income' : 'expense'),
+            (isEven ? '' : isIncome ? '+' : '−') +
               window.formatDemoMoney(op.amount_cents, displayCurrency)));
           const details = el('div', 'history-finance-entry-body');
           const lines = [
-            ['Операция', isIncome ? 'Полная выплата, включая ставку' : 'Виртуальная ставка'],
+            ['Результат ставки', action],
+            ['Ставка', window.formatDemoMoney(op.stake_cents ?? 0, displayCurrency)],
+            ['Выплата (включая ставку)', window.formatDemoMoney(op.payout_cents ?? 0, displayCurrency)],
+            ['Чистый результат', (isEven ? '' : isIncome ? '+' : '−') +
+              window.formatDemoMoney(op.amount_cents, displayCurrency)],
             ['Стратегия', '№' + (op.strategy === 'classic' ? 1
               : op.strategy === 'high_gap' ? 2
               : op.strategy === 'target_streak' ? 3 : 4)],
@@ -689,7 +694,7 @@
         }
         if (!(data.items || []).length)
           note('Операций по выбранным фильтрам пока нет.');
-        foldFrom(start, 'Операции', (data.total || 0) + ' записей · все стратегии',
+        foldFrom(start, 'Результаты ставок', (data.total || 0) + ' ставок · все стратегии',
           'history-finance-operations', 'history-finance-section');
         setPager(data);
         break;

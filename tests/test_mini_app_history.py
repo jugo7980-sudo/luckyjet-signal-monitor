@@ -31,6 +31,16 @@ def signed(uid=42):
 
 
 class FakeRedis:
+    async def xrange(self, key, min, max, count):
+        return [
+            ('1-0', {'type': 'round', 'coefficient': '1.50'}),
+            ('2-0', {'type': 'round', 'coefficient': '1.99'}),
+            ('3-0', {'type': 'round', 'coefficient': '2.00'}),
+            ('4-0', {'type': 'round', 'coefficient': '5.99'}),
+            ('5-0', {'type': 'round', 'coefficient': '150.99'}),
+            ('6-0', {'type': 'round', 'coefficient': '151.00'}),
+        ]
+
     async def zcard(self, key):
         assert key == 'luckyjet:coef:high:days'
         return 1
@@ -107,6 +117,13 @@ def test_history_auth_pages_and_user_isolation():
             status, data = await fetch(query)
             assert status == '200 OK', (query, data)
             assert data[key] == expected, query
+        _, daily = await fetch('view=day&day=' + DAY)
+        assert daily['distribution']['total'] == 6
+        assert daily['distribution']['counts']['1.5'] == 2
+        assert daily['distribution']['counts']['2'] == 1
+        assert daily['distribution']['counts']['5'] == 1
+        assert daily['distribution']['counts']['150'] == 1
+        assert daily['distribution']['counts']['above_150'] == 1
         _, stats = await fetch('view=demo_stats')
         assert stats['stats']['recovered'] == 1
         assert stats['stats']['since_reset_cents'] == 100

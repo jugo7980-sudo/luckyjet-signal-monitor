@@ -35,7 +35,8 @@
       : phase === 'waiting' ? 'Ждёт ' + (high.remaining ?? '—') + ' раундов'
       : 'Ставки · ' + (high.steps ?? 0);
     document.getElementById('demo-high-preview').textContent = compact;
-    document.getElementById('high-gap-state').textContent = compact;
+    // Detailed strategy state keeps its original precise wording for existing integrations.
+    document.getElementById('high-gap-state').textContent = state;
     const progress = high.reference_value
       ? 'Последний >x' + high.reference + ': x' + high.reference_value +
         ' · Раундов после: ' + high.elapsed + ' / ' + high.wait_rounds : 'Нет подтверждённого опорного раунда';

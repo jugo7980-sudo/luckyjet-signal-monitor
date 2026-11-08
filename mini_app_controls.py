@@ -13,6 +13,7 @@ from round_archive import STREAM_KEY
 import httpx
 
 from mini_app_api import json_response, telegram_user
+from strategy_tiles import strategy_tile_snapshot
 from luckyjet_signal.demo_ledger import DemoLedger, TRIGGER_OPTIONS, parse_dollars
 from luckyjet_signal.demo_money import MAX_AMOUNT
 from high_gap_notifications import EVENTS as HIGH_GAP_NOTICE_EVENTS, DELETE_DELAYS as HIGH_GAP_NOTICE_DELAYS, normalize as normalize_high_gap_notices
@@ -42,6 +43,7 @@ def snapshot(gate, uid):
     probe = getattr(gate, 'demo_probe', None)
     return {
         'admin': gate.is_admin(uid),
+        'strategy_tiles': strategy_tile_snapshot(ledger),
         'probe': {
             'state': probe.result,
             'requested': probe.requested,
@@ -365,7 +367,9 @@ async def controls(authorization, gate, token, method='GET', body=None):
             await gate._persist_demo(uid)
         elif action == 'demo_toggle':
             if ledger.active and ledger.enabled:
-                return json_response('409 Conflict', {'error': 'Активную DEMO-сессию нельзя выключить до завершения.'})
+                # Explicit OFF must stop Strategy 1 immediately and archive its
+                # real incurred net, without touching the other strategies.
+                ledger.finish_active('stopped_by_user')
             was_enabled = ledger.enabled
             ledger.enabled = not ledger.enabled
             if ledger.enabled and not was_enabled:

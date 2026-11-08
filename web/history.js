@@ -160,7 +160,7 @@
     panel.append(summary, body);
     root.appendChild(panel);
     panel.addEventListener('toggle', () => {
-      if (current && ['cycles', 'high_cycles'].includes(current.view)) setPager(current);
+      if (current && ['cycles', 'high_cycles', 'target_cycles'].includes(current.view)) setPager(current);
     });
     return panel;
   }
@@ -181,11 +181,13 @@
     for (const [key, label, description] of [
       ['classic', 'Стратегия №1', 'Серия ниже 2x'],
       ['high_gap', 'Стратегия №2', 'Высокий X'],
+      ['target_streak', 'Стратегия №3', 'Серия ниже выбранного X'],
     ]) {
       const expanded = openDemoStrategy === key;
       const button = el('button', 'demo-history-choice' + (expanded ? ' is-open' : ''));
       button.type = 'button';
-      button.id = 'demo-history-strategy-' + (key === 'classic' ? 'classic' : 'high');
+      button.id = 'demo-history-strategy-' +
+        (key === 'classic' ? 'classic' : key === 'high_gap' ? 'high' : 'target');
       button.setAttribute('aria-expanded', String(expanded));
       button.setAttribute('aria-label', label + ': ' + (expanded ? 'свернуть' : 'показать историю и статистику'));
       const labels = el('span', 'demo-history-choice-label');
@@ -194,8 +196,9 @@
       button.addEventListener('click', () => {
         const next = expanded ? null : key;
         openDemoStrategy = next;
-        const desired = next === 'high_gap' ? 'high_cycles' : 'cycles';
-        const isList = ['cycles', 'high_cycles'].includes(args.view);
+        const desired = next === 'high_gap' ? 'high_cycles'
+          : next === 'target_streak' ? 'target_cycles' : 'cycles';
+        const isList = ['cycles', 'high_cycles', 'target_cycles'].includes(args.view);
         if ((next === null && isList) || (next && args.view === desired && isList)) {
           // Closing and reopening cached panels is instantaneous, with no extra request.
           render(current);
@@ -232,7 +235,8 @@
     const view = archive ? args.view.slice(8) : args.view;
     const active = ['days', 'day'].includes(view) ? 'days'
       : ['high_days', 'high_day', 'high_item'].includes(view) ? 'high_days'
-      : ['cycles', 'cycle', 'demo_stats', 'high_cycles', 'high_cycle'].includes(view) ? 'cycles' : 'max_steps';
+      : ['cycles', 'cycle', 'demo_stats', 'high_cycles', 'high_cycle',
+         'target_cycles', 'target_cycle'].includes(view) ? 'cycles' : 'max_steps';
     document.getElementById('history-live-tabs').hidden = archive;
     document.getElementById('history-archive-tabs').hidden = !archive;
     document.getElementById('history-archive-exit').hidden = !archive;
@@ -265,10 +269,11 @@
     const page = Number(data.page || 0);
     const total = Number(data.total || 0);
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const visible = ['days', 'high_days', 'high_day', 'cycles', 'high_cycles', 'max_steps'].includes(isArchive(data.view) ? data.view.slice(8) : data.view);
+    const visible = ['days', 'high_days', 'high_day', 'cycles', 'high_cycles', 'target_cycles', 'max_steps'].includes(isArchive(data.view) ? data.view.slice(8) : data.view);
     const demoVisible = data.view === 'cycles' ? openDemoStrategy === 'classic'
-      : data.view === 'high_cycles' ? openDemoStrategy === 'high_gap' : true;
-    const cyclesVisible = ['cycles', 'high_cycles'].includes(data.view)
+      : data.view === 'high_cycles' ? openDemoStrategy === 'high_gap'
+      : data.view === 'target_cycles' ? openDemoStrategy === 'target_streak' : true;
+    const cyclesVisible = ['cycles', 'high_cycles', 'target_cycles'].includes(data.view)
       ? Boolean(root.querySelector('#history-demo-cycles[open]')) : true;
     pager.hidden = !visible || pages <= 1 || !demoVisible || !cyclesVisible;
     if (!visible) return;
@@ -528,11 +533,13 @@
         if (e.uncertain) note('Время события приблизительное.');
         break;
       }
+      case 'target_cycles':
       case 'high_cycles':
       case 'cycles':
         if (!archive) {
           demoStrategySwitcher(view);
-          if (openDemoStrategy !== (view === 'high_cycles' ? 'high_gap' : 'classic')) break;
+          if (openDemoStrategy !== (view === 'target_cycles' ? 'target_streak'
+            : view === 'high_cycles' ? 'high_gap' : 'classic')) break;
           demoStrategyStats(data);
         } else {
           heading('История DEMO', data.total + ' циклов · новые сначала');
@@ -546,10 +553,13 @@
           currency = c.currency || 'USD';
           const result = c.outcome === 'incomplete_data' || c.net_cents == null
             ? 'Нет полных данных' : signedMoney(c.net_cents);
-          const category = c.strategy === 'high_gap' ? 'После >x' + (c.reference_threshold || 100) : 'Серия <2x';
+          const category = c.strategy === 'target_streak'
+            ? 'Серия <x' + (c.cashout_multiplier || '1.57')
+            : c.strategy === 'high_gap' ? 'После >x' + (c.reference_threshold || 100) : 'Серия <2x';
           item(c.steps + ' шаг. · ' + formatTime(c.ended_at || c.started_at),
             archive ? category + ' · ' + c.currency : 'Цикл ' + (c.index + 1),
-            () => navigate(view === 'high_cycles' ? 'high_cycle' : viewFor('cycle'),
+            () => navigate(view === 'target_cycles' ? 'target_cycle'
+              : view === 'high_cycles' ? 'high_cycle' : viewFor('cycle'),
               archive ? {id: c.id} : {index: c.index}, true), result);
         }
         foldFrom(cycleListStart, 'История циклов', data.total + ' циклов · новые сначала',
@@ -557,6 +567,7 @@
           archive ? 'history-archive-sections' : 'history-demo-sections');
         setPager(data);
         break;
+      case 'target_cycle':
       case 'high_cycle':
       case 'cycle': {
         if (!archive) demoStrategySwitcher(view);
@@ -565,9 +576,15 @@
         const reasons = {recovered: 'Цель достигнута', insufficient_balance: 'Недостаточно баланса',
           incomplete_data: 'Неполные данные', stopped_by_user: 'Остановлена пользователем',
           reference_changed: 'Новый опорный коэффициент'};
-        heading(archive ? 'Цикл DEMO' : view === 'high_cycle' ? 'Стратегия №2 · цикл' :
+        heading(archive ? 'Цикл DEMO' : view === 'target_cycle' ? 'Стратегия №3 · цикл'
+          : view === 'high_cycle' ? 'Стратегия №2 · цикл' :
           'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
         const paramsStart = root.childNodes.length;
+        if (c.strategy === 'target_streak') {
+          info('Стратегия', 'Серия ниже x' + (c.cashout_multiplier || '1.57'));
+          info('Условие входа', (c.trigger_streak || 3) + ' подряд');
+          info('Автовывод', 'x' + (c.cashout_multiplier || '1.57'));
+        }
         if (c.strategy === 'high_gap') {
           info('Стратегия', 'После >x' + (c.reference_threshold || '100'));
           info('Период ожидания', (c.wait_rounds ?? '—') + ' раундов');
@@ -779,7 +796,8 @@
     if (view === 'archive' || isArchive(view)) return null;
     if (['days', 'day'].includes(view)) return 'days';
     if (['high_days', 'high_day', 'high_item'].includes(view)) return 'high_days';
-    if (['cycles', 'cycle', 'high_cycles', 'high_cycle', 'demo_stats'].includes(view)) return 'cycles';
+    if (['cycles', 'cycle', 'high_cycles', 'high_cycle',
+         'target_cycles', 'target_cycle', 'demo_stats'].includes(view)) return 'cycles';
     return 'max_steps';
   };
   async function resetHistory(scope) {
@@ -824,7 +842,7 @@
     if (status.textContent === 'Загрузка истории…') status.textContent = '';
     root.querySelectorAll('details[open]').forEach(panel => { panel.open = false; });
     openDemoStrategy = null;
-    if (['cycle', 'high_cycle'].includes(args.view)) {
+    if (['cycle', 'high_cycle', 'target_cycle'].includes(args.view)) {
       // A single-cycle detail belongs to an expanded strategy: return to a closed list.
       args = {view: 'cycles', page: 0};
       current = null; stack = [];
@@ -834,7 +852,7 @@
       back.hidden = true;
       delete root.dataset.loading;
       root.removeAttribute('aria-busy');
-    } else if (current && ['cycles', 'high_cycles'].includes(args.view)) {
+    } else if (current && ['cycles', 'high_cycles', 'target_cycles'].includes(args.view)) {
       render(current);
     }
   };

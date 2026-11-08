@@ -101,6 +101,7 @@ def test_mobile_demo_finance_filters_breakdown_paging_and_panel_reset():
                 await page.goto('https://example.test/app')
                 await page.locator('nav [data-tab=history]').click()
                 await page.locator('[data-history-view=cycles]').click()
+                await expect(page.locator('#demo-history-strategy-classic')).to_be_visible()
                 assert await page.locator('[data-history-view]').count() == 4
                 assert await page.locator('#demo-history-strategy-classic').count() == 1
                 assert await page.locator('#demo-history-strategy-high').count() == 1

@@ -82,6 +82,7 @@ def _cycle(entry, index, detailed=False):
         'net_cents': entry.get('net_cents'),
         'steps': len(entry.get('rounds') or []),
         'strategy': entry.get('strategy', 'classic'),
+        'stake_mode': entry.get('stake_mode'),
         'cashout_multiplier': entry.get('cashout_multiplier', '2'),
         'reference_threshold': entry.get('reference_threshold'),
         'reference_coefficient': entry.get('reference_coefficient'),

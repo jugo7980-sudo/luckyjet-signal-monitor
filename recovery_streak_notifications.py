@@ -80,8 +80,8 @@ def format_event(event, state, currency, completed=None):
                 f'Чистый итог: {format_money(completed.get("net_cents"), currency)}\n'
                 f'Новый вход: после {trigger} подряд ниже x{x}')
     if event == 'goal' and not completed and state.get('continuous_session'):
-        return (f'Стратегия №4 · ставка выиграна, сессия продолжается\\n'
-                f'Чистая прибыль ставки: {format_money(state.get("last_bet_profit_cents", 0), currency)}\\n'
+        return (f'Стратегия №4 · ставка выиграна, сессия продолжается\n'
+                f'Чистая прибыль ставки: {format_money(state.get("last_bet_profit_cents", 0), currency)}\n'
                 f'Следующий целевой X: x{state.get("next_target", x)}')
     if event == 'goal' and completed:
         result = completed.get('net_cents')

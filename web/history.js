@@ -754,10 +754,10 @@
           'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
         const paramsStart = root.childNodes.length;
         if (c.strategy === 'recovery_streak') {
-          info('Стратегия', 'Догон ниже x' + (c.cashout_multiplier || '1.32'));
+          info('Стратегия', 'Фиксированная ставка после N ниже x' + (c.cashout_multiplier || '1.32'));
           info('Условие входа', (c.trigger_streak || 3) + ' подряд');
           info('Автовывод', 'x' + (c.cashout_multiplier || '1.32'));
-          info('Первая ставка', money(c.base_stake_cents));
+          info(c.stake_mode === 'fixed' ? 'Фиксированная ставка' : 'Первая ставка', money(c.base_stake_cents));
         }
         if (c.strategy === 'target_streak') {
           info('Стратегия', 'Серия ниже x' + (c.cashout_multiplier || '1.57'));
@@ -783,6 +783,9 @@
         info('Чистый итог', signedMoney(c.net_cents));
         info('Баланс до', money(c.balance_before_cents));
         info('Баланс после', money(c.balance_after_cents));
+        if (c.strategy === 'recovery_streak') {
+          note('Баланс до/после — общий для всех одновременно работающих DEMO-стратегий. Его разница может отличаться от чистого результата стратегии №4.');
+        }
         foldFrom(resultStart, 'Результат', 'Чистый итог: ' + signedMoney(c.net_cents) +
           ' · ' + (reasons[c.outcome] || 'Неизвестно'), 'history-cycle-outcome', 'history-cycle-sections');
         const stepsStart = root.childNodes.length;

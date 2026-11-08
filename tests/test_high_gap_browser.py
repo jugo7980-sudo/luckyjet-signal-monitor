@@ -38,7 +38,7 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
                 if url.endswith('/access.js'):
                     await request.fulfill(content_type='application/javascript',
                         body="window.accessState={premium:true,registered:true,username:'tester'};document.body.dataset.access='premium';window.canUsePremium=()=>true;")
-                elif url.endswith('/controls.js'):
+                elif url.split('?', 1)[0].endswith('/controls.js'):
                     await request.fulfill(content_type='application/javascript',
                         body=response('/controls.js')[2])
                 elif url.split('?', 1)[0].endswith('/history.js'):

@@ -80,7 +80,7 @@ def test_no_invented_money_after_gap_and_reset():
     assert all(t['net_cents'] is None for t in strategy_tile_snapshot(ledger))
 
 
-def test_recovery_four_real_rounds_and_last_profit_380_krw():
+def test_recovery_four_real_rounds_and_last_actual_minus_620_krw():
     ledger = DemoLedger(currency='KRW', balance_cents=10_000_000)
     strategy = ledger.recovery_streak
     strategy.enabled = True
@@ -94,11 +94,11 @@ def test_recovery_four_real_rounds_and_last_profit_380_krw():
     assert pending['progress'] == '0/2'
     assert pending['net_cents'] == -100_000
     assert pending['last_action'] == 'Проигрыш'
-    assert strategy.next_stake_cents == 363_200
+    assert strategy.next_stake_cents == 100_000
     for i, value in enumerate(['1.10', '1.20', '1.38'], 4):
         ledger.process_archived_round(str(i), value, stream_id=f'{i}-0')
     finished = strategy_tile_snapshot(ledger)[3]
-    assert finished['net_cents'] == 38_000
+    assert finished['net_cents'] == -62_000
     assert finished['result_scope'] == 'last'
     assert finished['last_action'] == 'Выигрыш'
     assert finished['progress'] == '0/2'

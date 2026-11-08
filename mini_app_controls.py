@@ -293,18 +293,24 @@ async def controls(authorization, gate, token, method='GET', body=None):
                 await _seed_recovery_streak(gate.redis, ledger)
             await gate._persist_demo(uid)
         elif action == 'recovery_streak_config':
-            if not isinstance(value, dict) or set(value) != {'target', 'trigger', 'stake'}:
+            if not isinstance(value, dict) or set(value) not in (
+                    {'target', 'trigger', 'stake', 'safe_losses'},
+                    {'target', 'trigger', 'stake'}):
                 return json_response('400 Bad Request', {
-                    'error': 'Укажи целевой X, серию подряд и первую ставку.',
+                    'error': 'Укажи целевой X, серию подряд, ставку и сейф.',
                 })
             amount = parse_money(value['stake'], ledger.currency)
+            safe_losses = value.get('safe_losses', ledger.recovery_streak.safe_losses)
             if (amount is None or not isinstance(value['target'], str)
                     or type(value['trigger']) is not int
+                    or type(safe_losses) is not int or not 0 <= safe_losses <= 10
                     or amount > ledger.balance_cents):
-                return json_response('400 Bad Request', {'error': 'Проверь ставку и параметры.'})
+                return json_response('400 Bad Request', {
+                    'error': 'Проверь ставку, серию и сейф (выкл или 1–10 проигрышей).',
+                })
             if not ledger.recovery_streak.configure(
                 target=value['target'], trigger=value['trigger'], stake_cents=amount,
-                currency=ledger.currency,
+                currency=ledger.currency, safe_losses=safe_losses,
             ):
                 return json_response('409 Conflict', {
                     'error': 'Недопустимый X (1.01–10000) или активный цикл.',

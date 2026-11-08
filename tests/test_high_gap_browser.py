@@ -107,7 +107,7 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
             await page.locator('#demo-controls').wait_for(state='visible', timeout=10000)
             assert await page.locator('#demo-classic-accordion').evaluate('(n) => n.open')
             assert not await page.locator('#demo-high-accordion').evaluate('(n) => n.open')
-            await page.locator('#demo-high-accordion summary').click()
+            await page.locator('#demo-high-accordion > summary').click()
             assert await page.locator('#demo-high-accordion').evaluate('(n) => n.open')
             await page.locator('#high-gap-panel').wait_for(state='visible', timeout=10000)
             await page.locator('#high-gap-reference').fill('100')

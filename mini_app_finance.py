@@ -22,7 +22,7 @@ TZ = ZoneInfo('Asia/Vladivostok')
 PAGE_SIZE = 40
 MAX_ARCHIVED_CYCLES = 3000
 ARCHIVE_BATCH = 150
-STRATEGIES = frozenset(('classic', 'high_gap', 'target_streak'))
+STRATEGIES = frozenset(('classic', 'high_gap', 'target_streak', 'recovery_streak'))
 PERIODS = frozenset(('all', 'today', '7d', '30d', 'day'))
 FLOWS = frozenset(('all', 'income', 'expense'))
 
@@ -64,15 +64,17 @@ def _active_entries(ledger):
             'cashout_multiplier': str(high.target),
             'cycle_status': 'active',
         }
-    target = ledger.target_streak
-    if target.rounds:
-        yield {
-            'strategy': 'target_streak', 'currency': ledger.currency,
-            'started_at': target.started_at,
-            'ended_at': None, 'rounds': target.rounds[:],
-            'cashout_multiplier': str(target.target),
-            'cycle_status': 'active',
-        }
+    for strategy_name, target in (
+            ('target_streak', ledger.target_streak),
+            ('recovery_streak', ledger.recovery_streak)):
+        if target.rounds:
+            yield {
+                'strategy': strategy_name, 'currency': ledger.currency,
+                'started_at': target.started_at,
+                'ended_at': None, 'rounds': target.rounds[:],
+                'cashout_multiplier': str(target.target),
+                'cycle_status': 'active',
+            }
 
 
 async def demo_finance(redis, uid, ledger, *, page=0, period='all',
@@ -128,7 +130,7 @@ async def demo_finance(redis, uid, ledger, *, page=0, period='all',
     # Pending or recent completed entries can exist before the next atomic save,
     # and must be counted exactly once if also present in the archive index.
     for entry in (ledger.history + ledger.high_history + ledger.target_history +
-                  ledger.pending_archive_cycles):
+                  ledger.recovery_history + ledger.pending_archive_cycles):
         if not isinstance(entry, dict):
             continue
         ident = _identity(entry)

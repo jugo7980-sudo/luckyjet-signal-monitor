@@ -808,7 +808,7 @@ async function loadOverview(manual=false){
   }
   document.getElementById('live-home').hidden=false;
   lastSuccessfulCheck=Date.now();
-  setText('live-status','Обновлено: '+new Intl.DateTimeFormat('ru-RU',{timeZone:'Asia/Vladivostok',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(lastSuccessfulCheck))+' · 0,1 с');
+  setText('live-status','Обновлено: '+new Intl.DateTimeFormat('ru-RU',{timeZone:'Asia/Vladivostok',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(lastSuccessfulCheck)));
   setText('live-status-help','Последний успешный ответ: '+vladivostokTime(lastSuccessfulCheck)+'. Частота автоматической проверки зависит от состояния и активной вкладки. Это не подтверждает полноту истории источника.');
  }catch(error){
   failedPolls=Math.min(failedPolls+1,7);

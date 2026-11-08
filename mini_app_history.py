@@ -163,6 +163,29 @@ def _distribution_bucket(value):
     return 'above_150'
 
 
+# Exact, non-overlapping bands for high coefficients. Never derive these from
+# the cumulative >X statistics, which cannot represent exclusive frequencies.
+HIGH_COEFFICIENT_BANDS = (
+    (151, 200, '151-199'),
+    (200, 300, '200-299'),
+    (300, 500, '300-499'),
+    (500, 800, '500-799'),
+    (800, 1000, '800-999'),
+    (1000, 1500, '1000-1499'),
+    (1500, 2000, '1500-1999'),
+    (2000, 3000, '2000-2999'),
+    (3000, 5000, '3000-4999'),
+    (5000, float('inf'), '5000+'),
+)
+
+
+def _high_coefficient_band(value):
+    for start, end, key in HIGH_COEFFICIENT_BANDS:
+        if start <= value < end:
+            return key
+    return None
+
+
 def _new_distribution():
     result = {'below_1_5': 0, '1.5': 0, 'above_150': 0}
     result.update({str(n): 0 for n in range(2, 151)})
@@ -184,6 +207,8 @@ async def _day_distribution(redis, day, marker=None):
     if len(events) > MAX_RESET_EVENTS:
         return {'complete_scan': False, 'counts': None, 'total': None}
     counts = _new_distribution()
+    high_ranges = {key: 0 for _start, _end, key in HIGH_COEFFICIENT_BANDS}
+    high_values = {key: {} for key in high_ranges}
     total = 0
     for _event_id, raw in events:
         fields = {_string(k): _string(v) for k, v in raw.items()}
@@ -197,7 +222,23 @@ async def _day_distribution(redis, day, marker=None):
         if bucket is not None:
             counts[bucket] += 1
             total += 1
-    return {'complete_scan': True, 'counts': counts, 'total': total}
+            if bucket == 'above_150':
+                band = _high_coefficient_band(value)
+                if band is not None:
+                    high_ranges[band] += 1
+                    exact = str(fields.get('coefficient', '')).strip()
+                    high_values[band][exact] = high_values[band].get(exact, 0) + 1
+    return {
+        'complete_scan': True,
+        'counts': counts,
+        'total': total,
+        'high_ranges': high_ranges,
+        # Only observed coefficients are returned for accordion details.
+        'high_values': {
+            key: sorted(values.items(), key=lambda pair: (-float(pair[0]), pair[0]))
+            for key, values in high_values.items()
+        },
+    }
 
 
 async def _after_reset_day(redis, day, marker):

@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 from mini_app import response
-from mini_app_history import history
+from mini_app_history import history, _high_coefficient_band
 from luckyjet_reliable_gate import ReliableTelegramPasswordGate
 from luckyjet_signal.demo_ledger import DemoLedger
 
@@ -124,6 +124,9 @@ def test_history_auth_pages_and_user_isolation():
         assert daily['distribution']['counts']['5'] == 1
         assert daily['distribution']['counts']['150'] == 1
         assert daily['distribution']['counts']['above_150'] == 1
+        assert daily['distribution']['high_ranges']['151-199'] == 1
+        assert sum(daily['distribution']['high_ranges'].values()) == 1
+        assert daily['distribution']['high_values']['151-199'] == [['151.00', 1]]
         _, stats = await fetch('view=demo_stats')
         assert stats['stats']['recovered'] == 1
         assert stats['stats']['since_reset_cents'] == 100
@@ -144,6 +147,26 @@ def test_history_auth_pages_and_user_isolation():
         assert (await fetch('view=days', uid=99))[0] == '403 Forbidden'
         await gate.close()
     asyncio.run(run())
+
+
+def test_high_coefficient_bands_do_not_overlap():
+    assert _high_coefficient_band(150.99) is None
+    for low, high, name in [
+        (151, 199.99, '151-199'),
+        (200, 299.99, '200-299'),
+        (300, 499.99, '300-499'),
+        (500, 799.99, '500-799'),
+        (800, 999.99, '800-999'),
+        (1000, 1499.99, '1000-1499'),
+        (1500, 1999.99, '1500-1999'),
+        (2000, 2999.99, '2000-2999'),
+        (3000, 4999.99, '3000-4999'),
+        (5000, 999999, '5000+'),
+    ]:
+        assert _high_coefficient_band(low) == name
+        assert _high_coefficient_band(high) == name
+    assert _high_coefficient_band(199.999) == '151-199'
+    assert _high_coefficient_band(299.999) == '200-299'
 
 
 def test_history_static_asset_and_mobile_flow():
@@ -176,7 +199,11 @@ def test_history_static_asset_and_mobile_flow():
                     if view == 'days':
                         data['days'] = [DAY]
                     elif view == 'day':
-                        data.update(day=DAY, summary={'total': 100, 'lt2_tracking': 1, 'lt2': 45})
+                        data.update(day=DAY, summary={'total': 100, 'lt2_tracking': 1, 'lt2': 45},
+                                    distribution={'complete_scan': True, 'total': 4,
+                                                  'counts': {'1.5': 1, '2': 2, 'above_150': 1},
+                                                  'high_ranges': {'151-199': 1},
+                                                  'high_values': {'151-199': [['151.00', 1]]}})
                     elif view == 'high_days':
                         data.update(days=[DAY], last_high={'value': '150', 'stamp': 1793980800},
                                     since_high=7, gap=False)
@@ -214,6 +241,10 @@ def test_history_static_asset_and_mobile_flow():
             await page.get_by_text('06.11.2026').first.wait_for()
             await page.locator('#history-content button.history-item').first.click()
             await page.get_by_text('Всего раундов').wait_for()
+            await page.get_by_text('x151–x199').click()
+            await page.get_by_text('x151.00').wait_for()
+            assert await page.get_by_text('x151.00').count() == 1
+            assert await page.locator('.history-distribution-group').count() >= 18
             await page.locator('#history-back').click()
 
             await page.locator('[data-history-view=high_days]').click()

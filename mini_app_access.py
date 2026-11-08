@@ -220,8 +220,14 @@ async def access(authorization, cookie, gate, bot_token, method='GET', body=None
         registered = await _registered(gate.redis, uid)
         if not registered and uid not in gate.authorized and not gate.is_admin(uid):
             return json_response('403 Forbidden', {'error': 'Сначала зарегистрируйся через Telegram.'})
-        key = os.getenv('MINI_APP_PREMIUM_KEY', '').strip()
-        if not key:
+        # The Telegram bot password already grants exactly the same authorized
+        # membership through /start. Accept it here as well as the original
+        # Premium-only key; never log, expose, or overwrite either secret.
+        keys = tuple(value for value in (
+            os.getenv('MINI_APP_PREMIUM_KEY', '').strip(),
+            getattr(gate, 'password', ''),
+        ) if isinstance(value, str) and value)
+        if not keys:
             return json_response('503 Service Unavailable', {'error': 'Активация временно недоступна.'})
         attempts_key = f'luckyjet:premium_attempts:{uid}'
         failures = int(await gate.redis.get(attempts_key) or 0)
@@ -230,7 +236,13 @@ async def access(authorization, cookie, gate, bot_token, method='GET', body=None
         submitted = data.get('key')
         if not isinstance(submitted, str) or len(submitted) > 128:
             return json_response('400 Bad Request', {'error': 'Недопустимый ключ.'})
-        if not hmac.compare_digest(submitted.encode(), key.encode()):
+        # Evaluate both matches, even if the first matched, and keep the same
+        # per-user failure lockout for *either* credential.
+        candidate = submitted.encode('utf-8')
+        valid = False
+        for secret in keys:
+            valid |= hmac.compare_digest(candidate, secret.encode('utf-8'))
+        if not valid:
             attempts = await gate.redis.incr(attempts_key)
             if attempts == 1:
                 await gate.redis.expire(attempts_key, 900)

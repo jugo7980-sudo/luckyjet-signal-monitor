@@ -82,8 +82,21 @@ def test_four_live_tiles_sheet_and_navigation_on_small_phones():
                     elif path == '/api/history':
                         view = parse_qs(urlparse(req.request.url).query).get('view',['days'])[0]
                         history_views.append(view)
-                        await req.fulfill(content_type='application/json',
-                            body=json.dumps({'view':view,'total':0,'page':0,'items':[],'days':[]}))
+                        cycle_views = ('cycles','high_cycles','target_cycles','recovery_cycles')
+                        if view in cycle_views:
+                            strategy = ('classic','high_gap','target_streak','recovery_streak')[cycle_views.index(view)]
+                            data = {'view': view, 'total': 2, 'page': 0,
+                                'stats': {'currency': 'KRW', 'total': 2, 'recovered': 2,
+                                          'lost': 0, 'incomplete': 0, 'stopped': 0,
+                                          'history_net_cents': 60000, 'average_steps': 1},
+                                'items': [
+                                    {'index':i, 'currency':'KRW', 'strategy':strategy,
+                                     'steps':1,'outcome':'recovered','net_cents':30000,
+                                     'ended_at':'2026-11-09T01:07:00+10:00'}
+                                    for i in range(2)]}
+                        else:
+                            data = {'view':view,'total':0,'page':0,'items':[],'days':[]}
+                        await req.fulfill(content_type='application/json', body=json.dumps(data))
                     elif path == '/api/round-summary':
                         await req.fulfill(content_type='application/json',
                             body=json.dumps({'rounds_requested':150,'rounds_available':0,
@@ -171,7 +184,44 @@ def test_four_live_tiles_sheet_and_navigation_on_small_phones():
                 await page.locator('#strategy-sheet-history').click()
                 await expect(page.locator('#page-history')).to_be_visible()
                 assert 'high_cycles' in history_views
+                await expect(page.locator('#history-demo-cycles')).to_have_attribute('open', '')
+                assert await page.locator('#history-demo-cycles .history-item').count() == 2
+                assert not await page.locator('#history-management').evaluate('(el) => el.open')
                 assert await page.locator('#strategy-sheet-backdrop').is_hidden()
+
+                # All four mini-tiles must land directly in their OWN OPEN cycle history.
+                # Never expand Archive & Reset automatically.
+                for index, view in enumerate(('cycles','high_cycles','target_cycles','recovery_cycles')):
+                    await page.locator('nav [data-tab=home]').click()
+                    await cards.nth(index).click()
+                    await page.locator('#strategy-sheet-history').click()
+                    await expect(page.locator('#page-history')).to_be_visible()
+                    await expect(page.locator('#history-demo-cycles')).to_have_attribute('open','')
+                    assert await page.locator('#history-demo-cycles .history-item').count() == 2
+                    assert history_views[-1] == view
+                    assert not await page.locator('#history-management').evaluate('(el) => el.open')
+                    assert await page.locator(
+                        '#demo-history-strategy-' +
+                        ('classic','high','target','recovery')[index]
+                    ).get_attribute('aria-expanded') == 'true'
+                # Empty histories also open their disclosure and show a clear empty state.
+                await page.route('**/api/history?view=cycles*', lambda req: req.fulfill(
+                    content_type='application/json', body=json.dumps({
+                        'view':'cycles','total':0,'page':0,'items':[],
+                        'stats':{'currency':'KRW','total':0,'recovered':0,
+                                 'lost':0,'incomplete':0,'stopped':0,
+                                 'history_net_cents':0,'average_steps':0}})))
+                await page.locator('nav [data-tab=home]').click()
+                await cards.nth(0).click()
+                await page.locator('#strategy-sheet-history').click()
+                await expect(page.locator('#history-demo-cycles')).to_have_attribute('open','')
+                await expect(page.locator('#history-demo-cycles')).to_contain_text('Завершённых циклов пока нет')
+                assert not await page.locator('#history-management').evaluate('(el) => el.open')
+
+                await page.locator('#history-management summary').click()
+                assert await page.locator('#history-management').evaluate('(el) => el.open')
+                await page.locator('[data-history-view=days]').click()
+                assert not await page.locator('#history-management').evaluate('(el) => el.open')
                 assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 assert not errors, errors
                 await page.close()

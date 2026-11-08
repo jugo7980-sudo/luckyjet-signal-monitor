@@ -19,6 +19,7 @@
   let requestNo = 0;
   let lastLoad = 0;
   let hintIndex = 0;
+  const preferredDates = new Map();
 
   const el = (tag, className = '', text = '') => {
     const node = document.createElement(tag);
@@ -178,25 +179,41 @@
     const total = Number(data.total || 0);
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     const visible = ['days', 'high_days', 'high_day', 'cycles', 'high_cycles', 'max_steps'].includes(isArchive(data.view) ? data.view.slice(8) : data.view);
-    pager.hidden = !visible;
+    pager.hidden = !visible || pages <= 1;
     if (!visible) return;
     document.getElementById('history-page-number').textContent = (page + 1) + ' / ' + pages;
     document.getElementById('history-prev').disabled = page <= 0;
     document.getElementById('history-next').disabled = page + 1 >= pages;
   }
-  function datePicker(view) {
+  function datePicker(view, available = []) {
     const wrap = el('div', 'history-date-row');
+    const label = el('label', '', 'Дата');
+    label.htmlFor = 'history-date';
     const input = el('input');
     input.type = 'date';
     input.id = 'history-date';
-    input.max = new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Vladivostok', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
+    input.setAttribute('aria-label', 'Дата истории, Владивосток');
+    const today = new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Vladivostok',
+      year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
+    input.max = today;
+    const dayValues = (Array.isArray(available) ? available : [available])
+      .map(entry => typeof entry === 'string' ? entry : entry?.day)
+      .filter(day => /^\\d{4}-\\d{2}-\\d{2}$/.test(day) && day <= today);
+    const newestAvailable = dayValues.sort().at(-1);
+    // Explicitly set the value: an empty native date field appears blank in Telegram WebView.
+    input.value = preferredDates.get(view) || newestAvailable || today;
+    if (input.value > today) input.value = today;
+    input.addEventListener('change', () => preferredDates.set(view, input.value));
     const button = el('button', 'history-date-button', 'Показать');
     button.type = 'button';
     button.addEventListener('click', () => {
       if (!input.value || input.value > input.max) { status.textContent = 'Выбери корректную дату.'; return; }
-      navigate(view === 'archive' ? 'archive' : view === 'days' ? viewFor('day') : view === 'max_steps' ? viewFor('max_step_day') : view === 'cycles' ? viewFor('cycles') : viewFor('high_day'), {day: input.value}, true);
+      preferredDates.set(view, input.value);
+      navigate(view === 'archive' ? 'archive' : view === 'days' ? viewFor('day')
+        : view === 'max_steps' ? viewFor('max_step_day') : view === 'cycles' ? viewFor('cycles') : viewFor('high_day'),
+        {day: input.value}, true);
     });
-    wrap.append(input, button);
+    wrap.append(label, input, button);
     root.appendChild(wrap);
   }
   function render(data) {
@@ -211,7 +228,7 @@
     switch (view) {
       case 'archive': {
         heading('Фактический архив', 'Полученные от источника записи · Владивосток, UTC+10');
-        datePicker('archive');
+        datePicker('archive', data.day);
         info('Выбранная дата', formatDay(data.day));
         if (data.aggregate) {
           const a = data.aggregate;
@@ -250,8 +267,7 @@
         break;
       }
       case 'days':
-        heading('История Кэф', 'По дням · Владивосток, UTC+10');
-        datePicker('days');
+        datePicker('days', data.days);
         if (!data.days.length) note('Нет сохранённых дней.');
         for (const row of data.days) {
           const day = typeof row === 'string' ? row : row.day;
@@ -358,7 +374,7 @@
           info('Последний >100x', String(data.last_high.value) + 'x', formatTime(data.last_high.stamp));
         if (!archive && data.last_high)
           info('Раундов после >100x', data.gap ? 'Неполные данные' : data.since_high);
-        datePicker('high_days');
+        datePicker('high_days', data.days);
         if (!data.days.length) note('Нет сохранённых дней.');
         for (const row of data.days) {
           const day = typeof row === 'string' ? row : row.day;
@@ -390,7 +406,7 @@
       case 'cycles':
         heading(view === 'high_cycles' ? 'Стратегия №2 · история' : 'История DEMO',
           data.total + ' циклов · новые сначала');
-        if (archive) datePicker('cycles');
+        if (archive) datePicker('cycles', data.days || data.day);
         if (view !== 'high_cycles')
           item('Статистика DEMO', 'Результаты по сохранённым сессиям',
             () => navigate(viewFor('demo_stats'), archive && data.day ? {day: data.day} : {}, true));

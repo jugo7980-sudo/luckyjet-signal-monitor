@@ -67,12 +67,14 @@ def test_mobile_archive_and_reset_controls():
             await page.route('**/*', route)
             await page.goto('https://example.test/app')
             await page.locator('nav [data-tab=history]').click()
-            await page.locator('#history-content').get_by_text('История Кэф').wait_for()
+            await page.locator('#history-date').wait_for(state='visible')
+            assert await page.locator('#history-date').input_value() != ''
+            assert not await page.locator('#history-pager').is_visible()
             await page.locator('#history-management summary').click()
             async with page.expect_response(lambda res: '/api/controls' in res.url and
                     res.request.post_data_json.get('value') == 'days'):
                 await page.locator('#history-reset-scope').click()
-            await page.locator('#history-content').get_by_text('История Кэф').wait_for()
+            await page.wait_for_function("document.querySelector('#history-status').textContent === '' && !document.querySelector('#history-content').dataset.loading")
             assert writes[0] == {'action': 'history_reset', 'value': 'days', 'confirm': True}
             await page.locator('[data-history-view=high_days]').click()
             async with page.expect_response(lambda res: '/api/controls' in res.url and

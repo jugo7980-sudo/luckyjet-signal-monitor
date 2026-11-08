@@ -881,7 +881,8 @@ button:active:not(:disabled){transform:scale(.985)}
 .strategy-tile-net[data-state="profit"],#strategy-sheet-result[data-state="profit"]{color:#66dcaa}
 .strategy-tile-net[data-state="loss"],#strategy-sheet-result[data-state="loss"]{color:#ee9fae}
 .strategy-tile-net[data-state="neutral"],.strategy-tile-net[data-state="unknown"],#strategy-sheet-result[data-state="neutral"],#strategy-sheet-result[data-state="unknown"]{color:#b8aaca}
-.strategy-sheet-backdrop{position:fixed;inset:0;z-index:65;background:#080511a8;display:flex;justify-content:center;align-items:flex-end;padding:0 12px calc(12px + env(safe-area-inset-bottom));box-sizing:border-box}
+.strategy-sheet-backdrop{position:fixed;inset:0;z-index:65;background:#080511a8;display:flex;justify-content:center;align-items:flex-end;padding:0 12px calc(90px + env(safe-area-inset-bottom));box-sizing:border-box}
+body:has(#strategy-sheet-backdrop:not([hidden])) nav{z-index:70}
 .strategy-sheet{width:min(350px,100%);max-height:calc(100dvh - 42px);overflow-y:auto;box-sizing:border-box;background:#241c33;border:1px solid #51405e;border-radius:15px;padding:12px;box-shadow:0 12px 45px #0008}
 .strategy-sheet-head,.strategy-sheet-heading{display:flex;align-items:center;gap:8px}
 .strategy-sheet-head{justify-content:space-between;margin-bottom:12px}

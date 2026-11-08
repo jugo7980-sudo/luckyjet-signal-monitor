@@ -83,8 +83,8 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     elif "/api/history" in url:
                         view = parse_qs(urlparse(url).query).get("view", ["days"])[0]
                         await req.fulfill(content_type="application/json",
-                                          body=json.dumps({"view": view, "days": [],
-                                                           "items": [], "total": 0, "page": 0}))
+                                          body=json.dumps({"view": view, "days": ["2026-11-08"],
+                                                           "items": [], "total": 1, "page": 0}))
                     else:
                         await req.fulfill(content_type="application/javascript",
                             body="window.Telegram={WebApp:{initData:'fixture',ready(){},"
@@ -163,8 +163,11 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#summary-metric-close").click()
                 assert await page.locator("#home-status-row").evaluate(
                     "(n) => n.getBoundingClientRect().height >= 44")
-                assert await page.locator(".topbar .brand .sr-only").count() == 1
-                assert await page.locator(".topbar .brand > span:not(.sr-only)").count() == 1
+                assert await page.locator(".topbar .brand").count() == 0
+                assert await page.locator(".topbar .app-context-label").inner_text() == "DEMO"
+                assert await page.locator("#header-premium").inner_text() == "Premium"
+                assert await page.locator(".below-tiles #refresh-data").evaluate(
+                    "(n) => n.getBoundingClientRect().width <= 150")
                 assert not await page.locator("#page-home .home-disclaimer").is_visible()
                 assert await page.locator("#home-status-row").evaluate(
                     "(n) => n.closest('.home-freshness-row') !== null")
@@ -186,8 +189,13 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#demo-classic-accordion summary").click()
                 await page.locator("#demo-controls").wait_for(state="visible")
                 assert await page.locator("#page-demo .control-row label button").count() == 0
+                assert await page.locator("#page-demo .demo-balance-card").count() == 1
+                assert await page.locator("#demo-classic-accordion").evaluate(
+                    "(n) => n.parentElement.id === 'live-demo'")
                 assert await page.locator("#demo-management").evaluate(
-                    "(n) => n.compareDocumentPosition(document.querySelector('#demo-classic-accordion')) & Node.DOCUMENT_POSITION_FOLLOWING")
+                    "(n) => n.parentElement.classList.contains('demo-secondary-controls')")
+                assert await page.locator("#demo-status-row").count() == 0
+                assert await page.locator("#page-demo .demo-status-row").is_hidden()
                 assert "серия" in (await page.locator("#demo-classic-accordion").inner_text()).lower()
                 assert await page.locator("#demo-quality").inner_text() == "По архиву"
                 await page.locator('[data-summary-help-for="demo-quality-help"]').click()
@@ -210,6 +218,11 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     "document.documentElement.scrollWidth <= innerWidth")
 
                 await page.locator('nav [data-tab="history"]').click()
+                await page.locator("#history-content .history-date-search").wait_for(state="attached")
+                assert not await page.locator("#history-content .history-date-search").evaluate("(n) => n.open")
+                assert await page.locator("#history-content .history-item").count() >= 1
+                assert await page.locator("#history-date").is_hidden()
+                await page.locator("#history-content .history-date-search summary").click()
                 await page.locator("#history-date").wait_for(state="visible")
                 assert await page.locator("#history-date").input_value() != ""
                 assert await page.locator("#history-content .history-date-row label").inner_text() == "Дата"
@@ -219,8 +232,8 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     "(n) => n.getBoundingClientRect().width >= 105")
                 assert await page.evaluate("""() => {
                     const refresh = document.querySelector('#history-refresh').getBoundingClientRect();
-                    const date = document.querySelector('#history-date').getBoundingClientRect();
-                    return date.top - refresh.bottom < 45 && date.top >= refresh.top;
+                    const search = document.querySelector('.history-date-search').getBoundingClientRect();
+                    return search.top - refresh.bottom < 65 && search.top >= refresh.top;
                 }""")
                 assert not await page.locator("#history-management").evaluate("(n) => n.open")
                 assert await page.locator("#history-reset-scope").is_hidden()
@@ -247,6 +260,7 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#open-settings").click()
                 await page.locator("#settings-panel").wait_for(state="visible")
                 assert await page.locator("#account-username").count() == 1
+                assert await page.locator("#account-premium-status").is_hidden()
                 assert await page.locator("#page-account .control-row label button").count() == 0
                 assert await page.locator("#site-connection-panel").count() == 1
                 assert await page.locator("#app-release-notes").count() == 1

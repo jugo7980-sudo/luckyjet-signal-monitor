@@ -443,7 +443,7 @@
     const stake = document.getElementById('recovery-streak-stake').value.trim();
     const safe_losses = Number(document.getElementById('recovery-streak-safe').value);
     const safe_mode = document.getElementById('recovery-streak-safe-mode').value;
-    const numberPattern = /^\\d+(?:\\.\\d+)?$/;
+    const numberPattern = /^\d+(?:\.\d+)?$/;
     if (!numberPattern.test(target) || !numberPattern.test(target_max) || !stake ||
         Number(target) < 1.01 || Number(target_max) < Number(target) ||
         Number(target_max) > 10000 ||

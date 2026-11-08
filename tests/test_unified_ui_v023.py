@@ -150,6 +150,13 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#monitoring-accordion summary").click()
                 assert await page.locator("#monitoring-accordion").evaluate("(n) => n.open")
                 assert await page.locator("#monitor-state").count() == 1
+                assert await page.locator("#monitor-led").get_attribute("data-state") == "good"
+                assert await page.locator("#monitor-header-age").inner_text() == "2 с"
+                await page.locator('[data-summary-help-for="monitor-help-text"]').click()
+                assert "не гарантирует полноту" in await page.locator("#summary-metric-text").inner_text()
+                await page.locator("#summary-metric-close").click()
+                assert await page.locator("#home-status-row").evaluate(
+                    "(n) => n.getBoundingClientRect().height <= 40")
                 await page.locator("#monitor-uptime").scroll_into_view_if_needed()
                 await page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
                 assert await page.evaluate("""() => {
@@ -165,6 +172,12 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 assert await page.locator("#demo-metrics-disclosure").evaluate("(n) => !n.open")
                 await page.locator("#demo-classic-accordion summary").click()
                 await page.locator("#demo-controls").wait_for(state="visible")
+                assert "серия" in (await page.locator("#demo-classic-accordion").inner_text()).lower()
+                assert await page.locator("#demo-quality").inner_text() == "По архиву"
+                await page.locator('[data-summary-help-for="demo-quality-help"]').click()
+                assert "Полнота" in await page.locator("#summary-metric-text").inner_text()
+                await page.locator("#summary-metric-close").click()
+                assert not await page.locator("#demo-management").evaluate("(n) => n.open")
                 assert "виртуальным балансом" in await page.locator(
                     "#page-demo .screen-subtitle").text_content()
                 assert await page.locator("#page-demo .screen-subtitle").is_hidden()
@@ -174,6 +187,9 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#high-gap-help-toggle").click()
                 assert "Без догона" in await page.locator(
                     "#high-gap-help-body").inner_text()
+                await page.locator('[data-summary-help-for="high-gap-reference-hint"]').click()
+                assert "строго больше" in await page.locator("#summary-metric-text").inner_text()
+                await page.locator("#summary-metric-close").click()
                 assert await page.evaluate(
                     "document.documentElement.scrollWidth <= innerWidth")
 
@@ -193,7 +209,12 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator('nav [data-tab="account"]').click()
                 await page.locator("#open-settings").click()
                 await page.locator("#settings-panel").wait_for(state="visible")
+                assert await page.locator("#account-username").count() == 1
                 assert await page.locator("#app-release-notes").count() == 1
+                assert "0.2.9" in await page.locator("#app-release-notes").inner_text()
+                await page.locator('[data-summary-help-for="settings-notifications-hint"]').click()
+                assert "серии ниже 2x" in await page.locator("#summary-metric-text").inner_text()
+                await page.locator("#summary-metric-close").click()
                 assert await page.evaluate(
                     "document.documentElement.scrollWidth <= innerWidth")
                 assert not errors, errors

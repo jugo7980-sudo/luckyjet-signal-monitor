@@ -792,16 +792,69 @@
         }
         foldFrom(resultStart, 'Результат', 'Чистый итог: ' + signedMoney(c.net_cents) +
           ' · ' + (reasons[c.outcome] || 'Неизвестно'), 'history-cycle-outcome', 'history-cycle-sections');
+        // This is a view-only transformation: keep persisted rounds in their
+        // original chronological order, and preserve each original step number.
+        // Both regular and immutable archive cycle details use this renderer.
+        const rounds = Array.isArray(c.rounds) ? c.rounds : [];
+        const totalSteps = rounds.length;
+        const stepNet = r => r.payout_cents
+          ? Number(r.payout_cents) - Number(r.stake_cents)
+          : -Number(r.stake_cents);
         const stepsStart = root.childNodes.length;
-        (c.rounds || []).forEach((r, i) => {
-          const amount = r.payout_cents ? Number(r.payout_cents) - Number(r.stake_cents)
-            : -Number(r.stake_cents);
-          info('Шаг ' + (i + 1) + ' · ' +
-            (c.strategy === 'recovery_streak' ? 'ставка ' + money(r.stake_cents) + ' · ' : '') +
-            r.coefficient + 'x', signedMoney(amount));
+        const stepsList = el('div', 'history-steps-list');
+        root.appendChild(stepsList);
+        const compactLimit = 10;
+        let allStepsVisible = false;
+        const stepActions = el('div', 'history-step-actions');
+        const showSteps = el('button', 'history-outline history-step-more');
+        const latestStep = el('button', 'history-outline history-step-latest', 'К последнему шагу');
+        showSteps.type = 'button';
+        latestStep.type = 'button';
+        latestStep.addEventListener('click', () => {
+          stepsList.firstElementChild?.scrollIntoView({block: 'start', behavior: 'smooth'});
         });
-        foldFrom(stepsStart, 'Пошаговые ставки', (c.rounds || []).length +
-          ' записей · открыть полный список', 'history-cycle-steps', 'history-cycle-sections', true);
+        const drawSteps = () => {
+          stepsList.replaceChildren();
+          const visibleSteps = allStepsVisible ? totalSteps : Math.min(totalSteps, compactLimit);
+          for (let offset = 0; offset < visibleSteps; offset++) {
+            const index = totalSteps - 1 - offset;
+            const r = rounds[index];
+            const row = el('div', 'history-metric');
+            if (offset === 0) row.id = 'history-latest-step';
+            row.append(
+              el('span', '', 'Шаг ' + (index + 1) + ' · ' +
+                (c.strategy === 'recovery_streak' ? 'ставка ' + money(r.stake_cents) + ' · ' : '') +
+                r.coefficient + 'x'),
+              el('strong', '', signedMoney(stepNet(r)))
+            );
+            stepsList.appendChild(row);
+          }
+          showSteps.textContent = allStepsVisible
+            ? 'Показать последние ' + compactLimit
+            : 'Показать все ' + totalSteps + ' шагов';
+          showSteps.setAttribute('aria-expanded', String(allStepsVisible));
+          latestStep.hidden = !allStepsVisible;
+        };
+        if (totalSteps > compactLimit) {
+          showSteps.addEventListener('click', () => {
+            allStepsVisible = !allStepsVisible;
+            drawSteps();
+            if (!allStepsVisible) stepsList.firstElementChild?.scrollIntoView({
+              block: 'start', behavior: 'smooth',
+            });
+          });
+          stepActions.append(showSteps, latestStep);
+          root.appendChild(stepActions);
+        }
+        if (!totalSteps) stepsList.appendChild(el('p', 'history-note', 'Ставок в цикле нет.'));
+        else drawSteps();
+        const lastStep = totalSteps ? rounds[totalSteps - 1] : null;
+        const stepPreview = lastStep
+          ? totalSteps + ' записей · последний: шаг ' + totalSteps +
+            ' · ' + lastStep.coefficient + 'x · ' + signedMoney(stepNet(lastStep))
+          : '0 записей';
+        foldFrom(stepsStart, 'Пошаговые ставки', stepPreview,
+          'history-cycle-steps', 'history-cycle-sections', true);
         break;
       }
       case 'demo_stats': {

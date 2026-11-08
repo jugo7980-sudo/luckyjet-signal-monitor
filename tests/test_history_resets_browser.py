@@ -69,11 +69,15 @@ def test_mobile_archive_and_reset_controls():
             await page.locator('nav [data-tab=history]').click()
             await page.locator('#history-content').get_by_text('История Кэф').wait_for()
             await page.locator('#history-management summary').click()
-            await page.locator('#history-reset-scope').click()
+            async with page.expect_response(lambda res: '/api/controls' in res.url and
+                    res.request.post_data_json.get('value') == 'days'):
+                await page.locator('#history-reset-scope').click()
             await page.locator('#history-content').get_by_text('История Кэф').wait_for()
             assert writes[0] == {'action': 'history_reset', 'value': 'days', 'confirm': True}
             await page.locator('[data-history-view=high_days]').click()
-            await page.locator('#history-reset-scope').click()
+            async with page.expect_response(lambda res: '/api/controls' in res.url and
+                    res.request.post_data_json.get('value') == 'high_days'):
+                await page.locator('#history-reset-scope').click()
             assert writes[1]['value'] == 'high_days'
             await page.locator('[data-history-view=days]').click()
             await page.locator('#history-archive').click()
@@ -91,7 +95,9 @@ def test_mobile_archive_and_reset_controls():
             assert 'archive_max_steps' in reads
             await page.locator('#history-exit-archive').click()
             assert await page.locator('#history-reset-panel').is_visible()
-            await page.locator('#history-reset-all').click()
+            async with page.expect_response(lambda res: '/api/controls' in res.url and
+                    res.request.post_data_json.get('value') == 'all'):
+                await page.locator('#history-reset-all').click()
             assert writes[-1] == {'action': 'history_reset', 'value': 'all', 'confirm': True}
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert not errors, errors

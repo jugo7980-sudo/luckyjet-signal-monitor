@@ -57,9 +57,11 @@ def test_user_scoped_controls_writes_and_invariants():
         assert (await request('demo_trigger', value=10))[1]['demo']['trigger'] == 10
         assert (await request('demo_stake', value='25.50'))[1]['demo']['base_stake_cents'] == 2550
         gate._demo_ledger(42).active = True
-        assert (await request('demo_toggle'))[0] == '409 Conflict'
         assert (await request('demo_trigger', value=3))[0] == '409 Conflict'
         assert (await request('demo_stake', value='30'))[0] == '409 Conflict'
+        stopped, state = await request('demo_toggle')
+        assert stopped == '200 OK'
+        assert state['demo']['enabled'] is False and state['demo']['active'] is False
         assert (await request('demo_reset'))[0] == '400 Bad Request'
         assert (await request('demo_reset', confirm=True, value={'currency':'USD','balance':'10000','stake':'10','revision':'legacy'}))[1]['demo']['balance_cents'] == 1_000_000
 
@@ -76,7 +78,7 @@ def test_user_scoped_controls_writes_and_invariants():
             'notifications': True, 'sound': True,
             'threshold': 4, 'history_size': 20, 'delete_delay': 10,
         }
-        assert saved_demo == [42, 42, 42]
+        assert saved_demo == [42, 42, 42, 42]
         assert len(saved_settings) == 6
 
         for action, value in [('demo_trigger', 99), ('notification_threshold', 1),

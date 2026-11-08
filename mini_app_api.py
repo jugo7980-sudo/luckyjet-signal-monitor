@@ -7,6 +7,8 @@ import math
 import time
 from urllib.parse import parse_qsl, parse_qs
 
+from strategy_tiles import strategy_tile_snapshot
+
 log = logging.getLogger('luckyjet.mini_app_api')
 
 
@@ -168,6 +170,7 @@ async def overview(authorization, gate, token, query=''):
             'threshold': gate.user_threshold(uid),
             'probe': probe,
         },
+        'strategy_tiles': strategy_tile_snapshot(ledger),
         'demo': {'currency': ledger.currency, 'reset_revision': ledger.reset_revision, 'enabled': ledger.enabled, 'balance_cents': ledger.balance_cents, 'balance_verified': ledger.balance_verified,
                  'base_stake_cents': ledger.base_stake_cents, 'active': ledger.active,
                  'step': len(ledger.cycle_rounds) + 1 if ledger.active else None,

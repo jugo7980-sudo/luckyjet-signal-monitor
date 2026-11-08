@@ -1047,6 +1047,15 @@
     stack = []; current = null;
     navigate('high_cycles');
   };
+  window.openStrategyHistory = number => {
+    const index = Number(number) - 1;
+    const keys = ['classic', 'high_gap', 'target_streak', 'recovery_streak'];
+    const views = ['cycles', 'high_cycles', 'target_cycles', 'recovery_cycles'];
+    if (!Number.isInteger(index) || index < 0 || index >= keys.length) return;
+    openDemoStrategy = keys[index];
+    stack = []; current = null;
+    navigate(views[index]);
+  };
   window.historyBackInApp = goBack;
   window.resetHistoryCache = () => {
     ++requestNo; current = null; stack = []; lastLoad = 0;

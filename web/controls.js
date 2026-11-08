@@ -148,6 +148,7 @@
   window.showDemoProbe = showProbe;
   function paint(data) {
     latest = data;
+    window.renderStrategyTiles?.(data.strategy_tiles, {currency:data.demo?.currency, verified:data.demo?.balance_verified});
     window.renderDemoBalance?.(data.demo);
     const demo = data.demo, settings = data.settings;
     const quality = document.getElementById('demo-quality');
@@ -506,6 +507,7 @@
     confirmAction('Вернуть настройки по умолчанию? DEMO сохранится.', 'settings_reset'));
   document.getElementById('settings-test-notification').addEventListener('click', () =>
     action('test_notification'));
+  window.invalidateControlsSnapshot = () => { loadedAt = 0; };
   window.openControlsTab = () => load();
   window.clearControlsData = () => {
     generation++;

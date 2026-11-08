@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 DEFAULT_APP_URL = 'https://luckyjet-signal-monitor-production.up.railway.app/app'
-APP_VERSION = '0.2.26'
+APP_VERSION = '0.2.27'
 
 
 def app_url():
@@ -29,6 +29,8 @@ def response(path):
         return '200 OK', 'application/javascript; charset=utf-8', (Path(__file__).parent / 'web' / 'history.js').read_bytes()
     if path == '/controls.js':
         return '200 OK', 'application/javascript; charset=utf-8', (Path(__file__).parent / 'web' / 'controls.js').read_bytes()
+    if path == '/strategy-tiles.js':
+        return '200 OK', 'application/javascript; charset=utf-8', (Path(__file__).parent / 'web' / 'strategy-tiles.js').read_bytes()
     if path == '/admin.js':
         return '200 OK', 'application/javascript; charset=utf-8', (Path(__file__).parent / 'web' / 'admin.js').read_bytes()
     if path == '/site.js':

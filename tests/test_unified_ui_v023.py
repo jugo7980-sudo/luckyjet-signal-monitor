@@ -83,8 +83,8 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     elif "/api/history" in url:
                         view = parse_qs(urlparse(url).query).get("view", ["days"])[0]
                         await req.fulfill(content_type="application/json",
-                                          body=json.dumps({"view": view, "days": [],
-                                                           "items": [], "total": 0, "page": 0}))
+                                          body=json.dumps({"view": view, "days": ["2026-11-08"],
+                                                           "items": [], "total": 1, "page": 0}))
                     else:
                         await req.fulfill(content_type="application/javascript",
                             body="window.Telegram={WebApp:{initData:'fixture',ready(){},"

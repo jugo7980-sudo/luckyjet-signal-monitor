@@ -7,6 +7,7 @@ from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 from .demo_money import CURRENCIES, valid_amount, format_money
 from .high_gap_demo import HighGapStrategy
 from .target_streak_demo import TargetStreakStrategy
+from .recovery_streak_demo import RecoveryStreakStrategy
 
 
 DEFAULT_BALANCE_CENTS = 1_000_000  # $10,000.00
@@ -64,6 +65,7 @@ class DemoLedger:
         self.history = list(state.get("history", []))
         self.high_history = list(state.get("high_history") or [])[:MAX_HISTORY]
         self.target_history = list(state.get("target_history") or [])[:MAX_HISTORY]
+        self.recovery_history = list(state.get("recovery_history") or [])[:MAX_HISTORY]
         self.pending_archive_cycles = list(state.get("pending_archive_cycles") or [])
         self.high_gap = HighGapStrategy(
             state.get("high_gap"), min_stake=self.minimum_stake_cents,
@@ -71,6 +73,10 @@ class DemoLedger:
         )
         self.target_streak = TargetStreakStrategy(
             state.get("target_streak"), currency=self.currency,
+            default_stake=self.base_stake_cents,
+        )
+        self.recovery_streak = RecoveryStreakStrategy(
+            state.get("recovery_streak"), currency=self.currency,
             default_stake=self.base_stake_cents,
         )
         self.daily_max_steps = dict(state.get("daily_max_steps", {}))
@@ -149,6 +155,8 @@ class DemoLedger:
             "high_history": self.high_history,
             "target_history": self.target_history,
             "target_streak": self.target_streak.dump(),
+            "recovery_history": self.recovery_history,
+            "recovery_streak": self.recovery_streak.dump(),
             "pending_archive_cycles": self.pending_archive_cycles,
             "high_gap": self.high_gap.dump(),
             "daily_max_steps": self.daily_max_steps,
@@ -228,8 +236,14 @@ class DemoLedger:
         # Funding precedence: existing Strategy 1, then Strategy 2, then #3.
         # Reserve simultaneous pre-result stakes before any of them settles.
         high_commit = self.high_gap.stake_cents if high_committed and high_funded else 0
-        target_funded = (self.balance_cents >= legacy_commit + high_commit +
-                         self.target_streak.next_stake_cents)
+        target_committed = self.target_streak.enabled and self.target_streak.phase == 'betting'
+        target_funded = (not target_committed or self.balance_cents >=
+                         legacy_commit + high_commit + self.target_streak.next_stake_cents)
+        target_commit = (self.target_streak.next_stake_cents
+                         if target_committed and target_funded else 0)
+        # Strategy 4 is fourth in the simultaneous pre-result funding order.
+        recovery_funded = (self.balance_cents >= legacy_commit + high_commit +
+                           target_commit + self.recovery_streak.next_stake_cents)
         event = self.process_round(coefficient, now=now, round_id=identifier) if self.enabled and not before_reset else None
         if not before_reset:
             self.balance_cents, high_cycle = self.high_gap.on_round(
@@ -246,6 +260,13 @@ class DemoLedger:
             if target_cycle is not None:
                 self.target_history.insert(0, target_cycle)
                 self.target_history = self.target_history[:MAX_HISTORY]
+            self.balance_cents, recovery_cycle = self.recovery_streak.on_round(
+                coefficient, round_id=identifier, balance=self.balance_cents,
+                currency=self.currency, now=now, allow_funding=recovery_funded,
+            )
+            if recovery_cycle is not None:
+                self.recovery_history.insert(0, recovery_cycle)
+                self.recovery_history = self.recovery_history[:MAX_HISTORY]
         self.last_archived_round_id = identifier
         if position is not None:
             self.last_archived_stream_id = str(stream_id)
@@ -326,6 +347,8 @@ class DemoLedger:
         high_settings = self.high_gap.dump()
         target_was_enabled = self.target_streak.enabled
         target_settings = self.target_streak.dump()
+        recovery_was_enabled = self.recovery_streak.enabled
+        recovery_settings = self.recovery_streak.dump()
         # Preserve every available pre-reset cycle, including any that was
         # open at the moment of reset. The saved current journal still clears.
         if self.active:
@@ -342,7 +365,13 @@ class DemoLedger:
             if closed:
                 self.target_history.insert(0, closed)
                 self.target_history = self.target_history[:MAX_HISTORY]
-        pending = self.pending_archive_cycles + self.history + self.high_history + self.target_history
+        if self.recovery_streak.rounds:
+            closed = self.recovery_streak.stop(balance=self.balance_cents, currency=self.currency)
+            if closed:
+                self.recovery_history.insert(0, closed)
+                self.recovery_history = self.recovery_history[:MAX_HISTORY]
+        pending = (self.pending_archive_cycles + self.history + self.high_history +
+                   self.target_history + self.recovery_history)
         target_settings['enabled'] = target_was_enabled
         target_settings['phase'] = 'waiting'
         target_settings['streak'] = 0
@@ -354,6 +383,18 @@ class DemoLedger:
         if currency != old_currency:
             target_settings['stake_cents'] = base_stake_cents
             target_settings['next_stake_cents'] = base_stake_cents
+        # Strategy 4 retains its settings, except currency-dependent first stake.
+        recovery_settings['enabled'] = recovery_was_enabled
+        recovery_settings['phase'] = 'waiting'
+        recovery_settings['streak'] = 0
+        recovery_settings['rounds'] = []
+        recovery_settings['started_at'] = None
+        recovery_settings['balance_before_cents'] = None
+        recovery_settings['total_stake_cents'] = 0
+        recovery_settings['next_stake_cents'] = recovery_settings['stake_cents']
+        if currency != old_currency:
+            recovery_settings['stake_cents'] = base_stake_cents
+            recovery_settings['next_stake_cents'] = base_stake_cents
         # Reset never silently changes the user's on/off preference.
         high_settings["enabled"] = high_was_enabled
         high_settings["phase"] = "waiting_reference"
@@ -381,6 +422,8 @@ class DemoLedger:
             high_history=[],
             target_streak=target_settings,
             target_history=[],
+            recovery_streak=recovery_settings,
+            recovery_history=[],
             pending_archive_cycles=pending,
             last_archived_round_id=last_round_id,
             last_archived_stream_id=last_stream_id,

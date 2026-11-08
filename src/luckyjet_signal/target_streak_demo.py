@@ -11,8 +11,10 @@ from .high_gap_demo import parse_multiplier
 
 
 class TargetStreakStrategy:
-    def __init__(self, raw=None, *, currency='USD', default_stake=1000):
+    def __init__(self, raw=None, *, currency='USD', default_stake=1000,
+                 strategy_name='target_streak'):
         raw = raw if isinstance(raw, dict) else {}
+        self.strategy_name = strategy_name
         self.enabled = bool(raw.get('enabled', False))
         x = parse_multiplier(raw.get('target', '1.57'))
         self.target = x if x is not None and x > 1 else Decimal('1.57')
@@ -126,7 +128,7 @@ class TargetStreakStrategy:
         record = None
         if self.rounds:
             record = {
-                'strategy': 'target_streak', 'currency': currency,
+                'strategy': self.strategy_name, 'currency': currency,
                 'cashout_multiplier': str(self.target), 'trigger_streak': self.trigger,
                 'base_stake_cents': self.stake_cents,
                 'started_at': self.started_at, 'ended_at': at,

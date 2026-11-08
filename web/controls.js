@@ -13,11 +13,18 @@
   const all = [...document.querySelectorAll('[data-control]')];
   const highPanel = document.getElementById('high-gap-panel');
   const targetPanel = document.getElementById('target-streak-panel');
+  const recoveryPanel = document.getElementById('recovery-streak-panel');
   const targetHelpToggle = document.getElementById('target-streak-help-toggle');
   targetHelpToggle?.addEventListener('click', () => {
     const expanded = targetHelpToggle.getAttribute('aria-expanded') === 'true';
     targetHelpToggle.setAttribute('aria-expanded', String(!expanded));
     document.getElementById('target-streak-help-body').hidden = expanded;
+  });
+  const recoveryHelpToggle = document.getElementById('recovery-streak-help-toggle');
+  recoveryHelpToggle?.addEventListener('click', () => {
+    const expanded = recoveryHelpToggle.getAttribute('aria-expanded') === 'true';
+    recoveryHelpToggle.setAttribute('aria-expanded', String(!expanded));
+    document.getElementById('recovery-streak-help-body').hidden = expanded;
   });
   const highHelpToggle = document.getElementById('high-gap-help-toggle');
   highHelpToggle?.addEventListener('click', () => {
@@ -89,6 +96,31 @@
       'При x менее 2 первая успешная ставка приносит меньше первоначальной суммы.';
   }
   window.renderTargetStreakSnapshot = renderTargetStreak;
+  function renderRecoveryStreak(recovery = {}, currency = 'USD', balanceVerified = true) {
+    const enabled = Boolean(recovery.enabled);
+    const phase = recovery.phase || 'waiting';
+    const x = recovery.target || '1.32';
+    const summary = !enabled ? 'Выключена'
+      : phase === 'paused_gap' ? 'Пауза · разрыв архива'
+      : phase === 'paused_funds' ? 'Пауза · недостаточно баланса'
+      : phase === 'betting' ? 'Ставки · ' + (recovery.steps ?? 0)
+      : 'Серия <x' + x + ': ' + (recovery.streak ?? 0) + '/' + (recovery.trigger ?? 3);
+    document.getElementById('demo-recovery-preview').textContent = summary;
+    document.getElementById('recovery-streak-state').textContent = summary;
+    const next = recovery.next_stake_cents ?? recovery.stake_cents ?? 0;
+    document.getElementById('recovery-streak-progress').textContent = enabled
+      ? 'Автовывод x' + x + ' · Следующая ставка: ' + window.formatDemoMoney(next, currency)
+      : 'Автовывод x' + x;
+    document.getElementById('recovery-streak-outcome').textContent = (balanceVerified === false
+      ? 'Баланс не подтверждён. ' : '') +
+      (recovery.last_outcome ? 'Последний цикл: ' + recovery.last_outcome : '');
+    document.getElementById('recovery-streak-state-detail').textContent =
+      'Старт после ' + (recovery.trigger ?? 3) + ' результатов подряд ниже x' + x +
+      '. Первая ставка: ' + window.formatDemoMoney(recovery.stake_cents ?? 0, currency) +
+      '. После проигрышей цель — вернуть все потери плюс первоначальную ставку. ' +
+      'При x менее 2 первая успешная ставка приносит меньше первоначальной суммы.';
+  }
+  window.renderRecoveryStreakSnapshot = renderRecoveryStreak;
   function message(text, error = false) {
     const target = !document.getElementById('page-demo').hidden ? demoStatus : settingsStatus;
     target.textContent = String(text || '');
@@ -133,6 +165,7 @@
     demoPanel.hidden = false;
     highPanel.hidden = false;
     targetPanel.hidden = false;
+    recoveryPanel.hidden = false;
     settingsPanel.hidden = false;
     probeArea.hidden = !data.admin;
     if (data.probe) showProbe(data.probe);
@@ -169,6 +202,21 @@
       if (document.activeElement !== field) field.value = String(val);
     }
     document.getElementById('target-streak-stake-label').textContent =
+      'Первая ставка, ' + (demo.currency || 'USD');
+    const recovery = data.recovery_streak || {};
+    renderRecoveryStreak(recovery, demo.currency, demo.balance_verified);
+    document.getElementById('recovery-streak-toggle').textContent =
+      recovery.enabled ? 'Выключить стратегию №4' : 'Включить стратегию №4';
+    for (const [id, val] of Object.entries({
+      'recovery-streak-x': recovery.target || '1.32',
+      'recovery-streak-trigger': recovery.trigger ?? 3,
+      'recovery-streak-stake': ((recovery.stake_cents ?? demo.base_stake_cents) / 100)
+        .toFixed(demo.currency === 'KRW' ? 0 : 2),
+    })) {
+      const field = document.getElementById(id);
+      if (document.activeElement !== field) field.value = String(val);
+    }
+    document.getElementById('recovery-streak-stake-label').textContent =
       'Первая ставка, ' + (demo.currency || 'USD');
     document.getElementById('high-gap-toggle').textContent = high.enabled ?
       'Выключить стратегию №2' : 'Включить стратегию №2';
@@ -223,6 +271,17 @@
       document.getElementById('settings-target-' + name).textContent =
         (targetEvents[name] ?? fallback) ? 'ВКЛ' : 'ВЫКЛ';
     }
+    const recoveryPrefs = data.recovery_streak_notifications || {};
+    const recoveryEvents = recoveryPrefs.events || {};
+    const recoveryEnabled = recoveryPrefs.enabled !== false;
+    document.getElementById('recovery-streak-notice-preview').textContent = recoveryEnabled ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('settings-recovery-enabled').textContent = recoveryEnabled ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('settings-recovery-sound').textContent = recoveryPrefs.sound !== false ? 'ВКЛ' : 'ВЫКЛ';
+    document.getElementById('settings-recovery-delete').value = String(recoveryPrefs.delete_delay ?? 10);
+    for (const [name, fallback] of Object.entries({armed:true,betting:true,loss:false,goal:true,stopped:true})) {
+      document.getElementById('settings-recovery-' + name).textContent =
+        (recoveryEvents[name] ?? fallback) ? 'ВКЛ' : 'ВЫКЛ';
+    }
     for (const node of all) node.disabled = busy || (
       demo.active && (node.id === 'demo-trigger-select' || node.id === 'demo-stake-input' ||
         node.id === 'demo-stake-save' || (node.id === 'demo-toggle' && demo.enabled))
@@ -230,7 +289,9 @@
       'high-gap-filter-enabled', 'high-gap-filter-threshold', 'high-gap-filter-limit',
       'high-gap-target', 'high-gap-stake', 'high-gap-save'].includes(node.id)) ||
       (target.active && ['target-streak-x', 'target-streak-trigger',
-        'target-streak-stake', 'target-streak-save'].includes(node.id));
+        'target-streak-stake', 'target-streak-save'].includes(node.id)) ||
+      (recovery.active && ['recovery-streak-x', 'recovery-streak-trigger',
+        'recovery-streak-stake', 'recovery-streak-save'].includes(node.id));
   }
   async function request(method = 'GET', payload) {
     if (!window.canUsePremium?.()) throw new Error('Требуется Premium.');
@@ -348,6 +409,17 @@
     }
     action('target_streak_config', {target, trigger, stake});
   });
+  document.getElementById('recovery-streak-toggle').addEventListener('click', () =>
+    action('recovery_streak_toggle'));
+  document.getElementById('recovery-streak-save').addEventListener('click', () => {
+    const target = document.getElementById('recovery-streak-x').value.trim();
+    const trigger = Number(document.getElementById('recovery-streak-trigger').value);
+    const stake = document.getElementById('recovery-streak-stake').value.trim();
+    if (!target || !stake || !Number.isInteger(trigger) || trigger < 2 || trigger > 10) {
+      message('Проверь целевой X, серию и первую ставку.', true); return;
+    }
+    action('recovery_streak_config', {target, trigger, stake});
+  });
   const resetModal = document.getElementById('demo-reset-modal');
   const resetForm = document.getElementById('demo-reset-form');
   const resetCurrency = document.getElementById('demo-reset-currency');
@@ -416,6 +488,14 @@
       'click', () => action('target_notice_event', event));
   }
   document.getElementById('settings-target-test').addEventListener('click', () => action('target_notice_test'));
+  document.getElementById('settings-recovery-enabled').addEventListener('click', () => action('recovery_notice_toggle'));
+  document.getElementById('settings-recovery-sound').addEventListener('click', () => action('recovery_notice_sound'));
+  selectAction('settings-recovery-delete', 'recovery_notice_delete_delay');
+  for (const event of ['armed','betting','loss','goal','stopped']) {
+    document.getElementById('settings-recovery-' + event).addEventListener(
+      'click', () => action('recovery_notice_event', event));
+  }
+  document.getElementById('settings-recovery-test').addEventListener('click', () => action('recovery_notice_test'));
   document.getElementById('settings-notifications').addEventListener('click', () => action('notifications_toggle'));
   document.getElementById('settings-sound').addEventListener('click', () => action('sound_toggle'));
   selectAction('settings-threshold', 'notification_threshold');
@@ -430,7 +510,7 @@
     generation++;
     latest = null; loadedAt = 0;
     resetModal.hidden = true;
-    demoPanel.hidden = true; highPanel.hidden = true; targetPanel.hidden = true; settingsPanel.hidden = true;
+    demoPanel.hidden = true; highPanel.hidden = true; targetPanel.hidden = true; recoveryPanel.hidden = true; settingsPanel.hidden = true;
     probeArea.hidden = true;
     demoStatus.textContent = 'Нет доступа';
     settingsStatus.textContent = 'Нет доступа';

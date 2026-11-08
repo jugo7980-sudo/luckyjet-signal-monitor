@@ -47,6 +47,11 @@ from target_streak_notifications import (
     format_event as format_target_event,
     normalize as normalize_target_notices,
 )
+from recovery_streak_notifications import (
+    changed_events as recovery_changed_events,
+    format_event as format_recovery_event,
+    normalize as normalize_recovery_notices,
+)
 
 
 class TelegramPasswordGate(HistoryPanels):
@@ -82,6 +87,8 @@ class TelegramPasswordGate(HistoryPanels):
         self._high_gap_notice_pending = {}
         self.target_notice_settings = {}
         self._target_notice_pending = {}
+        self.recovery_notice_settings = {}
+        self._recovery_notice_pending = {}
         self.silent_users = set()
         self.thresholds = {}
         self.delete_seconds = {}
@@ -294,6 +301,12 @@ class TelegramPasswordGate(HistoryPanels):
                 self.target_notice_settings[int(user)] = normalize_target_notices(json.loads(raw))
             except (ValueError, TypeError, json.JSONDecodeError):
                 log.warning("Ignoring invalid Strategy 3 notification preferences")
+        self.recovery_notice_settings = {}
+        for user, raw in (await self.redis.hgetall("luckyjet:recovery_streak_notices:v1")).items():
+            try:
+                self.recovery_notice_settings[int(user)] = normalize_recovery_notices(json.loads(raw))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                log.warning("Ignoring invalid Strategy 4 notification preferences")
         self.history_hidden = {int(x) for x in await self.redis.smembers("luckyjet:history_hidden")}
         self.silent_users = {int(x) for x in await self.redis.smembers("luckyjet:silent_users")}
         self.chats = {
@@ -393,6 +406,12 @@ class TelegramPasswordGate(HistoryPanels):
                                  separators=(",", ":")))
         else:
             pipe.hdel("luckyjet:target_streak_notices:v1", uid)
+        if user_id in self.recovery_notice_settings:
+            pipe.hset("luckyjet:recovery_streak_notices:v1", uid,
+                      json.dumps(normalize_recovery_notices(self.recovery_notice_settings[user_id]),
+                                 separators=(",", ":")))
+        else:
+            pipe.hdel("luckyjet:recovery_streak_notices:v1", uid)
         await pipe.execute()
 
     async def is_authorized(self, user_id):
@@ -2236,6 +2255,58 @@ class TelegramPasswordGate(HistoryPanels):
                 self._target_notice_pending.pop(user_id, None)
         task.add_done_callback(finished)
 
+    async def _send_recovery_notice(self, user_id, event, text, round_id=None, *, test=False):
+        """Independent Strategy 4 notifications with Redis dedup across restarts."""
+        user_id = int(user_id)
+        if (not callable(self.request) or self.chats.get(user_id) != user_id
+                or user_id not in self.authorized or user_id in self.blocked):
+            return False
+        prefs = normalize_recovery_notices(self.recovery_notice_settings.get(user_id))
+        if not test and (not prefs['enabled'] or not prefs['events'].get(event, False)):
+            return False
+        try:
+            if not test and round_id is not None and self.redis is not None:
+                token = f"luckyjet:recovery-streak-notice:v1:{user_id}:{event}:{round_id}"
+                if not await self.redis.set(token, '1', ex=30 * 86400, nx=True):
+                    return False
+            result = await self.request('sendMessage', {
+                'chat_id': user_id, 'text': text,
+                'disable_notification': not prefs['sound'],
+            })
+            message_id = result.get('result', {}).get('message_id')
+            if message_id is not None and prefs['delete_delay'] > 0:
+                task = asyncio.create_task(
+                    self._schedule_delete(user_id, int(message_id), prefs['delete_delay'])
+                )
+                self._deletion_tasks.add(task)
+                task.add_done_callback(self._deletion_tasks.discard)
+            return True
+        except Exception:
+            log.exception("Strategy 4 notice failed: user_id=%s event=%s", user_id, event)
+            return False
+
+    def _queue_recovery_notices(self, user_id, events, round_id):
+        prior = self._recovery_notice_pending.get(user_id)
+
+        async def deliver():
+            if prior is not None:
+                try:
+                    await prior
+                except Exception:
+                    log.exception("Previous Strategy 4 notice task failed")
+            for event, text in events:
+                await self._send_recovery_notice(user_id, event, text, round_id)
+
+        task = asyncio.create_task(deliver())
+        self._recovery_notice_pending[user_id] = task
+        self._refresh_tasks.add(task)
+
+        def finished(done):
+            self._refresh_tasks.discard(done)
+            if self._recovery_notice_pending.get(user_id) is done:
+                self._recovery_notice_pending.pop(user_id, None)
+        task.add_done_callback(finished)
+
     async def _refresh_open_demo_history(self, user_id):
         if self.demo_history_pages.get(user_id) != 0 or user_id not in self.menu_messages:
             return
@@ -2252,9 +2323,12 @@ class TelegramPasswordGate(HistoryPanels):
             ledger = self._demo_ledger(user_id)
             notices = []
             target_notices = []
+            recovery_notices = []
             if round_id is not None:
                 before_target = ledger.target_streak.public(ledger.currency)
                 previous_target_cycle = ledger.target_history[0] if ledger.target_history else None
+                before_recovery = ledger.recovery_streak.public(ledger.currency)
+                previous_recovery_cycle = ledger.recovery_history[0] if ledger.recovery_history else None
                 previous_high = ledger.high_gap.dump()
                 previous_cycle = ledger.high_history[0] if ledger.high_history else None
                 event, changed = ledger.process_archived_round(round_id, coefficient, now=now, stream_id=stream_id)
@@ -2278,6 +2352,16 @@ class TelegramPasswordGate(HistoryPanels):
                     (kind, format_target_event(kind, current_target, ledger.currency, target_completed))
                     for kind in target_changed_events(before_target, current_target, target_completed)
                 ]
+                recovery_completed = (
+                    ledger.recovery_history[0]
+                    if ledger.recovery_history and ledger.recovery_history[0] is not previous_recovery_cycle
+                    else None
+                )
+                current_recovery = ledger.recovery_streak.public(ledger.currency)
+                recovery_notices = [
+                    (kind, format_recovery_event(kind, current_recovery, ledger.currency, recovery_completed))
+                    for kind in recovery_changed_events(before_recovery, current_recovery, recovery_completed)
+                ]
             else:
                 if not ledger.track_max_step(coefficient):
                     return None
@@ -2287,6 +2371,8 @@ class TelegramPasswordGate(HistoryPanels):
             self._queue_high_gap_notices(user_id, notices, round_id)
         if target_notices and not silent:
             self._queue_target_notices(user_id, target_notices, round_id)
+        if recovery_notices and not silent:
+            self._queue_recovery_notices(user_id, recovery_notices, round_id)
         if not event or silent:
             return event
         if event.get("type") == "insufficient_balance" and event.get("entry"):
@@ -2308,6 +2394,7 @@ class TelegramPasswordGate(HistoryPanels):
     async def on_history_gap(self, *, silent=False, stream_id=None):
         for user_id in list(self.authorized):
             target_closed = None
+            recovery_closed = None
             lock = self._mini_app_control_locks.setdefault(user_id, asyncio.Lock())
             async with lock:
                 ledger = self.demo_ledgers.get(user_id)
@@ -2340,12 +2427,27 @@ class TelegramPasswordGate(HistoryPanels):
                         ledger.target_history = ledger.target_history[:MAX_HISTORY]
                     if had_target_bets:
                         ledger.balance_verified = False
+                if ledger.recovery_streak.enabled and not before_reset:
+                    recovery_closed, had_recovery_bets = ledger.recovery_streak.on_gap(
+                        currency=ledger.currency, balance=ledger.balance_cents,
+                    )
+                    if recovery_closed is not None:
+                        ledger.recovery_history.insert(0, recovery_closed)
+                        ledger.recovery_history = ledger.recovery_history[:MAX_HISTORY]
+                    if had_recovery_bets:
+                        ledger.balance_verified = False
                 await self._persist_demo(user_id)
             if target_closed is not None and not silent:
                 state = ledger.target_streak.public(ledger.currency)
                 self._queue_target_notices(user_id, [
                     ('stopped', format_target_event('stopped', state, ledger.currency,
                                                     target_closed))
+                ], stream_id)
+            if recovery_closed is not None and not silent:
+                state = ledger.recovery_streak.public(ledger.currency)
+                self._queue_recovery_notices(user_id, [
+                    ('stopped', format_recovery_event('stopped', state, ledger.currency,
+                                                      recovery_closed))
                 ], stream_id)
             if entry is not None and not silent:
                 await self._send_demo_warning(

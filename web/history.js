@@ -160,7 +160,7 @@
     panel.append(summary, body);
     root.appendChild(panel);
     panel.addEventListener('toggle', () => {
-      if (current && ['cycles', 'high_cycles', 'target_cycles', 'demo_finance']
+      if (current && ['cycles', 'high_cycles', 'target_cycles', 'recovery_cycles', 'demo_finance']
           .includes(current.view)) setPager(current);
     });
     return panel;
@@ -183,6 +183,7 @@
       ['classic', 'Стратегия №1', 'Серия ниже 2x'],
       ['high_gap', 'Стратегия №2', 'Высокий X'],
       ['target_streak', 'Стратегия №3', 'Серия ниже выбранного X'],
+      ['recovery_streak', 'Стратегия №4', 'Догон ниже выбранного X'],
       ['finance', 'Доход / Расход', 'Ставки и выплаты всех стратегий'],
     ]) {
       const expanded = openDemoStrategy === key;
@@ -190,7 +191,8 @@
       button.type = 'button';
       button.id = 'demo-history-strategy-' +
         (key === 'classic' ? 'classic' : key === 'high_gap' ? 'high'
-          : key === 'target_streak' ? 'target' : 'finance');
+          : key === 'target_streak' ? 'target'
+          : key === 'recovery_streak' ? 'recovery' : 'finance');
       button.setAttribute('aria-expanded', String(expanded));
       button.setAttribute('aria-label', label + ': ' + (expanded ? 'свернуть' : 'показать историю и статистику'));
       const labels = el('span', 'demo-history-choice-label');
@@ -200,9 +202,11 @@
         const next = expanded ? null : key;
         openDemoStrategy = next;
         const desired = next === 'finance' ? 'demo_finance'
+          : next === 'recovery_streak' ? 'recovery_cycles'
           : next === 'high_gap' ? 'high_cycles'
           : next === 'target_streak' ? 'target_cycles' : 'cycles';
-        const isList = ['cycles', 'high_cycles', 'target_cycles', 'demo_finance'].includes(args.view);
+        const isList = ['cycles', 'high_cycles', 'target_cycles', 'recovery_cycles',
+          'demo_finance'].includes(args.view);
         if ((next === null && isList) || (next && args.view === desired && isList)) {
           // Closing and reopening cached panels is instantaneous, with no extra request.
           render(current);
@@ -240,7 +244,8 @@
     const active = ['days', 'day'].includes(view) ? 'days'
       : ['high_days', 'high_day', 'high_item'].includes(view) ? 'high_days'
       : ['cycles', 'cycle', 'demo_stats', 'high_cycles', 'high_cycle',
-         'target_cycles', 'target_cycle', 'demo_finance'].includes(view) ? 'cycles' : 'max_steps';
+         'target_cycles', 'target_cycle', 'recovery_cycles', 'recovery_cycle',
+          'demo_finance'].includes(view) ? 'cycles' : 'max_steps';
     document.getElementById('history-live-tabs').hidden = archive;
     document.getElementById('history-archive-tabs').hidden = !archive;
     document.getElementById('history-archive-exit').hidden = !archive;
@@ -274,13 +279,14 @@
     const total = Number(data.total || 0);
     const pages = Math.max(1, Math.ceil(total / Number(data.page_size || PAGE_SIZE)));
     const visible = ['days', 'high_days', 'high_day', 'cycles', 'high_cycles',
-      'target_cycles', 'demo_finance', 'max_steps'].includes(isArchive(data.view)
+      'target_cycles', 'recovery_cycles', 'demo_finance', 'max_steps'].includes(isArchive(data.view)
         ? data.view.slice(8) : data.view);
     const demoVisible = data.view === 'cycles' ? openDemoStrategy === 'classic'
       : data.view === 'high_cycles' ? openDemoStrategy === 'high_gap'
       : data.view === 'target_cycles' ? openDemoStrategy === 'target_streak'
+      : data.view === 'recovery_cycles' ? openDemoStrategy === 'recovery_streak'
       : data.view === 'demo_finance' ? openDemoStrategy === 'finance' : true;
-    const cyclesVisible = ['cycles', 'high_cycles', 'target_cycles'].includes(data.view)
+    const cyclesVisible = ['cycles', 'high_cycles', 'target_cycles', 'recovery_cycles'].includes(data.view)
       ? Boolean(root.querySelector('#history-demo-cycles[open]'))
       : data.view === 'demo_finance'
       ? Boolean(root.querySelector('#history-finance-operations[open]')) : true;
@@ -553,7 +559,7 @@
           ['period', 'Период', [['all', 'Всё время'], ['today', 'Сегодня'],
             ['7d', '7 дней'], ['30d', '30 дней'], ['day', 'Выбрать дату']]],
           ['strategy', 'Стратегия', [['all', 'Все стратегии'], ['classic', '№1'],
-            ['high_gap', '№2'], ['target_streak', '№3']]],
+            ['high_gap', '№2'], ['target_streak', '№3'], ['recovery_streak', '№4']]],
           ['flow', 'Показать', [['all', 'Все операции'], ['income', 'Доходы'],
             ['expense', 'Расходы']]],
         ];
@@ -641,7 +647,8 @@
           const isIncome = op.type === 'income';
           const displayCurrency = op.currency || 'USD';
           const action = isIncome ? 'Выплата' : 'Ставка';
-          const strategyLabel = op.strategy === 'target_streak' ? '№3'
+          const strategyLabel = op.strategy === 'recovery_streak' ? '№4'
+            : op.strategy === 'target_streak' ? '№3'
             : op.strategy === 'high_gap' ? '№2' : '№1';
           const entry = el('details', 'history-finance-entry');
           entry.name = 'history-finance-item';
@@ -659,7 +666,8 @@
           const lines = [
             ['Операция', isIncome ? 'Полная выплата, включая ставку' : 'Виртуальная ставка'],
             ['Стратегия', '№' + (op.strategy === 'classic' ? 1
-              : op.strategy === 'high_gap' ? 2 : 3)],
+              : op.strategy === 'high_gap' ? 2
+              : op.strategy === 'target_streak' ? 3 : 4)],
             ['Раунд', op.round_id || 'Не сохранён'],
             ['Шаг', op.step],
             ['Коэффициент раунда', op.coefficient ? 'x' + op.coefficient : 'Не сохранён'],
@@ -686,12 +694,14 @@
         setPager(data);
         break;
       }
+      case 'recovery_cycles':
       case 'target_cycles':
       case 'high_cycles':
       case 'cycles':
         if (!archive) {
           demoStrategySwitcher(view);
-          if (openDemoStrategy !== (view === 'target_cycles' ? 'target_streak'
+          if (openDemoStrategy !== (view === 'recovery_cycles' ? 'recovery_streak'
+            : view === 'target_cycles' ? 'target_streak'
             : view === 'high_cycles' ? 'high_gap' : 'classic')) break;
           demoStrategyStats(data);
         } else {
@@ -706,12 +716,15 @@
           currency = c.currency || 'USD';
           const result = c.outcome === 'incomplete_data' || c.net_cents == null
             ? 'Нет полных данных' : signedMoney(c.net_cents);
-          const category = c.strategy === 'target_streak'
+          const category = c.strategy === 'recovery_streak'
+            ? 'Догон <x' + (c.cashout_multiplier || '1.32')
+            : c.strategy === 'target_streak'
             ? 'Серия <x' + (c.cashout_multiplier || '1.57')
             : c.strategy === 'high_gap' ? 'После >x' + (c.reference_threshold || 100) : 'Серия <2x';
           item(c.steps + ' шаг. · ' + formatTime(c.ended_at || c.started_at),
             archive ? category + ' · ' + c.currency : 'Цикл ' + (c.index + 1),
-            () => navigate(view === 'target_cycles' ? 'target_cycle'
+            () => navigate(view === 'recovery_cycles' ? 'recovery_cycle'
+              : view === 'target_cycles' ? 'target_cycle'
               : view === 'high_cycles' ? 'high_cycle' : viewFor('cycle'),
               archive ? {id: c.id} : {index: c.index}, true), result);
         }
@@ -720,6 +733,7 @@
           archive ? 'history-archive-sections' : 'history-demo-sections');
         setPager(data);
         break;
+      case 'recovery_cycle':
       case 'target_cycle':
       case 'high_cycle':
       case 'cycle': {
@@ -729,10 +743,17 @@
         const reasons = {recovered: 'Цель достигнута', insufficient_balance: 'Недостаточно баланса',
           incomplete_data: 'Неполные данные', stopped_by_user: 'Остановлена пользователем',
           reference_changed: 'Новый опорный коэффициент'};
-        heading(archive ? 'Цикл DEMO' : view === 'target_cycle' ? 'Стратегия №3 · цикл'
+        heading(archive ? 'Цикл DEMO' : view === 'recovery_cycle' ? 'Стратегия №4 · цикл'
+          : view === 'target_cycle' ? 'Стратегия №3 · цикл'
           : view === 'high_cycle' ? 'Стратегия №2 · цикл' :
           'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
         const paramsStart = root.childNodes.length;
+        if (c.strategy === 'recovery_streak') {
+          info('Стратегия', 'Догон ниже x' + (c.cashout_multiplier || '1.32'));
+          info('Условие входа', (c.trigger_streak || 3) + ' подряд');
+          info('Автовывод', 'x' + (c.cashout_multiplier || '1.32'));
+          info('Первая ставка', money(c.base_stake_cents));
+        }
         if (c.strategy === 'target_streak') {
           info('Стратегия', 'Серия ниже x' + (c.cashout_multiplier || '1.57'));
           info('Условие входа', (c.trigger_streak || 3) + ' подряд');
@@ -788,7 +809,8 @@
               info('По истории', signedMoney(group.history_net_cents));
               info('Среднее шагов', group.average_steps);
             }
-            foldFrom(archiveStatsStart, strategy === 'target_streak' ? 'Стратегия №3'
+            foldFrom(archiveStatsStart, strategy === 'recovery_streak' ? 'Стратегия №4'
+              : strategy === 'target_streak' ? 'Стратегия №3'
               : strategy === 'high_gap' ? 'Стратегия №2' : 'Стратегия №1',
               Object.keys(groups).length + ' валют',
               'history-archive-stats-' + strategy, 'history-archive-stats');
@@ -951,7 +973,8 @@
     if (['days', 'day'].includes(view)) return 'days';
     if (['high_days', 'high_day', 'high_item'].includes(view)) return 'high_days';
     if (['cycles', 'cycle', 'high_cycles', 'high_cycle',
-         'target_cycles', 'target_cycle', 'demo_stats'].includes(view)) return 'cycles';
+         'target_cycles', 'target_cycle', 'recovery_cycles', 'recovery_cycle',
+         'demo_stats'].includes(view)) return 'cycles';
     if (view === 'demo_finance') return null;
     return 'max_steps';
   };
@@ -997,7 +1020,7 @@
     if (status.textContent === 'Загрузка истории…') status.textContent = '';
     root.querySelectorAll('details[open]').forEach(panel => { panel.open = false; });
     openDemoStrategy = null;
-    if (['cycle', 'high_cycle', 'target_cycle'].includes(args.view)) {
+    if (['cycle', 'high_cycle', 'target_cycle', 'recovery_cycle'].includes(args.view)) {
       // A single-cycle detail belongs to an expanded strategy: return to a closed list.
       args = {view: 'cycles', page: 0};
       current = null; stack = [];
@@ -1007,7 +1030,7 @@
       back.hidden = true;
       delete root.dataset.loading;
       root.removeAttribute('aria-busy');
-    } else if (current && ['cycles', 'high_cycles', 'target_cycles', 'demo_finance'].includes(args.view)) {
+    } else if (current && ['cycles', 'high_cycles', 'target_cycles', 'recovery_cycles', 'demo_finance'].includes(args.view)) {
       render(current);
     }
   };

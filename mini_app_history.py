@@ -19,7 +19,8 @@ from luckyjet_signal.demo_ledger import DemoLedger, DEFAULT_BALANCE_CENTS, MAX_H
 TZ = ZoneInfo('Asia/Vladivostok')
 VIEWS = {'days', 'day', 'high_days', 'high_day', 'high_item',
          'cycles', 'cycle', 'high_cycles', 'high_cycle',
-         'target_cycles', 'target_cycle', 'demo_finance', 'demo_stats',
+         'target_cycles', 'target_cycle', 'recovery_cycles', 'recovery_cycle',
+         'demo_finance', 'demo_stats',
          'max_steps', 'max_step_day', 'archive'} | FACTUAL_VIEWS
 DAY_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 ITEM_PATTERN = re.compile(r'^[0-9a-f]{16}$')
@@ -367,7 +368,7 @@ async def history(authorization, gate, token, query=''):
         if (view in {'day', 'high_day', 'max_step_day',
                      'archive_day', 'archive_high_day', 'archive_high_item', 'archive_max_step_day'} and day is None or
             view in {'high_item', 'archive_high_item', 'archive_cycle'} and item_id is None or
-            view in {'cycle', 'high_cycle', 'target_cycle'} and index is None):
+            view in {'cycle', 'high_cycle', 'target_cycle', 'recovery_cycle'} and index is None):
             raise ValueError('Required parameter missing')
     except (ValueError, KeyError, TypeError):
         return json_response('400 Bad Request', {'error': 'Некорректные параметры истории.'})
@@ -405,12 +406,15 @@ async def history(authorization, gate, token, query=''):
         markers = {_string(k): _reset_info(v) for k, v in stored.items()}
 
     if view in {'cycles', 'cycle', 'high_cycles', 'high_cycle',
-                 'target_cycles', 'target_cycle', 'demo_stats', 'max_steps', 'max_step_day'}:
+                 'target_cycles', 'target_cycle', 'recovery_cycles', 'recovery_cycle',
+                 'demo_stats', 'max_steps', 'max_step_day'}:
         ledger = gate.demo_ledgers.get(uid) or DemoLedger()
         cycle_marker = markers.get('cycles')
         is_high = view in {'high_cycles', 'high_cycle'}
         is_target = view in {'target_cycles', 'target_cycle'}
-        current_history = (ledger.target_history if is_target
+        is_recovery = view in {'recovery_cycles', 'recovery_cycle'}
+        current_history = (ledger.recovery_history if is_recovery
+                           else ledger.target_history if is_target
                            else ledger.high_history if is_high else ledger.history)
         eligible = [(i, record) for i, record in enumerate(current_history)
                     if _after_cycle_reset(record, cycle_marker)]
@@ -452,7 +456,7 @@ async def history(authorization, gate, token, query=''):
                     for key in days[page*10:page*10+10]],
                 'total': len(days), 'page': page, 'view_reset': bool(marker),
             })
-        if view in {'cycles', 'high_cycles', 'target_cycles'}:
+        if view in {'cycles', 'high_cycles', 'target_cycles', 'recovery_cycles'}:
             # Each accordion gets its own statistics from only its own saved cycles.
             # Do not use the shared DEMO balance delta as either strategy's profit.
             stats = _demo_stats(ledger, [record for _, record in eligible])

@@ -199,3 +199,90 @@ def test_bot_password_fallback_keeps_invalid_attempt_limit_and_block_checks(monk
         gate.redis=None
         await gate.close()
     asyncio.run(run())
+
+
+def test_telegram_minapp_logout_persists_guest_and_explicit_login_preserves_premium():
+    """A signed Telegram identity is not enough to auto-reopen LuckyJet after exit."""
+    from mini_app_access import APP_LOGOUT_PREFIX
+    from luckyjet_signal.demo_ledger import DemoLedger
+
+    async def run():
+        gate = ReliableTelegramPasswordGate(None)
+        gate.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        gate.authorized.update({42, 43})
+        gate.demo_ledgers[42] = DemoLedger(currency='KRW',
+            balance_cents=7018500, initial_balance_cents=7018500,
+            recovery_streak={'enabled':True,'target':'1.33','trigger':5,
+                             'safe_losses':2,'stake_cents':100000})
+        await gate.redis.hset('luckyjet:web_registered', '42',
+            json.dumps({'id':42,'username':'test_42','first_name':'User'}))
+        original = json.dumps(gate.demo_ledgers[42].dump(),sort_keys=True)
+        async def call(uid, action=None):
+            body=json.dumps({'action':action}).encode() if action else None
+            return decode(await access(signed(uid=uid),'',gate,'fixture',
+                'POST' if action else 'GET',body))
+
+        status, before = await call(42)
+        assert status=='200 OK' and before['premium'] and before['registered']
+        status, exit_state = await call(42, 'logout')
+        assert status=='200 OK'
+        assert exit_state['signed_out'] and not exit_state['premium']
+        assert not exit_state['verified'] and not exit_state['registered']
+        assert exit_state['balance_cents'] is None
+        assert await gate.redis.get(APP_LOGOUT_PREFIX+'42') == '1'
+        assert 42 in gate.authorized  # no Premium revocation
+        assert await gate.redis.sismember('luckyjet:authorized_users','42') is False or 42 in gate.authorized
+        assert json.dumps(gate.demo_ledgers[42].dump(),sort_keys=True)==original
+
+        assert await effective_auth(signed(uid=42),'',gate,'fixture')==''
+        assert (await effective_auth(signed(uid=43),'',gate,'fixture')).startswith('tma ')
+        assert decode(await overview(
+            await effective_auth(signed(uid=42),'',gate,'fixture'),gate,'fixture'))[0]=='401 Unauthorized'
+        status, after_reload = await call(42)
+        assert status=='200 OK' and after_reload['signed_out']
+        assert not after_reload['premium'] and not after_reload['registered']
+        # Signed-out users cannot turn Premium back on by posting a key.
+        assert (await call(42,'register'))[0]=='401 Unauthorized'
+        assert (await call(42,'premium'))[0]=='401 Unauthorized'
+
+        status, restored = await call(42,'login')
+        assert status=='200 OK' and restored['premium'] and restored['registered']
+        assert not await gate.redis.exists(APP_LOGOUT_PREFIX+'42')
+        assert (await effective_auth(signed(uid=42),'',gate,'fixture')).startswith('tma ')
+        assert json.dumps(gate.demo_ledgers[42].dump(),sort_keys=True)==original
+
+        # If Premium was revoked independently, re-login must NOT re-grant it.
+        assert (await call(42,'logout'))[0]=='200 OK'
+        gate.authorized.remove(42)
+        status, non_premium = await call(42,'login')
+        assert status=='200 OK' and not non_premium['premium'] and non_premium['registered']
+
+        # Blocked accounts cannot regain access through the re-login action.
+        assert (await call(42,'logout'))[0]=='200 OK'
+        gate.blocked.add(42)
+        assert (await call(42,'login'))[0]=='403 Forbidden'
+        assert await gate.redis.exists(APP_LOGOUT_PREFIX+'42')
+        await gate.redis.aclose()
+        gate.redis=None
+        await gate.close()
+    asyncio.run(run())
+
+
+def test_minapp_signout_requires_valid_telegram_signature_and_no_cookie_relogin():
+    async def run():
+        gate=ReliableTelegramPasswordGate(None)
+        gate.redis=fakeredis.aioredis.FakeRedis(decode_responses=True)
+        gate.authorized.add(42)
+        bad_auth=signed(uid=42).replace('42','99')
+        for action in ('logout','login'):
+            code,_=decode(await access(bad_auth,'',gate,'fixture','POST',
+                                      json.dumps({'action':action}).encode()))
+            assert code=='401 Unauthorized'
+        # Missing Telegram identity cannot reactivate the Mini App.
+        code,_=decode(await access('','',gate,'fixture','POST',
+                                  b'{"action":"login"}'))
+        assert code=='401 Unauthorized'
+        await gate.redis.aclose()
+        gate.redis=None
+        await gate.close()
+    asyncio.run(run())

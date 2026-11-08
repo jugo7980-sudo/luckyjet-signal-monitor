@@ -37,7 +37,7 @@ def test_strategy2_notice_events_follow_real_virtual_bets_only():
     assert len(strategy.rounds) == 1
 
     won, cycle = play('winner', '125.00')
-    assert won == ['reference', 'goal']
+    assert won == ['goal']
     assert cycle['outcome'] == 'recovered'
     assert len(cycle['rounds']) == 2
     assert cycle['net_cents'] == 98_000

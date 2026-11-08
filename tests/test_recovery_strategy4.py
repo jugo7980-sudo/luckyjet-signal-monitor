@@ -115,18 +115,18 @@ def test_four_strategies_simultaneously_share_one_balance_without_double_spendin
     assert len(ledger.recovery_streak.rounds) == 1
     assert ledger.balance_cents >= 0
     # While #3 is waiting, it must NOT reserve capital needed by #4.
-    waiting = dict(params, balance_cents=15000, initial_balance_cents=15000,
+    waiting = dict(params, balance_cents=120000, initial_balance_cents=120000,
                    enabled=False,
                    high_gap={'enabled':False},
                    target_streak={'enabled':True,'phase':'waiting','stake_cents':10000,
-                                  'next_stake_cents':10000,'target':'1.32','trigger':3})
+                                  'next_stake_cents':120000,'target':'1.32','trigger':3})
     waiting['recovery_streak']={'enabled':True,'phase':'betting',
                                 'stake_cents':15000,'target':'1.32',
                                 'next_stake_cents':15000}
     second = DemoLedger(**waiting)
     tick(second,1,'1.10')
     assert len(second.recovery_streak.rounds) == 1
-    assert second.balance_cents == 0
+    assert second.balance_cents == 105000
 
 
 def test_funding_priority_preserves_existing_three_strategies():

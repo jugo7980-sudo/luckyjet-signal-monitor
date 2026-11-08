@@ -121,7 +121,7 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                 await page.locator('nav [data-tab=history]').click()
                 assert not await page.locator('#recovery-streak-notice-options').evaluate('(n) => n.open')
                 await page.locator('[data-history-view=cycles]').click()
-                await page.locator('#demo-history-strategy-target').click()
+                await page.locator('#demo-history-strategy-recovery').click()
                 await page.locator('#history-demo-cycles > summary').click()
                 await expect(page.locator('#history-demo-cycles .history-item')).to_be_visible()
                 await page.locator('#history-demo-cycles .history-item').click()
@@ -131,7 +131,7 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                 assert 'recovery_cycles' in views and 'recovery_cycle' in views
                 await page.locator('nav [data-tab=home]').click()
                 await page.locator('nav [data-tab=history]').click()
-                await expect(page.locator('#demo-history-strategy-target')).to_have_attribute(
+                await expect(page.locator('#demo-history-strategy-recovery')).to_have_attribute(
                     'aria-expanded', 'false')
                 assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 assert not errors, errors

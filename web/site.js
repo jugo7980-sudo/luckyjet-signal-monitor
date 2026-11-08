@@ -40,8 +40,8 @@
     state = data;
     visible = true;
     section.hidden = false;
-    disclosure.hidden = false;
-    preview.textContent = labels[data.phase] || 'Проверка';
+    if (disclosure) disclosure.hidden = false;
+    if (preview) preview.textContent = labels[data.phase] || 'Проверка';
     status.textContent = labels[data.phase] || 'Состояние неизвестно.';
     if (data.error) status.textContent += ' ' + data.error;
     login.hidden = ['connecting', 'code', 'retry_code'].includes(data.phase);
@@ -500,9 +500,8 @@
   window.clearSiteData = () => {
     clearTimeout(timer);
     section.hidden = true;
-    disclosure.hidden = true;
-    disclosure.open = false;
-    preview.textContent = '—';
+    if (disclosure) { disclosure.hidden = true; disclosure.open = false; }
+    if (preview) preview.textContent = '—';
     visible = false;
     lastLoad = 0;
     state = null;

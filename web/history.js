@@ -183,7 +183,7 @@
       ['classic', 'Стратегия №1', 'Серия ниже 2x'],
       ['high_gap', 'Стратегия №2', 'Высокий X'],
       ['target_streak', 'Стратегия №3', 'Серия ниже выбранного X'],
-      ['recovery_streak', 'Стратегия №4', 'Догон ниже выбранного X'],
+      ['recovery_streak', 'Стратегия №4', 'Фиксированная ставка после новой серии ниже X'],
       ['finance', 'Доход / Расход', 'Ставки и выплаты всех стратегий'],
     ]) {
       const expanded = openDemoStrategy === key;
@@ -228,7 +228,7 @@
     if (s.view_reset) note('Показаны циклы после сброса вкладки. Фактический архив сохранён.');
     info('Валюта', currency);
     info('Всего сессий', s.total);
-    info('Успешных', s.recovered);
+    info(openDemoStrategy === 'recovery_streak' ? 'Цель X достигнута' : 'Успешных', s.recovered);
     info('Проигрышных', s.lost);
     info('Неполных', s.incomplete);
     info('Остановленных', s.stopped);
@@ -754,10 +754,12 @@
           'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
         const paramsStart = root.childNodes.length;
         if (c.strategy === 'recovery_streak') {
-          info('Стратегия', 'Догон ниже x' + (c.cashout_multiplier || '1.32'));
+          info('Стратегия', (c.stake_mode === 'fixed' ?
+            'Фиксированная ставка после N ниже x' : 'Ранее: догон после N ниже x') +
+            (c.cashout_multiplier || '1.32'));
           info('Условие входа', (c.trigger_streak || 3) + ' подряд');
           info('Автовывод', 'x' + (c.cashout_multiplier || '1.32'));
-          info('Первая ставка', money(c.base_stake_cents));
+          info(c.stake_mode === 'fixed' ? 'Фиксированная ставка' : 'Первая ставка', money(c.base_stake_cents));
         }
         if (c.strategy === 'target_streak') {
           info('Стратегия', 'Серия ниже x' + (c.cashout_multiplier || '1.57'));
@@ -783,13 +785,18 @@
         info('Чистый итог', signedMoney(c.net_cents));
         info('Баланс до', money(c.balance_before_cents));
         info('Баланс после', money(c.balance_after_cents));
+        if (c.strategy === 'recovery_streak') {
+          note('Баланс до/после — общий для всех одновременно работающих DEMO-стратегий. Его разница может отличаться от чистого результата стратегии №4.');
+        }
         foldFrom(resultStart, 'Результат', 'Чистый итог: ' + signedMoney(c.net_cents) +
           ' · ' + (reasons[c.outcome] || 'Неизвестно'), 'history-cycle-outcome', 'history-cycle-sections');
         const stepsStart = root.childNodes.length;
         (c.rounds || []).forEach((r, i) => {
           const amount = r.payout_cents ? Number(r.payout_cents) - Number(r.stake_cents)
             : -Number(r.stake_cents);
-          info('Шаг ' + (i + 1) + ' · ' + r.coefficient + 'x', signedMoney(amount));
+          info('Шаг ' + (i + 1) + ' · ' +
+            (c.strategy === 'recovery_streak' ? 'ставка ' + money(r.stake_cents) + ' · ' : '') +
+            r.coefficient + 'x', signedMoney(amount));
         });
         foldFrom(stepsStart, 'Пошаговые ставки', (c.rounds || []).length +
           ' записей · открыть полный список', 'history-cycle-steps', 'history-cycle-sections', true);

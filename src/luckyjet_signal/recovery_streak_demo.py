@@ -1,11 +1,12 @@
 """Independent virtual DEMO Strategy 4.
 
-A stake is armed only by N *completed* consecutive rounds strictly below X.
-After any lost stake, another fresh N-round signal is required. The configured
-stake is the first wager, not an extra profit target. No real bets.
+A fixed virtual stake is armed only by N *completed* consecutive rounds
+strictly below X. After any lost stake, another fresh N-round signal is
+required. Each wager uses the configured stake; no automatic increases or
+loss recovery. No real bets.
 """
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal
 
 from .demo_money import MAX_AMOUNT, valid_amount
 from .target_streak_demo import TargetStreakStrategy
@@ -26,6 +27,11 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
         if self.phase == 'betting' and self.rounds and not self.recovery_signal_armed:
             self.phase = 'waiting'
             self.streak = 0
+        # Migrate old v0.2.26 active sessions without touching their past
+        # settled wagers. Previously next_stake_cents could grow after losses;
+        # from this release onward every future wager is the configured fixed
+        # amount, including a currently armed next wager.
+        self.next_stake_cents = self.stake_cents
 
     def dump(self):
         state = super().dump()
@@ -50,20 +56,20 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
                                  stake_cents=stake_cents, currency=currency)
 
     def required_stake(self, currency):
-        """Recover losses plus the net profit from a winning *first* wager.
+        """Fixed amount on every signal, regardless of previous losses."""
+        return self.stake_cents
 
-        Example: 1,000 KRW at x1.38 targets 380 KRW net, not an extra
-        1,000 KRW. Subsequent wagers recover the accumulated losses and the
-        same 380 KRW, rounded to the currency's smallest permitted unit.
-        """
-        unit = 100 if currency == 'KRW' else 1
-        initial_profit = self.payout(self.stake_cents, currency) - self.stake_cents
-        needed = self.total_stake_cents + initial_profit
-        amount = int((Decimal(needed) / (self.target - 1) / unit)
-                     .to_integral_value(rounding=ROUND_CEILING)) * unit
-        while amount <= MAX_AMOUNT and self.payout(amount, currency) - amount < needed:
-            amount += unit
-        return amount
+    def _complete(self, outcome, *, balance, currency, at, payout_cents=0,
+                  final_coefficient=None):
+        # Mark the actual recorded mode, so an in-flight legacy variable-stake
+        # cycle is not mislabeled as entirely fixed after the migration.
+        fixed = all(r.get('stake_cents') == self.stake_cents for r in self.rounds)
+        entry = super()._complete(outcome, balance=balance, currency=currency,
+                                  at=at, payout_cents=payout_cents,
+                                  final_coefficient=final_coefficient)
+        if entry is not None:
+            entry['stake_mode'] = 'fixed' if fixed else 'legacy_variable'
+        return entry
 
     def on_round(self, coefficient, *, round_id, balance, currency, now=None,
                  allow_funding=True):
@@ -78,14 +84,13 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
             self.streak = self.streak + 1 if multiplier < self.target else 0
             if self.streak >= self.trigger:
                 self.phase = 'betting'
-                # Preserve the recovery stake calculated after a previous loss.
-                if not self.rounds:
-                    self.next_stake_cents = self.stake_cents
+                # A fresh signal arms exactly one fixed-size wager.
+                self.next_stake_cents = self.stake_cents
                 self.recovery_signal_armed = bool(self.rounds)
                 self.streak = 0
             return balance, None
 
-        stake = self.next_stake_cents
+        stake = self.stake_cents
         if (not allow_funding or not valid_amount(stake, currency)
                 or stake > balance or self.payout(stake, currency) > MAX_AMOUNT):
             finished = self._complete('insufficient_balance', balance=balance,
@@ -116,7 +121,7 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
                 payout_cents=payout, final_coefficient=multiplier,
             )
 
-        self.next_stake_cents = self.required_stake(currency)
+        self.next_stake_cents = self.stake_cents
         # Do not place another bet until a NEW full streak has completed.
         # Balance adequacy is checked when that next bet is actually due.
         self.phase = 'waiting'

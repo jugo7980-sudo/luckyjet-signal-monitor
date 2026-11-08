@@ -225,7 +225,7 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     "#page-demo .screen-subtitle").text_content()
                 assert await page.locator("#page-demo .screen-subtitle").is_hidden()
                 assert await page.locator("#high-gap-panel").is_hidden()
-                await page.locator("#demo-high-accordion summary").click()
+                await page.locator("#demo-high-accordion > summary").click()
                 await page.locator("#high-gap-panel").wait_for(state="visible")
                 await page.locator("#high-gap-help-toggle").click()
                 assert "Без догона" in await page.locator(

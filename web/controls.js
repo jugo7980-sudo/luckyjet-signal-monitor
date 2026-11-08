@@ -28,7 +28,14 @@
       : phase === 'waiting_reference' ? 'Ожидает коэффициент выше x' + high.reference
       : phase === 'waiting' ? 'Ожидает ' + high.remaining + ' раундов'
       : 'Делает фиксированные виртуальные ставки каждый раунд';
-    document.getElementById('demo-high-preview').textContent = state;
+    const compact = phase === 'paused_gap' ? 'Пауза · разрыв архива'
+      : phase === 'paused_funds' ? 'Пауза · баланс'
+      : !enabled ? 'Выключена'
+      : phase === 'waiting_reference' ? 'Ожидает опорный X'
+      : phase === 'waiting' ? 'Ждёт ' + (high.remaining ?? '—') + ' раундов'
+      : 'Ставки · ' + (high.steps ?? 0);
+    document.getElementById('demo-high-preview').textContent = compact;
+    // Detailed strategy state keeps its original precise wording for existing integrations.
     document.getElementById('high-gap-state').textContent = state;
     const progress = high.reference_value
       ? 'Последний >x' + high.reference + ': x' + high.reference_value +
@@ -39,6 +46,9 @@
       money(high.total_stake_cents, currency)) : (high.last_outcome ? 'Последний итог: ' + high.last_outcome : '');
     document.getElementById('high-gap-outcome').textContent =
       (balanceVerified === false ? 'Общий баланс не подтверждён. ' : '') + output;
+    document.getElementById('high-gap-state-detail').textContent =
+      [state, progress, balanceVerified === false ? 'Баланс не подтверждён.' : '',
+        output].filter(Boolean).join('. ');
   }
   window.renderHighGapSnapshot = renderHighGap;
   function message(text, error = false) {
@@ -69,6 +79,19 @@
     latest = data;
     window.renderDemoBalance?.(data.demo);
     const demo = data.demo, settings = data.settings;
+    const quality = document.getElementById('demo-quality');
+    quality.textContent = demo.balance_verified === false ? 'Не подтверждён'
+      : demo.balance_verified === true ? 'По архиву' : 'Проверка';
+    quality.dataset.state = demo.balance_verified === false ? 'warn'
+      : demo.balance_verified === true ? 'good' : 'unknown';
+    document.getElementById('demo-quality-help').textContent = demo.balance_verified === false
+      ? 'Баланс DEMO не подтверждён: источник пропустил раунды. Точная сумма неизвестна.'
+      : 'Виртуальный баланс рассчитан по доступным сохранённым раундам. Полнота истории самой игры не доказана.';
+    const classicPreview = document.getElementById('demo-classic-preview');
+    classicPreview.textContent = demo.balance_verified === false ? 'Баланс не подтверждён'
+      : demo.active ? 'Активна · шаг ' + demo.step
+      : demo.enabled ? 'Серия ' + demo.low_streak + ' из ' + demo.trigger
+      : 'Выключена';
     demoPanel.hidden = false;
     highPanel.hidden = false;
     settingsPanel.hidden = false;
@@ -107,12 +130,11 @@
       if (document.activeElement !== field) field.value = String(val);
     }
     const highStakeLabel = document.getElementById('high-gap-stake-label');
-    highStakeLabel.replaceChildren(
-      document.createTextNode('Фиксированная ставка, ' + (demo.currency || 'USD')),
-    );
-    const stakeHelp = document.createElement('small');
-    stakeHelp.textContent = 'Одинаковая сумма каждой виртуальной ставки. Без удвоений.';
-    highStakeLabel.appendChild(stakeHelp);
+    // Keep the help button: do not rebuild the label on every control refresh.
+    const stakeText = highStakeLabel.firstChild;
+    const caption = 'Ставка, ' + (demo.currency || 'USD') + ' ';
+    if (stakeText && stakeText.nodeType === 3) stakeText.textContent = caption;
+    else highStakeLabel.prepend(document.createTextNode(caption));
     document.getElementById('settings-notifications').textContent = settings.notifications ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-sound').textContent = settings.sound ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-threshold').value = String(settings.threshold);

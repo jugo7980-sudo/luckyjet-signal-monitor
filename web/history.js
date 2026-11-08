@@ -18,6 +18,7 @@
   let stack = [];
   let requestNo = 0;
   let lastLoad = 0;
+  let hintIndex = 0;
 
   const el = (tag, className = '', text = '') => {
     const node = document.createElement(tag);
@@ -66,7 +67,16 @@
   function info(label, value, hint) {
     const row = el('div', 'history-metric');
     const left = el('span', '', label);
-    if (hint || metricHints[label]) left.appendChild(el('small', '', hint || metricHints[label]));
+    const description = hint || metricHints[label];
+    if (description) {
+      const detail = el('small', '', description);
+      detail.id = 'history-metric-hint-' + ++hintIndex;
+      const help = el('button', 'summary-question', '?');
+      help.type = 'button';
+      help.setAttribute('data-summary-help-for', detail.id);
+      help.setAttribute('aria-label', 'Справка: ' + label);
+      left.append(help, detail);
+    }
     row.append(left, el('strong', '', value));
     root.appendChild(row);
   }
@@ -74,7 +84,17 @@
     root.appendChild(el('h2', 'history-heading', value));
     if (detail) root.appendChild(el('p', 'history-subtitle', detail));
   }
-  function note(value) { root.appendChild(el('p', 'history-note', value)); }
+  function note(value) {
+    // Keep the full audit note accessible without expanding the live layout.
+    const row = el('p', 'history-note');
+    const message = el('span', 'history-note-text', value);
+    const help = el('button', 'summary-question', '?');
+    help.type = 'button';
+    help.setAttribute('aria-label', 'Полное пояснение к истории');
+    help.setAttribute('data-help-text', String(value));
+    row.append(message, help);
+    root.appendChild(row);
+  }
   function pollCoverage(check) {
     const c = check?.poll_coverage;
     if (!c || c.status === 'not_recorded') {
@@ -171,6 +191,7 @@
   }
   function render(data) {
     root.replaceChildren();
+    hintIndex = 0;
     current = data;
     setTabs();
     back.hidden = stack.length === 0;
@@ -465,10 +486,15 @@
   }
   async function navigate(view, extra = {}, push = false) {
     if (push && current) stack.push({data: current, args: {...args}});
-    args = {view, page: 0, ...extra};
+    const nextArgs = {view, page: 0, ...extra};
+    const sameView = Boolean(current) && !push &&
+      JSON.stringify(args) === JSON.stringify(nextArgs);
+    args = nextArgs;
     back.hidden = stack.length === 0;
-    root.replaceChildren();
-    pager.hidden = true;
+    if (!sameView) {
+      root.replaceChildren();
+      pager.hidden = true;
+    }
     setTabs();
     const seq = ++requestNo;
     status.textContent = 'Загрузка истории…';
@@ -486,7 +512,21 @@
       if (!response.ok) throw new Error(result.error || 'Ошибка загрузки истории.');
       lastLoad = Date.now();
       status.textContent = '';
-      render(result);
+      if (!sameView || JSON.stringify(current) !== JSON.stringify(result)) {
+        // Refresh should not collapse a coefficient group that the reader opened.
+        const openGroups = sameView ? new Set(
+          [...root.querySelectorAll('details.history-distribution-group[open]')]
+            .map(node => node.querySelector('summary')?.firstChild?.textContent?.trim())
+        ) : null;
+        const scrollTop = sameView ? window.scrollY : null;
+        render(result);
+        if (openGroups) {
+          for (const node of root.querySelectorAll('details.history-distribution-group')) {
+            if (openGroups.has(node.querySelector('summary')?.firstChild?.textContent?.trim())) node.open = true;
+          }
+          if (scrollTop !== null) window.scrollTo(0, scrollTop);
+        }
+      }
     } catch (error) {
       if (seq !== requestNo) return;
       current = null;

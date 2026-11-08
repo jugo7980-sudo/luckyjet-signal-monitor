@@ -177,6 +177,9 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
             await page.locator('#demo-trigger-select').select_option('10')
             await page.locator('#demo-stake-input').fill('25.50')
             await page.locator('#demo-stake-save').click()
+            # Reset is deliberately outside both strategy panels, behind an explicit disclosure.
+            assert not await page.locator('#demo-management').evaluate('(n) => n.open')
+            await page.locator('#demo-management summary').click()
             await page.locator('#demo-reset').click()
             await page.locator('#demo-reset-currency').select_option('RUB')
             await page.locator('#demo-reset-balance').fill('50000')

@@ -45,6 +45,13 @@
       : 'Войти';
     login.textContent = name;
     login.title = data.registered ? 'Аккаунт Telegram' : 'Войти через Telegram';
+    const accountName = document.getElementById('account-username');
+    const accountStatus = document.getElementById('account-premium-status');
+    if (accountName) accountName.textContent = data.registered ? name : 'Гость';
+    if (accountStatus) {
+      accountStatus.textContent = data.premium ? 'Premium активен' : 'Premium неактивен';
+      accountStatus.dataset.state = data.premium ? 'good' : 'warn';
+    }
     premium.hidden = !data.registered || data.premium;
     document.getElementById('header-premium').hidden = !data.premium;
     if (data.premium) window.renderDemoBalance?.({balance_cents:data.balance_cents, currency:data.currency, balance_verified:data.balance_verified});

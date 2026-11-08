@@ -15,11 +15,14 @@ import httpx
 from mini_app_api import json_response, telegram_user
 from luckyjet_signal.demo_ledger import DemoLedger, TRIGGER_OPTIONS, parse_dollars
 from luckyjet_signal.demo_money import MAX_AMOUNT
+from high_gap_notifications import EVENTS as HIGH_GAP_NOTICE_EVENTS, DELETE_DELAYS as HIGH_GAP_NOTICE_DELAYS, normalize as normalize_high_gap_notices
 
 
 ACTIONS = {
     'demo_toggle', 'demo_trigger', 'demo_stake', 'demo_reset',
     'high_gap_toggle', 'high_gap_config',
+    'high_gap_notice_toggle', 'high_gap_notice_sound',
+    'high_gap_notice_delete_delay', 'high_gap_notice_event', 'high_gap_notice_test',
     'notifications_toggle', 'sound_toggle', 'notification_threshold',
     'history_size', 'delete_delay', 'settings_reset', 'test_notification',
     'demo_probe_start', 'history_reset',
@@ -52,6 +55,7 @@ def snapshot(gate, uid):
             'next_stake_cents': ledger.next_stake_cents if ledger.active else None,
         },
         'high_gap': ledger.high_gap.public(),
+        'high_gap_notifications': normalize_high_gap_notices(gate.high_gap_notice_settings.get(uid)),
         'settings': {
             'notifications': uid not in gate.notifications_disabled,
             'sound': uid not in gate.silent_users,
@@ -262,6 +266,38 @@ async def controls(authorization, gate, token, method='GET', body=None):
             gate.demo_ledgers[uid] = replacement
             gate._demo_history_views.pop(uid, None)
             message = 'DEMO сброшено вместе с историей и статистикой.'
+        elif action in {'high_gap_notice_toggle', 'high_gap_notice_sound',
+                        'high_gap_notice_delete_delay', 'high_gap_notice_event'}:
+            prefs = normalize_high_gap_notices(gate.high_gap_notice_settings.get(uid))
+            if action == 'high_gap_notice_toggle':
+                prefs['enabled'] = not prefs['enabled']
+            elif action == 'high_gap_notice_sound':
+                prefs['sound'] = not prefs['sound']
+            elif action == 'high_gap_notice_delete_delay':
+                if type(value) is not int or value not in HIGH_GAP_NOTICE_DELAYS:
+                    return json_response('400 Bad Request', {'error': 'Удаление: 0, 10, 30 или 60 секунд.'})
+                prefs['delete_delay'] = value
+            else:
+                if not isinstance(value, str) or value not in HIGH_GAP_NOTICE_EVENTS:
+                    return json_response('400 Bad Request', {'error': 'Неизвестное событие стратегии №2.'})
+                prefs['events'][value] = not prefs['events'][value]
+            gate.high_gap_notice_settings[uid] = prefs
+            await gate._persist_user(uid)
+        elif action == 'high_gap_notice_test':
+            if gate.chats.get(uid) != uid or not callable(gate.request):
+                return json_response('409 Conflict', {'error': 'Открой личный чат бота через /start.'})
+            last = getattr(gate, '_mini_app_test_sent_at', None)
+            if last is None:
+                gate._mini_app_test_sent_at = last = {}
+            now = time.monotonic()
+            if now - last.get(uid, float('-inf')) < 30:
+                return json_response('429 Too Many Requests', {'error': 'Тест доступен раз в 30 секунд.'})
+            if not await gate._send_high_gap_notice(
+                uid, 'test', 'Тест уведомлений стратегии №2', test=True,
+            ):
+                return json_response('502 Bad Gateway', {'error': 'Telegram не принял тестовое сообщение.'})
+            last[uid] = now
+            message = 'Тест стратегии №2 отправлен в Telegram.'
         elif action == 'notifications_toggle':
             if uid in gate.notifications_disabled:
                 gate.notifications_disabled.discard(uid)
@@ -323,6 +359,7 @@ async def controls(authorization, gate, token, method='GET', body=None):
             gate.history_sizes.pop(uid, None)
             gate.notifications_disabled.discard(uid)
             gate.silent_users.discard(uid)
+            gate.high_gap_notice_settings.pop(uid, None)
             await gate._persist_user(uid)
             message = 'Настройки восстановлены; DEMO сохранено.'
         return json_response('200 OK', {'message': message, **snapshot(gate, uid)})

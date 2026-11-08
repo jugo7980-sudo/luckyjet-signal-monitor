@@ -129,6 +129,9 @@
     busy = true;
     powerButton.disabled = true;
     error.textContent = '';
+    // Main overview polls frequently. Reject responses that were in flight
+    // before this action, otherwise they can repaint the button with OLD state.
+    window.demoViewEpoch = (Number(window.demoViewEpoch) || 0) + 1;
     const action = ['demo_toggle', 'high_gap_toggle', 'target_streak_toggle', 'recovery_streak_toggle'][selected - 1];
     const tg = window.Telegram?.WebApp;
     const controller = new AbortController();
@@ -144,6 +147,9 @@
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Не удалось изменить состояние.');
+      // A GET started DURING the POST can also contain old server state.
+      // Only the committed POST snapshot may set the colour now.
+      window.demoViewEpoch = (Number(window.demoViewEpoch) || 0) + 1;
       window.invalidateControlsSnapshot?.();
       window.renderStrategyTiles(data.strategy_tiles, {
         currency: data.demo?.currency, verified: data.demo?.balance_verified,
@@ -152,6 +158,9 @@
     } catch (e) {
       error.textContent = e.name === 'AbortError' ? 'Сервер не ответил.' :
         String(e.message || 'Ошибка управления.');
+      // On network errors the server may have accepted the change.
+      // Do not guess: request a fresh, authenticated snapshot.
+      window.refreshAccessOverview?.();
     } finally {
       clearTimeout(timeout);
       busy = false;

@@ -317,12 +317,14 @@
   async function load(force = false) {
     if (busy || (!force && latest && Date.now() - loadedAt < 20000)) return;
     const currentGeneration = generation;
+    const powerEpoch = window.demoViewEpoch;
     busy = true;
     message('Загрузка настроек…');
     if (latest) paint(latest);
     try {
       const data = await request();
-      if (generation !== currentGeneration || !window.canUsePremium?.()) return;
+      if (generation !== currentGeneration || !window.canUsePremium?.() ||
+          powerEpoch !== window.demoViewEpoch) return;
       loadedAt = Date.now();
       demoStatus.textContent = '';
       settingsStatus.textContent = '';
@@ -336,7 +338,8 @@
       message(error.name === 'AbortError' ? 'Сервер не ответил.' : error.message, true);
     } finally {
       busy = false;
-      if (generation === currentGeneration && latest && window.canUsePremium?.()) paint(latest);
+      if (generation === currentGeneration && latest && window.canUsePremium?.() &&
+          powerEpoch === window.demoViewEpoch) paint(latest);
     }
   }
   async function action(name, value, confirm = false) {

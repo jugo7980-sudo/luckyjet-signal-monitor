@@ -635,7 +635,8 @@
               info('По истории', signedMoney(group.history_net_cents));
               info('Среднее шагов', group.average_steps);
             }
-            foldFrom(archiveStatsStart, strategy === 'high_gap' ? 'Стратегия №2' : 'Стратегия №1',
+            foldFrom(archiveStatsStart, strategy === 'target_streak' ? 'Стратегия №3'
+              : strategy === 'high_gap' ? 'Стратегия №2' : 'Стратегия №1',
               Object.keys(groups).length + ' валют',
               'history-archive-stats-' + strategy, 'history-archive-stats');
           }

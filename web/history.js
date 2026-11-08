@@ -269,18 +269,49 @@
             }
             root.appendChild(details);
           }
-          info('От x151', (Number(counts.above_150) || 0) + ' раз',
-            'Коэффициенты от 151.00x без детальной разбивки');
+          // Large coefficients use the same collapsible cards as x2–x150.
+          // Counts are exclusive bands from immutable receipts, not cumulative >X.
+          const highBands = [
+            ['151-199', 'x151–x199'], ['200-299', 'x200–x299'],
+            ['300-499', 'x300–x499'], ['500-799', 'x500–x799'],
+            ['800-999', 'x800–x999'], ['1000-1499', 'x1000–x1499'],
+            ['1500-1999', 'x1500–x1999'], ['2000-2999', 'x2000–x2999'],
+            ['3000-4999', 'x3000–x4999'], ['5000+', 'x5000 и выше'],
+          ];
+          if (!distribution.high_ranges || !distribution.high_values) {
+            note('Крупные коэффициенты недоступны в текущей версии статистики.');
+          } else {
+            for (const [key, title] of highBands) {
+              const details = el('details', 'history-distribution-group');
+              const sum = el('summary', '', title);
+              const n = Number(distribution.high_ranges[key]) || 0;
+              sum.appendChild(el('span', '', n + ' раз'));
+              details.appendChild(sum);
+              if (!n) {
+                details.appendChild(el('div', 'history-distribution-row', 'Нет выпадений'));
+              } else {
+                const entries = Array.isArray(distribution.high_values[key])
+                  ? distribution.high_values[key] : [];
+                for (const [coefficient, times] of entries.slice(0, 50)) {
+                  const row = el('div', 'history-distribution-row');
+                  row.append(
+                    el('span', '', 'x' + coefficient),
+                    el('span', '', times + ' раз · ' + (total ? (100 * times / total).toFixed(2) : '0.00') + '%')
+                  );
+                  details.appendChild(row);
+                }
+                if (entries.length > 50)
+                  details.appendChild(el('div', 'history-distribution-row',
+                    'Показано 50 из ' + entries.length + ' значений. Все раунды включены в счётчик группы.'));
+              }
+              root.appendChild(details);
+            }
+            const highSum = highBands.reduce((sum, [key]) => sum + (Number(distribution.high_ranges[key]) || 0), 0);
+            if (highSum !== (Number(counts.above_150) || 0))
+              note('Внимание: суммы высоких коэффициентов не совпадают. Проверьте данные архива.');
+          }
           note('Учтено в архиве: ' + total + ' раундов. Подсчёт по времени получения, полнота истории источника не гарантирована.');
         }
-        const highDetails = el('details', 'history-distribution-group');
-        highDetails.appendChild(el('summary', '', 'Крупные пороги выше x150'));
-        for (const t of LIMITS.filter(x => x > 150)) {
-          const row = el('div', 'history-distribution-row');
-          row.append(el('span', '', '>' + t + 'x'), el('span', '', String(s[String(t)] ?? 'Нет данных')));
-          highDetails.appendChild(row);
-        }
-        root.appendChild(highDetails);
         const check = data.integrity;
         if (check) {
           if (check.status !== 'verified' || check.poll_coverage?.status !== 'full_poll_coverage')

@@ -12,6 +12,8 @@
   let busy = false;
   let refreshTimer = null;
   let lastLoadedAt = 0;
+  let lastMatchesKey = null;
+  let renderedSettingsKey = null;
 
   function safeStore() {
     try {
@@ -55,6 +57,9 @@
 
   function renderMatches(items, limited) {
     const root = byId('ind-summary-matches');
+    const matchesKey = JSON.stringify([items, limited]);
+    if (lastMatchesKey === matchesKey) return;
+    lastMatchesKey = matchesKey;
     root.replaceChildren();
     if (!items.length) {
       setText('ind-summary-match-total', '0');
@@ -95,7 +100,7 @@
     const quality = data.quality || {};
     const curr = data.current || {}, prev = data.previous || {};
     setText('summary-heading', 'Сводка архива · ' + data.rounds_requested + ' раундов');
-    setText('ind-summary-context', 'Результат: ' + data.rounds_available + ' сохранённых раундов · искомый ≥ ' + data.target + 'x · отсчёт ≥ ' + data.since_threshold + 'x');
+    setText('ind-summary-context', data.rounds_available + ' сохранённых раундов · ≥ ' + data.target + 'x · отсчёт ≥ ' + data.since_threshold + 'x');
     setText('ind-summary-match-total', String(curr.count ?? 0));
     setText('summary-preview-count', curr.count);
     setText('summary-preview-since', countText(data.rounds_since_since));
@@ -147,39 +152,55 @@
       if (value) card.setAttribute('data-missing', String(value.textContent === '—'));
     }
 
-    status.className = 'connection ' + (quality.complete_window ? 'ind-summary-good' : 'ind-summary-warning');
+    // Keep the visible quality strip one line high; the full audit text lives in ?.
+    status.className = 'connection ' + (quality.complete_window && !quality.window_has_discontinuities ? 'ind-summary-good' : 'ind-summary-warning');
     if (quality.window_has_discontinuities || quality.comparison_has_discontinuities) {
-      status.textContent = 'В архиве обнаружены разрывы. Подсчёт охватывает только сохранённые раунды; неопределённые интервалы скрыты.';
+      status.textContent = 'Архив: есть разрывы';
     } else if (!quality.complete_window) {
-      status.textContent = 'Архив содержит ' + data.rounds_available + ' из запрошенных ' + data.rounds_requested + ' раундов. Данные неполные.';
-    } else if (!quality.complete_comparison) {
-      status.textContent = 'Текущие ' + data.rounds_requested + ' раундов обработаны. Для сравнения двух периодов недостаточно архива.';
+      status.textContent = 'Архив: ' + data.rounds_available + ' из ' + data.rounds_requested + ' раундов';
     } else {
-      status.textContent = 'Сохранённые раунды проанализированы; полнота истории самого игрового сайта не подтверждена.';
+      status.textContent = 'Архив: сохранённые раунды';
     }
-    if (quality.history_search_limited) status.textContent += ' Поиск последнего X ограничен глубиной архива; отсутствие совпадения за её пределами не подтверждено.';
-    if (quality.duplicate_entries) status.textContent += ' Повторные записи: ' + quality.duplicate_entries + '.';
-    if (quality.unverified_source_timing) status.textContent += ' Время отдельных раундов не подтверждено источником.';
+    const notices = [];
+    if (quality.window_has_discontinuities || quality.comparison_has_discontinuities) {
+      notices.push('В архиве обнаружены разрывы. Подсчёт охватывает только сохранённые раунды; неопределённые интервалы скрыты.');
+    } else if (!quality.complete_window) {
+      notices.push('Архив содержит ' + data.rounds_available + ' из запрошенных ' + data.rounds_requested + ' раундов. Данные неполные.');
+    } else if (!quality.complete_comparison) {
+      notices.push('Текущие ' + data.rounds_requested + ' раундов обработаны. Для сравнения двух периодов недостаточно архива.');
+    } else {
+      notices.push('Сохранённые раунды проанализированы.');
+    }
+    notices.push('Полнота истории самого игрового сайта не подтверждена.');
+    if (quality.history_search_limited) notices.push('Поиск последнего X ограничен глубиной архива.');
+    if (quality.duplicate_entries) notices.push('Повторные записи: ' + quality.duplicate_entries + '.');
+    if (quality.unverified_source_timing) notices.push('Время отдельных раундов не подтверждено источником.');
+    setText('ind-summary-status-detail', notices.join(' '));
   }
 
-  async function load() {
+  async function load(options = {}) {
+    const quiet = Boolean(options.quiet);
     if (!accordion.open || document.visibilityState === 'hidden') return;
     if (busy) return;
     const rounds = numeric('ind-rounds', true, 1, 50000);
     const target = numeric('ind-target', false, 1, 100000);
     const since = numeric('ind-since', false, 1, 100000);
     if (rounds === null || target === null || since === null) {
-      status.textContent = 'Укажи целое число раундов от 1 до 50000 и коэффициенты X от 1 до 100000.';
-      status.className = 'connection ind-summary-warning';
+      if (!quiet) {
+        status.textContent = 'Проверь введённые параметры';
+        setText('ind-summary-status-detail', 'Укажи целое число раундов от 1 до 50000 и коэффициенты X от 1 до 100000.');
+        status.className = 'connection ind-summary-warning';
+      }
       return;
     }
     safeStore();
-    setText('summary-heading', 'Сводка архива · ' + rounds + ' раундов');
     busy = true;
     lastLoadedAt = Date.now();
     button.disabled = true;
-    status.textContent = 'Проверяем фактический архив…';
-    setText('ind-summary-context', 'Загружаем данные: ' + rounds + ' раундов, ищем от ' + target + 'x.');
+    if (!quiet) {
+      status.textContent = 'Архив: обновление…';
+      setText('ind-summary-status-detail', 'Проверяем фактический архив. Уже показанные результаты сохраняются до ответа сервера.');
+    }
     controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     try {
@@ -193,11 +214,13 @@
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Архив недоступен.');
       render(data);
+      renderedSettingsKey = [rounds, target, since].join(':');
     } catch (error) {
       status.className = 'connection ind-summary-warning';
-      status.textContent = error.name === 'AbortError'
+      status.textContent = 'Архив: ошибка обновления';
+      setText('ind-summary-status-detail', error.name === 'AbortError'
         ? 'Время запроса истекло. Выбери меньше раундов и повтори.'
-        : (error.message || 'Не удалось прочитать архив.');
+        : (error.message || 'Не удалось прочитать архив.'));
     } finally {
       clearTimeout(timeout);
       busy = false;
@@ -222,6 +245,36 @@
   }
   bindDisclosure('summary-stats-toggle', 'summary-extra-stats');
   bindDisclosure('summary-help-toggle', 'summary-help-body');
+  const popup = byId('summary-metric-popup');
+  const popupTitle = byId('summary-metric-title');
+  const popupText = byId('summary-metric-text');
+  let popupReturnFocus = null;
+  function closeMetricPopup() {
+    if (popup.hidden) return;
+    popup.hidden = true;
+    popupReturnFocus?.focus();
+  }
+  document.querySelectorAll('[data-summary-help-for]').forEach(control => {
+    control.addEventListener('click', () => {
+      const source = byId(control.getAttribute('data-summary-help-for'));
+      popupTitle.textContent = control.getAttribute('aria-label') || 'Справка';
+      popupText.textContent = source?.textContent?.trim() || 'Пояснение пока недоступно.';
+      popupReturnFocus = control;
+      popup.hidden = false;
+      byId('summary-metric-close').focus();
+    });
+  });
+  byId('summary-metric-close').addEventListener('click', closeMetricPopup);
+  popup.addEventListener('click', event => { if (event.target === popup) closeMetricPopup(); });
+  function closeOverviewHelp() {
+    const expanded = byId('summary-help-toggle').getAttribute('aria-expanded') === 'true';
+    if (expanded) byId('summary-help-toggle').click();
+  }
+  byId('summary-help-close').addEventListener('click', closeOverviewHelp);
+  byId('summary-help-body').addEventListener('click', event => { if (event.target === event.currentTarget) closeOverviewHelp(); });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { closeMetricPopup(); closeOverviewHelp(); }
+  });
   button.addEventListener('click', load);
   fields.forEach(id => byId(id).addEventListener('change', safeStore));
   accordion.addEventListener('toggle', () => {
@@ -231,7 +284,8 @@
       refreshTimer = setInterval(() => {
         const requested = Number(byId('ind-rounds').value);
         const refreshEvery = requested > 5000 ? 60000 : requested > 1000 ? 20000 : 5000;
-        if (!busy && document.body.dataset.access === 'premium' && Date.now() - lastLoadedAt >= refreshEvery) load();
+        if (!busy && document.body.dataset.access === 'premium' && Date.now() - lastLoadedAt >= refreshEvery &&
+            renderedSettingsKey === [Number(byId('ind-rounds').value), Number(byId('ind-target').value), Number(byId('ind-since').value)].join(':')) load({quiet:true});
       }, 5000);
     } else if (refreshTimer !== null) {
       clearInterval(refreshTimer);

@@ -230,7 +230,7 @@ class DemoLedger:
         high_commit = self.high_gap.stake_cents if high_committed and high_funded else 0
         target_funded = (self.balance_cents >= legacy_commit + high_commit +
                          self.target_streak.next_stake_cents)
-        event = self.process_round(coefficient, now=now) if self.enabled and not before_reset else None
+        event = self.process_round(coefficient, now=now, round_id=identifier) if self.enabled and not before_reset else None
         if not before_reset:
             self.balance_cents, high_cycle = self.high_gap.on_round(
                 coefficient, round_id=identifier, currency=self.currency,
@@ -454,7 +454,7 @@ class DemoLedger:
             event["lost_stake_cents"] = lost_stake_cents
         return event
 
-    def process_round(self, coefficient, *, now=None):
+    def process_round(self, coefficient, *, now=None, round_id=None):
         if not self.enabled:
             return None
         try:
@@ -501,6 +501,10 @@ class DemoLedger:
             "payout_cents": 0,
             "balance_after_cents": self.balance_cents,
         }
+        # Accounting-only metadata, no effect on bet selection or payout.
+        if round_id is not None:
+            round_entry["round_id"] = str(round_id)
+            round_entry["observed_at"] = (now or datetime.now(timezone.utc)).isoformat()
         self.cycle_rounds.append(round_entry)
 
         if multiplier < 2:

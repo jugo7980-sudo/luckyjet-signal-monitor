@@ -167,23 +167,23 @@ def test_target_controls_and_separate_history_and_notices_api():
         ledger.target_streak.enabled = False
         ledger.last_archived_stream_id = '5000-0'
         original = ledger.target_streak.dump()
-        bad = await controls('tma '+signed(42), gate, 'fixture', 'POST', json.dumps({
+        bad = await controls(signed(42), gate, 'fixture', 'POST', json.dumps({
             'action': 'target_streak_config',
             'value': {'target': '1.00', 'trigger': 3, 'stake': '150'},
         }).encode())
         assert bad[0] == '409 Conflict'
         assert ledger.target_streak.dump() == original
-        good = await controls('tma '+signed(42), gate, 'fixture', 'POST', json.dumps({
+        good = await controls(signed(42), gate, 'fixture', 'POST', json.dumps({
             'action': 'target_streak_config',
             'value': {'target': '1.57', 'trigger': 3, 'stake': '150'},
         }).encode())
         assert good[0] == '200 OK'
         assert json.loads(good[2])['target_streak']['target'] == '1.57'
-        enabled = await controls('tma '+signed(42), gate, 'fixture', 'POST',
+        enabled = await controls(signed(42), gate, 'fixture', 'POST',
                                 json.dumps({'action': 'target_streak_toggle'}).encode())
         assert enabled[0] == '200 OK'
         assert ledger.target_streak.enabled
-        change = await controls('tma '+signed(42), gate, 'fixture', 'POST',
+        change = await controls(signed(42), gate, 'fixture', 'POST',
                                 json.dumps({'action': 'target_notice_event', 'value': 'loss'}).encode())
         assert change[0] == '200 OK'
         assert json.loads(change[2])['target_streak_notifications']['events']['loss'] is True
@@ -194,13 +194,13 @@ def test_target_controls_and_separate_history_and_notices_api():
             advance(ledger, i, '1.10')
         advance(ledger, 9, '1.10')
         advance(ledger, 10, '1.57')
-        assert (await history('tma '+signed(42), gate, 'fixture', 'view=target_cycles'))[0] == '200 OK'
-        data = json.loads((await history('tma '+signed(42), gate, 'fixture',
+        assert (await history(signed(42), gate, 'fixture', 'view=target_cycles'))[0] == '200 OK'
+        data = json.loads((await history(signed(42), gate, 'fixture',
                                          'view=target_cycles'))[2])
         assert data['stats']['total'] == 1
         assert data['items'][0]['strategy'] == 'target_streak'
         assert data['items'][0]['net_cents'] == 15000
-        assert json.loads((await history('tma '+signed(42), gate, 'fixture',
+        assert json.loads((await history(signed(42), gate, 'fixture',
                                          'view=target_cycle&index=0'))[2])['item']['rounds']
         await gate.close()
     asyncio.run(run())

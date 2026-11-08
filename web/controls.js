@@ -290,7 +290,7 @@
     document.getElementById('settings-high-enabled').textContent = highEnabled ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-high-sound').textContent = highNotices.sound !== false ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-high-delete').value = String(highNotices.delete_delay ?? 10);
-    for (const [name, fallback] of Object.entries({reference:false, threshold:true, betting:true, goal:true})) {
+    for (const [name, fallback] of Object.entries({reference:false, threshold:true, betting:true, goal:true, safe:true})) {
       document.getElementById('settings-high-' + name).textContent =
         (highEvents[name] ?? fallback) ? 'ВКЛ' : 'ВЫКЛ';
     }
@@ -546,7 +546,7 @@
   document.getElementById('settings-high-enabled').addEventListener('click', () => action('high_gap_notice_toggle'));
   document.getElementById('settings-high-sound').addEventListener('click', () => action('high_gap_notice_sound'));
   selectAction('settings-high-delete', 'high_gap_notice_delete_delay');
-  for (const event of ['reference','threshold','betting','goal']) {
+  for (const event of ['reference','threshold','betting','goal','safe']) {
     document.getElementById('settings-high-' + event).addEventListener(
       'click', () => action('high_gap_notice_event', event));
   }

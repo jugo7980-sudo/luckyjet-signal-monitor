@@ -53,7 +53,11 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                             actions.append(payload)
                             if payload['action'] == 'recovery_streak_config':
                                 cfg = payload['value']
-                                target.update(target=cfg['target'],trigger=cfg['trigger'],
+                                target.update(target=cfg['target'],
+                                              target_max=cfg['target_max'],
+                                              continuous_session=cfg['continuous_session'],
+                                              safe_mode=cfg['safe_mode'],
+                                              trigger=cfg['trigger'],
                                               stake_cents=int(cfg['stake'])*100,
                                               safe_losses=cfg['safe_losses'])
                             elif payload['action'] == 'recovery_streak_toggle':

@@ -124,8 +124,11 @@ def test_second_demo_strategy_mobile_controls_and_independent_history():
             await expect(page.locator('#high-gap-state')).to_contain_text(
                 'Ожидает 27 раундов', timeout=10000)
             assert posted[1] == {'action': 'high_gap_toggle'}
-            await page.locator('#high-gap-history').click()
-            await page.get_by_text('Стратегия №2 · история').wait_for()
+            assert await page.locator('#high-gap-history').count() == 0
+            await page.locator('nav [data-tab=history]').click()
+            await page.locator('[data-history-view=cycles]').click()
+            await page.locator('#demo-history-strategy-high').click()
+            await page.get_by_text('История циклов').wait_for()
             assert 'high_cycles' in history_views
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert not errors, errors

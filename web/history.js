@@ -19,6 +19,8 @@
   let requestNo = 0;
   let lastLoad = 0;
   let hintIndex = 0;
+  // Only one strategy is expanded in the DEMO history; both start closed.
+  let openDemoStrategy = null;
   const preferredDates = new Map();
 
   const el = (tag, className = '', text = '') => {
@@ -140,6 +142,57 @@
     } else button.disabled = true;
     root.appendChild(button);
   }
+  function demoStrategySwitcher(view) {
+    const wrap = el('div', 'demo-history-switcher');
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', 'История по стратегиям DEMO');
+    for (const [key, label, description] of [
+      ['classic', 'Стратегия №1', 'Серия ниже 2x'],
+      ['high_gap', 'Стратегия №2', 'Высокий X'],
+    ]) {
+      const expanded = openDemoStrategy === key;
+      const button = el('button', 'demo-history-choice' + (expanded ? ' is-open' : ''));
+      button.type = 'button';
+      button.id = 'demo-history-strategy-' + (key === 'classic' ? 'classic' : 'high');
+      button.setAttribute('aria-expanded', String(expanded));
+      button.setAttribute('aria-label', label + ': ' + (expanded ? 'свернуть' : 'показать историю и статистику'));
+      const labels = el('span', 'demo-history-choice-label');
+      labels.append(el('strong', '', label), el('small', '', description));
+      button.append(labels, el('span', 'demo-history-chevron', expanded ? '⌃' : '⌄'));
+      button.addEventListener('click', () => {
+        const next = expanded ? null : key;
+        openDemoStrategy = next;
+        const desired = next === 'high_gap' ? 'high_cycles' : 'cycles';
+        const isList = ['cycles', 'high_cycles'].includes(args.view);
+        if ((next === null && isList) || (next && args.view === desired && isList)) {
+          // Closing and reopening cached panels is instantaneous, with no extra request.
+          render(current);
+        } else {
+          // Switching or leaving a cycle detail always loads the selected strategy's journal.
+          stack = []; current = null;
+          navigate(desired);
+        }
+      });
+      wrap.appendChild(button);
+    }
+    root.appendChild(wrap);
+  }
+  function demoStrategyStats(data) {
+    const s = data.stats;
+    if (!s) { note('Статистика недоступна. Обнови историю.'); return; }
+    currency = s.currency || 'USD';
+    heading('Статистика');
+    if (s.view_reset) note('Показаны циклы после сброса вкладки. Фактический архив сохранён.');
+    info('Валюта', currency);
+    info('Всего сессий', s.total);
+    info('Успешных', s.recovered);
+    info('Проигрышных', s.lost);
+    info('Неполных', s.incomplete);
+    info('Остановленных', s.stopped);
+    if (s.reference_changed) info('Новый опорный коэффициент', s.reference_changed);
+    info('По истории', signedMoney(s.history_net_cents));
+    info('Среднее шагов', s.average_steps);
+  }
   function setTabs() {
     const archive = isArchive(args.view);
     const view = archive ? args.view.slice(8) : args.view;
@@ -179,7 +232,9 @@
     const total = Number(data.total || 0);
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     const visible = ['days', 'high_days', 'high_day', 'cycles', 'high_cycles', 'max_steps'].includes(isArchive(data.view) ? data.view.slice(8) : data.view);
-    pager.hidden = !visible || pages <= 1;
+    const demoVisible = data.view === 'cycles' ? openDemoStrategy === 'classic'
+      : data.view === 'high_cycles' ? openDemoStrategy === 'high_gap' : true;
+    pager.hidden = !visible || pages <= 1 || !demoVisible;
     if (!visible) return;
     document.getElementById('history-page-number').textContent = (page + 1) + ' / ' + pages;
     document.getElementById('history-prev').disabled = page <= 0;
@@ -414,12 +469,17 @@
       }
       case 'high_cycles':
       case 'cycles':
-        heading(view === 'high_cycles' ? 'Стратегия №2 · история' : 'История DEMO',
-          data.total + ' циклов · новые сначала');
-        if (archive) datePicker('cycles', data.days || data.day);
-        if (view !== 'high_cycles')
+        if (!archive) {
+          demoStrategySwitcher(view);
+          if (openDemoStrategy !== (view === 'high_cycles' ? 'high_gap' : 'classic')) break;
+          demoStrategyStats(data);
+          heading('История циклов', data.total + ' циклов · новые сначала');
+        } else {
+          heading('История DEMO', data.total + ' циклов · новые сначала');
+          datePicker('cycles', data.days || data.day);
           item('Статистика DEMO', 'Результаты по сохранённым сессиям',
-            () => navigate(viewFor('demo_stats'), archive && data.day ? {day: data.day} : {}, true));
+            () => navigate(viewFor('demo_stats'), data.day ? {day: data.day} : {}, true));
+        }
         if (!data.items.length) note('Завершённых циклов пока нет.');
         for (const c of data.items) {
           currency = c.currency || 'USD';
@@ -434,6 +494,7 @@
         break;
       case 'high_cycle':
       case 'cycle': {
+        if (!archive) demoStrategySwitcher(view);
         const c = data.item;
         currency = c.currency || 'USD';
         const reasons = {recovered: 'Цель достигнута', insufficient_balance: 'Недостаточно баланса',
@@ -592,7 +653,9 @@
     return true;
   }
   for (const button of tabs) button.addEventListener('click', () => {
-    stack = []; current = null; navigate(button.dataset.historyView);
+    stack = []; current = null;
+    openDemoStrategy = null;
+    navigate(button.dataset.historyView);
   });
   // Roving tabindex and arrow keys for both history and archive tablists.
   function bindKeyboardTabs(buttons) {
@@ -674,12 +737,14 @@
     if (!current || Date.now() - lastLoad > 30000) navigate(args.view, {...args});
   };
   window.openHighGapHistory = () => {
+    openDemoStrategy = 'high_gap';
     stack = []; current = null;
     navigate('high_cycles');
   };
   window.historyBackInApp = goBack;
   window.resetHistoryCache = () => {
     ++requestNo; current = null; stack = []; lastLoad = 0;
+    openDemoStrategy = null;
     root.replaceChildren(); pager.hidden = true; back.hidden = true;
     delete root.dataset.loading; root.removeAttribute('aria-busy');
     status.textContent = '';

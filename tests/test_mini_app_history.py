@@ -214,6 +214,10 @@ def test_history_static_asset_and_mobile_flow():
                     elif view == 'high_item':
                         data['item'] = {'value': '150', 'stamp': 1793980800, 'rounds': 29}
                     elif view == 'cycles':
+                        data['stats'] = {'currency': 'USD', 'total': 1, 'maximum': 100,
+                                         'recovered': 1, 'lost': 0, 'incomplete': 0,
+                                         'stopped': 0, 'history_net_cents': 500,
+                                         'average_steps': 3}
                         data['items'] = [{'index': 0, 'steps': 3, 'ended_at': '2026-11-06T10:00:00Z',
                                           'outcome': 'recovered', 'net_cents': 500}]
                     elif view == 'cycle':
@@ -276,10 +280,9 @@ def test_history_static_asset_and_mobile_flow():
             await page.locator('#history-back').click()
 
             await page.locator('[data-history-view=cycles]').click()
-            await page.locator('#history-content button.history-item').first.click()
+            await page.locator('#demo-history-strategy-classic').click()
             await page.get_by_text('Среднее шагов').wait_for()
-            await page.locator('#history-back').click()
-            await page.locator('#history-content button.history-item').nth(1).click()
+            await page.locator('#history-content button.history-item').first.click()
             await page.get_by_text('Чистый итог').wait_for()
 
             await page.locator('[data-history-view=max_steps]').click()
@@ -287,6 +290,6 @@ def test_history_static_asset_and_mobile_flow():
             assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert not errors, errors
             assert {'days', 'day', 'high_days', 'high_day', 'high_item', 'cycles',
-                    'cycle', 'demo_stats', 'max_steps'} <= set(calls)
+                    'cycle', 'max_steps'} <= set(calls)
             await browser.close()
     asyncio.run(run())

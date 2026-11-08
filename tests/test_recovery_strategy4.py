@@ -395,3 +395,79 @@ def test_korean_payout_exact_and_no_wager_on_trigger_round():
     assert ledger.recovery_history[0]['rounds'][0]['stake_cents'] == 10000 * 100
     assert ledger.recovery_history[0]['payout_cents'] == 13800 * 100
     assert ledger.recovery_history[0]['net_cents'] == 3800 * 100
+
+
+def test_safe_off_wagers_every_round_until_target_even_after_more_than_ten_losses():
+    ledger = new_ledger(x='1.33',stake=1000,balance=30000,trigger=2,safe=0)
+    tick(ledger,1,'1.20')
+    tick(ledger,2,'1.10')
+    for n in range(3,15):
+        tick(ledger,n,'1.10')
+        assert ledger.recovery_streak.phase == 'betting'
+        assert ledger.recovery_streak.enabled
+        assert ledger.recovery_streak.public('KRW')['losses'] == n-2
+    tick(ledger,15,'1.33')
+    cycle = ledger.recovery_history[0]
+    assert cycle['outcome'] == 'recovered'
+    assert len(cycle['rounds']) == 13
+    assert cycle['safe_losses'] == 0
+    assert cycle['net_cents'] == (1330-13*1000)*100
+    assert ledger.recovery_streak.phase == 'waiting'
+
+
+def test_safe_one_and_ten_are_valid_and_checked_before_next_bet():
+    for cap in (1, 10):
+        ledger = new_ledger(x='1.33',stake=100,balance=10000,trigger=2,safe=cap)
+        tick(ledger,1,'1.10')
+        tick(ledger,2,'1.10')
+        for n in range(3,3+cap):
+            tick(ledger,n,'1.10')
+            assert ledger.balance_cents == (10000-(n-2)*100)*100
+        cycle = ledger.recovery_history[0]
+        assert cycle['outcome'] == 'safe_limit'
+        assert len(cycle['rounds']) == cap
+        assert cycle['net_cents'] == -cap*100*100
+        assert ledger.recovery_streak.phase == 'waiting'
+        assert ledger.recovery_streak.enabled
+
+
+def test_safe_configuration_rejects_bad_values_and_keeps_current_settings():
+    ledger = new_ledger(safe=2)
+    st = ledger.recovery_streak
+    for invalid in (-1, 11, True, None, 1.5, '2'):
+        assert not st.configure(target='1.33',trigger=5,stake_cents=1000*100,
+                                currency='KRW',safe_losses=invalid)
+        assert st.safe_losses == 2
+    assert st.configure(target='1.33',trigger=5,stake_cents=1000*100,
+                        currency='KRW',safe_losses=0)
+    assert st.safe_losses == 0
+    assert st.trigger == 5
+    assert st.target == __import__('decimal').Decimal('1.33')
+    assert DemoLedger(**ledger.dump()).recovery_streak.safe_losses == 0
+
+
+def test_insufficient_balance_during_autobet_never_debits_overdrawn_amount():
+    ledger = new_ledger(x='1.33',stake=1000,balance=1500,trigger=2,safe=0)
+    tick(ledger,1,'1.10')
+    tick(ledger,2,'1.10')
+    tick(ledger,3,'1.10')
+    assert ledger.balance_cents == 500*100
+    tick(ledger,4,'1.10')
+    assert ledger.balance_cents == 500*100
+    assert not ledger.recovery_streak.enabled
+    assert ledger.recovery_streak.phase == 'paused_funds'
+    assert ledger.recovery_history[0]['outcome'] == 'insufficient_balance'
+    assert ledger.recovery_history[0]['net_cents'] == -1000*100
+
+
+def test_safe_session_dedup_replayed_round_does_not_charge_twice():
+    ledger = new_ledger(x='1.33',stake=1000,balance=10000,trigger=2,safe=1)
+    for n in (1,2,3):
+        tick(ledger,n)
+    before = ledger.balance_cents
+    history_before = len(ledger.recovery_history)
+    record,changed = ledger.process_archived_round('r-3','1.10',now=NOW,stream_id='3000-0')
+    assert record is None and not changed
+    assert ledger.balance_cents == before
+    assert len(ledger.recovery_history) == history_before == 1
+    assert ledger.recovery_streak.phase == 'waiting'

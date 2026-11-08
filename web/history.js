@@ -733,6 +733,28 @@
       scopeButton.disabled = false; allButton.disabled = false;
     }
   }
+  window.closeHistoryPanels = () => {
+    // Bottom navigation closes the visual panels without clearing saved DEMO data.
+    ++requestNo; // Ignore any response started before leaving the tab.
+    delete root.dataset.loading;
+    root.removeAttribute('aria-busy');
+    if (status.textContent === 'Загрузка истории…') status.textContent = '';
+    root.querySelectorAll('details[open]').forEach(panel => { panel.open = false; });
+    openDemoStrategy = null;
+    if (['cycle', 'high_cycle'].includes(args.view)) {
+      // A single-cycle detail belongs to an expanded strategy: return to a closed list.
+      args = {view: 'cycles', page: 0};
+      current = null; stack = [];
+      root.replaceChildren();
+      status.textContent = '';
+      pager.hidden = true;
+      back.hidden = true;
+      delete root.dataset.loading;
+      root.removeAttribute('aria-busy');
+    } else if (current && ['cycles', 'high_cycles'].includes(args.view)) {
+      render(current);
+    }
+  };
   window.openHistoryTab = () => {
     if (!current || Date.now() - lastLoad > 30000) navigate(args.view, {...args});
   };

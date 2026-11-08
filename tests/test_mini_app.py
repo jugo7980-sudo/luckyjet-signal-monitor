@@ -14,6 +14,23 @@ def test_static_shell_route_keeps_health_and_rejects_other_paths():
     assert app_url().startswith('https://')
 
 
+def test_release_cache_busting_and_version_discovery(monkeypatch):
+    import json
+    from mini_app import APP_VERSION
+    monkeypatch.setenv('MINI_APP_URL', 'https://example.test/app?theme=dark&v=old#mini')
+    assert app_url() == 'https://example.test/app?theme=dark&v=' + APP_VERSION + '#mini'
+    version_status, _, version_payload = response('/app-version.json')
+    assert version_status == '200 OK'
+    assert json.loads(version_payload) == {'version': APP_VERSION}
+    _, _, html = response('/app?v=older')
+    text = html.decode('utf-8')
+    assert 'history.js?v=' + APP_VERSION in text
+    assert 'Версия ' + APP_VERSION in text
+    assert '__APP_VERSION__' not in text
+    assert 'luckyjet-app-update' in text
+    assert response('/history.js?v=' + APP_VERSION)[0] == '200 OK'
+
+
 def test_shell_tabs_mobile_browser():
     from playwright.async_api import async_playwright
     async def run():

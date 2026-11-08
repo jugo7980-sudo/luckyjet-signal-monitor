@@ -3,7 +3,7 @@ import asyncio
 import json
 from urllib.parse import parse_qs, urlparse
 
-from mini_app import response
+from mini_app import APP_VERSION, response
 
 
 def test_mobile_full_site_design_navigation_and_explanations():
@@ -39,7 +39,7 @@ def test_mobile_full_site_design_navigation_and_explanations():
                             "window.canUsePremium=()=>true;"
                             "window.refreshAccessOverview?.();"
                         ))
-                    elif url.endswith(("/history.js", "/summary.js", "/controls.js")):
+                    elif url.split('?', 1)[0].endswith(("/history.js", "/summary.js", "/controls.js")):
                         await req.fulfill(content_type="application/javascript",
                                           body=response("/" + url.split("/")[-1])[2])
                     elif url.endswith(("/admin.js", "/site.js")):
@@ -211,7 +211,7 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#settings-panel").wait_for(state="visible")
                 assert await page.locator("#account-username").count() == 1
                 assert await page.locator("#app-release-notes").count() == 1
-                assert "0.2.9" in await page.locator("#app-release-notes").inner_text()
+                assert APP_VERSION in await page.locator("#app-release-notes").inner_text()
                 await page.locator('[data-summary-help-for="settings-notifications-hint"]').click()
                 assert "серии ниже 2x" in await page.locator("#summary-metric-text").inner_text()
                 await page.locator("#summary-metric-close").click()

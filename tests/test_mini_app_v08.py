@@ -23,7 +23,7 @@ def test_v08_guest_layout_320_390_430_and_compact_tabs():
                     url = req.request.url
                     if url.startswith("https://example.test/app"):
                         await req.fulfill(content_type="text/html", body=response("/app")[2])
-                    elif url.endswith(("/history.js", "/controls.js", "/admin.js", "/site.js", "/access.js")):
+                    elif url.split('?', 1)[0].endswith(("/history.js", "/controls.js", "/admin.js", "/site.js", "/access.js")):
                         await req.fulfill(content_type="application/javascript",
                                           body=response("/" + url.split("/")[-1])[2])
                     elif "/api/access" in url:
@@ -136,7 +136,7 @@ def test_v08_premium_styles_compact_history_demo_settings_admin():
                 elif url.endswith("/access.js"):
                     await req.fulfill(content_type="application/javascript",
                         body="window.accessState={premium:true,registered:true};document.body.dataset.access='premium';window.canUsePremium=()=>true")
-                elif url.endswith(("/history.js","/controls.js","/admin.js","/site.js")):
+                elif url.split('?', 1)[0].endswith(("/history.js","/controls.js","/admin.js","/site.js")):
                     await req.fulfill(content_type="application/javascript", body=response("/"+url.split("/")[-1])[2])
                 elif "/api/overview" in url:
                     await req.fulfill(content_type="application/json", body=json.dumps({

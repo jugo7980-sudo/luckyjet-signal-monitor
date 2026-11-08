@@ -80,11 +80,16 @@ def test_mobile_archive_and_reset_controls():
             await page.wait_for_function("document.querySelector('#history-status').textContent === '' && !document.querySelector('#history-content').dataset.loading")
             assert writes[0] == {'action': 'history_reset', 'value': 'days', 'confirm': True}
             await page.locator('[data-history-view=high_days]').click()
+            # Archive & Reset must always start collapsed after history navigation.
+            assert not await page.locator('#history-management').evaluate('(el) => el.open')
+            await page.locator('#history-management summary').click()
             async with page.expect_response(lambda res: '/api/controls' in res.url and
                     res.request.post_data_json.get('value') == 'high_days'):
                 await page.locator('#history-reset-scope').click()
             assert writes[1]['value'] == 'high_days'
             await page.locator('[data-history-view=days]').click()
+            assert not await page.locator('#history-management').evaluate('(el) => el.open')
+            await page.locator('#history-management summary').click()
             await page.locator('#history-archive').click()
             await page.locator('#history-archive-exit').get_by_text('Архив').wait_for()
             assert await page.locator('#history-reset-panel').is_hidden()
@@ -99,6 +104,8 @@ def test_mobile_archive_and_reset_controls():
             await page.locator('[data-archive-view=archive_max_steps]').click()
             assert 'archive_max_steps' in reads
             await page.locator('#history-exit-archive').click()
+            assert not await page.locator('#history-management').evaluate('(el) => el.open')
+            await page.locator('#history-management summary').click()
             assert await page.locator('#history-reset-panel').is_visible()
             async with page.expect_response(lambda res: '/api/controls' in res.url and
                     res.request.post_data_json.get('value') == 'all'):

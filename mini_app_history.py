@@ -442,7 +442,7 @@ async def history(authorization, gate, token, query=''):
             redis, day, legacy_total=summary.get('total'),
         )
         return json_response('200 OK', {
-            'view': view, 'day': day, 'summary': summary, 'integrity': evidence,
+            'view': view, 'day': day, 'summary': summary, 'distribution': distribution, 'integrity': evidence,
         })
 
     if view == 'high_days':

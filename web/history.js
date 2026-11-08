@@ -234,7 +234,7 @@
         heading(formatDay(data.day), 'История Кэф · Владивосток, UTC+10');
         if (!archive && data.view_reset) note('Данные после сброса.');
         if (data.truncated || !data.summary) { note('Неполные данные: превышен предел проверки.'); break; }
-        info('Раундов в прежней сводке', s.total ?? 'Нет данных');
+        info('Всего раундов', s.total ?? 'Нет данных', 'По прежней сводке; распределение ниже основано только на записях архива');
         const distribution = data.distribution;
         if (!distribution || !distribution.complete_scan || !distribution.counts) {
           note('Распределение по X недоступно: архив за дату превышает предел безопасной проверки либо отсутствует.');

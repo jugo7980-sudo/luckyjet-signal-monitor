@@ -130,7 +130,7 @@
     const guide = document.getElementById('history-explainer');
     if (guide) {
       const views = {
-        days: 'Раунды по датам: сколько коэффициентов сохранено, сколько ниже 2x и сколько выше выбранных порогов.',
+        days: 'Распределение по отдельным диапазонам x1.5–x150 и крупные пороги выше x150.',
         high_days: 'Высокие коэффициенты: показываем результаты строго выше 100x и сколько раундов прошло между ними.',
         cycles: 'DEMO-циклы: виртуальные ставки, их завершение и изменение учебного баланса. Это не реальные деньги.',
         max_steps: 'Максимальный шаг: наибольший номер шага за выбранный день по сохранённой истории.'
@@ -234,15 +234,53 @@
         heading(formatDay(data.day), 'История Кэф · Владивосток, UTC+10');
         if (!archive && data.view_reset) note('Данные после сброса.');
         if (data.truncated || !data.summary) { note('Неполные данные: превышен предел проверки.'); break; }
-        info('Всего раундов', s.total ?? 0);
-        info('<2x', s.lt2_tracking ? (s.lt2 ?? 0) : 'Нет данных',
-          s.lt2_partial ? 'С обновления' : '');
-        for (const t of LIMITS) {
-          const recent = t === 2 || t === 5;
-          const enabled = !recent || Boolean(s.new_threshold_tracking);
-          info('>' + t + 'x', enabled ? (s[String(t)] ?? 0) : 'Нет данных',
-            recent && s.new_threshold_partial ? 'С обновления' : '');
+        info('Всего раундов', s.total ?? 'Нет данных', 'По прежней сводке; распределение ниже основано только на записях архива');
+        const distribution = data.distribution;
+        if (!distribution || !distribution.complete_scan || !distribution.counts) {
+          note('Распределение по X недоступно: архив за дату превышает предел безопасной проверки либо отсутствует.');
+        } else {
+          heading('Распределение коэффициентов');
+          if (Number(s.total) !== Number(distribution.total))
+            note('В прежней сводке и фактическом архиве разное число раундов. Ниже учитываются только записи архива.');
+          note('Каждый сохранённый раунд учитывается один раз. Диапазон x5 = 5.00–5.99x.');
+          const counts = distribution.counts;
+          const total = Number(distribution.total) || 0;
+          const groups = [
+            ['Ниже x2', [['below_1_5', 'x1.00–1.49'], ['1.5', 'x1.50–1.99']]],
+            ['x2–x9', Array.from({length: 8}, (_, i) => [String(i + 2), 'x' + (i + 2)])],
+            ['x10–x24', Array.from({length: 15}, (_, i) => [String(i + 10), 'x' + (i + 10)])],
+            ['x25–x49', Array.from({length: 25}, (_, i) => [String(i + 25), 'x' + (i + 25)])],
+            ['x50–x74', Array.from({length: 25}, (_, i) => [String(i + 50), 'x' + (i + 50)])],
+            ['x75–x99', Array.from({length: 25}, (_, i) => [String(i + 75), 'x' + (i + 75)])],
+            ['x100–x124', Array.from({length: 25}, (_, i) => [String(i + 100), 'x' + (i + 100)])],
+            ['x125–x150', Array.from({length: 26}, (_, i) => [String(i + 125), 'x' + (i + 125)])],
+          ];
+          for (const [title, entries] of groups) {
+            const details = el('details', 'history-distribution-group');
+            const sum = el('summary', '', title);
+            const groupTotal = entries.reduce((n, [key]) => n + (Number(counts[key]) || 0), 0);
+            sum.appendChild(el('span', '', groupTotal + ' раз'));
+            details.appendChild(sum);
+            for (const [key, label] of entries) {
+              const n = Number(counts[key]) || 0;
+              const row = el('div', 'history-distribution-row');
+              row.append(el('span', '', label), el('span', '', n + ' · ' + (total ? (100 * n / total).toFixed(2) : '0.00') + '%'));
+              details.appendChild(row);
+            }
+            root.appendChild(details);
+          }
+          info('От x151', (Number(counts.above_150) || 0) + ' раз',
+            'Коэффициенты от 151.00x без детальной разбивки');
+          note('Учтено в архиве: ' + total + ' раундов. Подсчёт по времени получения, полнота истории источника не гарантирована.');
         }
+        const highDetails = el('details', 'history-distribution-group');
+        highDetails.appendChild(el('summary', '', 'Крупные пороги выше x150'));
+        for (const t of LIMITS.filter(x => x > 150)) {
+          const row = el('div', 'history-distribution-row');
+          row.append(el('span', '', '>' + t + 'x'), el('span', '', String(s[String(t)] ?? 'Нет данных')));
+          highDetails.appendChild(row);
+        }
+        root.appendChild(highDetails);
         const check = data.integrity;
         if (check) {
           if (check.status !== 'verified' || check.poll_coverage?.status !== 'full_poll_coverage')

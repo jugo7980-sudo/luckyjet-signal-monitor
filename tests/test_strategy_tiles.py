@@ -91,12 +91,12 @@ def test_recovery_four_real_rounds_and_last_actual_minus_620_krw():
     for i, value in enumerate(['1.10', '1.20', '1.10'], 1):
         ledger.process_archived_round(str(i), value, stream_id=f'{i}-0')
     pending = strategy_tile_snapshot(ledger)[3]
-    assert pending['progress'] == '0/2'
+    assert pending['progress'] == 'Ставка'
     assert pending['net_cents'] == -100_000
     assert pending['last_action'] == 'Проигрыш'
     assert strategy.next_stake_cents == 100_000
-    for i, value in enumerate(['1.10', '1.20', '1.38'], 4):
-        ledger.process_archived_round(str(i), value, stream_id=f'{i}-0')
+    # Auto stake on the IMMEDIATE next round without any repeated trigger.
+    ledger.process_archived_round('4', '1.38', stream_id='4-0')
     finished = strategy_tile_snapshot(ledger)[3]
     assert finished['net_cents'] == -62_000
     assert finished['result_scope'] == 'last'

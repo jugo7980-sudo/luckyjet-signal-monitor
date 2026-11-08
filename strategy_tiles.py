@@ -72,6 +72,9 @@ def strategy_tile_snapshot(ledger):
     )
     target = ledger.target_streak
     recovery = ledger.recovery_streak
+    recovery_target = str(recovery.target)
+    if recovery.continuous_session and recovery.target_max != recovery.target:
+        recovery_target += '–' + str(recovery.target_max)
     return [
         _tile(1, ledger.enabled, 'betting' if ledger.active else 'waiting',
               classic_progress,
@@ -89,6 +92,6 @@ def strategy_tile_snapshot(ledger):
         _tile(4, recovery.enabled, recovery.phase,
               f'{recovery.streak}/{recovery.trigger}' if recovery.phase == 'waiting'
               else 'Ставка' if recovery.phase == 'betting' else 'Пауза',
-              recovery.next_stake_cents, recovery.target, recovery.rounds,
+              recovery.next_stake_cents, recovery_target, recovery.rounds,
               ledger.recovery_history, _action(recovery.rounds, ledger.recovery_history)),
     ]

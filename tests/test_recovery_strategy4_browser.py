@@ -53,7 +53,11 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                             actions.append(payload)
                             if payload['action'] == 'recovery_streak_config':
                                 cfg = payload['value']
-                                target.update(target=cfg['target'],trigger=cfg['trigger'],
+                                target.update(target=cfg['target'],
+                                              target_max=cfg['target_max'],
+                                              continuous_session=cfg['continuous_session'],
+                                              safe_mode=cfg['safe_mode'],
+                                              trigger=cfg['trigger'],
                                               stake_cents=int(cfg['stake'])*100,
                                               safe_losses=cfg['safe_losses'])
                             elif payload['action'] == 'recovery_streak_toggle':
@@ -104,15 +108,19 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                 await page.locator('#demo-recovery-accordion summary').first.click()
                 await expect(page.locator('#recovery-streak-panel')).to_be_visible()
                 await expect(page.locator('#recovery-streak-x')).to_have_value('1.32')
-                await page.locator('#recovery-streak-x').fill('1.43')
+                await page.locator('#recovery-streak-x').fill('1.29')
+                await page.locator('#recovery-streak-x-max').fill('1.50')
                 await page.locator('#recovery-streak-trigger').select_option('4')
                 await page.locator('#recovery-streak-stake').fill('150')
                 await page.locator('#recovery-streak-safe').select_option('2')
+                await page.locator('#recovery-streak-safe-mode').select_option('consecutive')
                 await page.locator('#recovery-streak-save').click()
                 assert actions[-1]['value'] == {
-                    'target':'1.43','trigger':4,'stake':'150','safe_losses':2}
+                    'target':'1.29','target_max':'1.50','trigger':4,'stake':'150',
+                    'safe_losses':2,'safe_mode':'consecutive','continuous_session':True}
                 await expect(page.locator('#recovery-streak-safe')).to_have_value('2')
-                await page.wait_for_function('document.getElementById("recovery-streak-x").value === "1.43"')
+                await expect(page.locator('#recovery-streak-safe-mode')).to_have_value('consecutive')
+                await page.wait_for_function('document.getElementById("recovery-streak-x").value === "1.29"')
                 await expect(page.locator('#demo-recovery-preview')).to_contain_text('Выключена')
                 await page.locator('#recovery-streak-toggle').click()
                 await expect(page.locator('#recovery-streak-toggle')).to_have_text('Выключить стратегию №4')

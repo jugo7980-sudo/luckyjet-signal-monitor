@@ -745,7 +745,7 @@
         if (!archive) demoStrategySwitcher(view);
         const c = data.item;
         currency = c.currency || 'USD';
-        const reasons = {recovered: 'Цель достигнута', insufficient_balance: 'Недостаточно баланса',
+        const reasons = {recovered: 'Цель достигнута', safe_limit: 'Сейф: лимит проигрышей', insufficient_balance: 'Недостаточно баланса',
           incomplete_data: 'Неполные данные', stopped_by_user: 'Остановлена пользователем',
           reference_changed: 'Новый опорный коэффициент'};
         heading(archive ? 'Цикл DEMO' : view === 'recovery_cycle' ? 'Стратегия №4 · цикл'
@@ -758,6 +758,8 @@
             'Фиксированная ставка после N ниже x' : 'Ранее: догон после N ниже x') +
             (c.cashout_multiplier || '1.32'));
           info('Условие входа', (c.trigger_streak || 3) + ' подряд');
+          if (c.session_mode === 'autobet') info('Режим', 'Автоставка каждый раунд');
+          if (c.safe_losses != null) info('Сейф', c.safe_losses === 0 ? 'Выкл' : c.safe_losses + ' проигрышей');
           info('Автовывод', 'x' + (c.cashout_multiplier || '1.32'));
           info(c.stake_mode === 'fixed' ? 'Фиксированная ставка' : 'Первая ставка', money(c.base_stake_cents));
         }

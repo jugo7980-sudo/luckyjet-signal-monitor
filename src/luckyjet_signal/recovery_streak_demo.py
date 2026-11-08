@@ -1,9 +1,9 @@
-"""Independent virtual DEMO Strategy 4.
+"""Independent virtual DEMO Strategy 4: armed fixed autobet with a loss cap.
 
-A fixed virtual stake is armed only by N *completed* consecutive rounds
-strictly below X. After any lost stake, another fresh N-round signal is
-required. Each wager uses the configured stake; no automatic increases or
-loss recovery. No real bets.
+Wait for N consecutive *completed* rounds below the selected X, then wager
+the same configured virtual amount on EVERY subsequent round until the selected
+cashout X is reached or the session's loss cap ("safe") is hit. A safe closure
+resets the entry series without turning the strategy off. No real bets.
 """
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -21,54 +21,68 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
                          strategy_name='recovery_streak')
         if not Decimal('1.01') <= self.target <= Decimal('10000'):
             self.target = Decimal('1.32')
-        # A previously persisted v0.2.25 cycle could be in "betting" directly
-        # after a loss. Do not place that old-style immediate next bet.
-        self.recovery_signal_armed = raw.get('recovery_signal_armed') is True
-        if self.phase == 'betting' and self.rounds and not self.recovery_signal_armed:
-            self.phase = 'waiting'
+        cap = raw.get('safe_losses', 2)
+        self.safe_losses = cap if type(cap) is int and 0 <= cap <= 10 else 2
+        # An old active journal is preserved byte-for-byte. Only FUTURE
+        # wagers use the new auto-bet state machine. Never recompute payouts.
+        self.session_autobet = (raw.get('session_autobet') is True
+                                if 'session_autobet' in raw else not bool(self.rounds))
+        if self.rounds and self.phase not in ('paused_gap', 'paused_funds'):
+            self.phase = 'betting'
             self.streak = 0
-        # Migrate old v0.2.26 active sessions without touching their past
-        # settled wagers. Previously next_stake_cents could grow after losses;
-        # from this release onward every future wager is the configured fixed
-        # amount, including a currently armed next wager.
         self.next_stake_cents = self.stake_cents
+
+    @property
+    def losses(self):
+        return sum(int(row.get('payout_cents') or 0) == 0 for row in self.rounds)
 
     def dump(self):
         state = super().dump()
-        state['recovery_signal_armed'] = self.recovery_signal_armed
+        state['safe_losses'] = self.safe_losses
+        state['session_autobet'] = self.session_autobet
         return state
 
     def public(self, currency='USD'):
         state = super().public(currency)
-        # A multi-bet cycle remains active even while waiting for a new signal;
-        # reconfiguring it would otherwise erase the unpaid loss history.
         state['active'] = self.enabled and (self.phase == 'betting' or bool(self.rounds))
+        state['safe_losses'] = self.safe_losses
+        state['losses'] = self.losses
+        state['mode'] = 'autobet'
         return state
 
     def reset_progress(self):
         super().reset_progress()
-        self.recovery_signal_armed = False
+        self.session_autobet = True
 
-    def configure(self, *, target, trigger, stake_cents, currency):
+    def configure(self, *, target, trigger, stake_cents, currency, safe_losses=None):
         if self.rounds:
             return False
-        return super().configure(target=target, trigger=trigger,
-                                 stake_cents=stake_cents, currency=currency)
+        cap = self.safe_losses if safe_losses is None else safe_losses
+        if type(cap) is not int or not 0 <= cap <= 10:
+            return False
+        if not super().configure(target=target, trigger=trigger,
+                                 stake_cents=stake_cents, currency=currency):
+            return False
+        self.safe_losses = cap
+        return True
 
     def required_stake(self, currency):
-        """Fixed amount on every signal, regardless of previous losses."""
+        """Every wager in the auto session has precisely the configured size."""
         return self.stake_cents
 
     def _complete(self, outcome, *, balance, currency, at, payout_cents=0,
                   final_coefficient=None):
-        # Mark the actual recorded mode, so an in-flight legacy variable-stake
-        # cycle is not mislabeled as entirely fixed after the migration.
         fixed = all(r.get('stake_cents') == self.stake_cents for r in self.rounds)
+        session_autobet = self.session_autobet
+        losses = self.losses
         entry = super()._complete(outcome, balance=balance, currency=currency,
                                   at=at, payout_cents=payout_cents,
                                   final_coefficient=final_coefficient)
         if entry is not None:
             entry['stake_mode'] = 'fixed' if fixed else 'legacy_variable'
+            entry['session_mode'] = 'autobet' if session_autobet else 'legacy_migrated'
+            entry['safe_losses'] = self.safe_losses
+            entry['losses'] = losses
         return entry
 
     def on_round(self, coefficient, *, round_id, balance, currency, now=None,
@@ -84,11 +98,16 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
             self.streak = self.streak + 1 if multiplier < self.target else 0
             if self.streak >= self.trigger:
                 self.phase = 'betting'
-                # A fresh signal arms exactly one fixed-size wager.
                 self.next_stake_cents = self.stake_cents
-                self.recovery_signal_armed = bool(self.rounds)
                 self.streak = 0
+            # The signal round is never wagered retroactively.
             return balance, None
+
+        # A pre-upgrade active session may already exceed its new safe cap.
+        # Close the existing journal before placing ANY post-upgrade wager.
+        if self.safe_losses and self.losses >= self.safe_losses:
+            return balance, self._complete('safe_limit', balance=balance,
+                                            currency=currency, at=at)
 
         stake = self.stake_cents
         if (not allow_funding or not valid_amount(stake, currency)
@@ -99,7 +118,6 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
             self.phase = 'paused_funds'
             return balance, finished
 
-        self.recovery_signal_armed = False
         if self.started_at is None:
             self.started_at = at
             self.balance_before_cents = int(balance)
@@ -122,8 +140,11 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
             )
 
         self.next_stake_cents = self.stake_cents
-        # Do not place another bet until a NEW full streak has completed.
-        # Balance adequacy is checked when that next bet is actually due.
-        self.phase = 'waiting'
-        self.streak = 0
+        if self.safe_losses and self.losses >= self.safe_losses:
+            # Reset this SESSION only. Stay enabled and wait for a new
+            # initial entry signal on subsequent completed rounds.
+            return balance, self._complete('safe_limit', balance=balance,
+                                            currency=currency, at=at)
+        # A single initial signal opens an uninterrupted auto-bet session.
+        self.phase = 'betting'
         return balance, None

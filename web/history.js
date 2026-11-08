@@ -736,6 +736,9 @@
   window.closeHistoryPanels = () => {
     // Bottom navigation closes the visual panels without clearing saved DEMO data.
     ++requestNo; // Ignore any response started before leaving the tab.
+    delete root.dataset.loading;
+    root.removeAttribute('aria-busy');
+    if (status.textContent === 'Загрузка истории…') status.textContent = '';
     root.querySelectorAll('details[open]').forEach(panel => { panel.open = false; });
     openDemoStrategy = null;
     if (['cycle', 'high_cycle'].includes(args.view)) {

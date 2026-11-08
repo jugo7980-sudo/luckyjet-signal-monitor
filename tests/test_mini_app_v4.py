@@ -236,7 +236,7 @@ def test_home_colors_removed_quick_access_and_site_web_form():
             await page.locator('nav [data-tab=account]').click()
             await page.locator('#site-connection-panel').wait_for(state='visible')
             assert not await page.locator('#site-connection-panel').evaluate('(e) => e.open')
-            await page.locator('#site-connection-panel summary').click()
+            await page.locator('#site-connection-panel > summary').click()
             await page.locator('#site-section').wait_for(state='visible')
             await page.locator('#site-technical-tools').wait_for(state='attached')
             assert not await page.locator('#site-technical-tools').evaluate('(e) => e.open')

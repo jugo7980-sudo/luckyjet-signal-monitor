@@ -275,13 +275,10 @@
         }
         const highDetails = el('details', 'history-distribution-group');
         highDetails.appendChild(el('summary', '', 'Крупные пороги выше x150'));
-        for (const t of LIMITS.filter(x => x > 150))
-          highDetails.appendChild(el('div', 'history-distribution-row'));
         for (const t of LIMITS.filter(x => x > 150)) {
-          const row = highDetails.lastElementChild;
+          const row = el('div', 'history-distribution-row');
           row.append(el('span', '', '>' + t + 'x'), el('span', '', String(s[String(t)] ?? 'Нет данных')));
-          if (t !== LIMITS.filter(x => x > 150).at(-1))
-            highDetails.appendChild(el('div', 'history-distribution-row'));
+          highDetails.appendChild(row);
         }
         root.appendChild(highDetails);
         const check = data.integrity;

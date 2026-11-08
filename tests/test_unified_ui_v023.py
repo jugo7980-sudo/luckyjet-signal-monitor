@@ -163,6 +163,11 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#summary-metric-close").click()
                 assert await page.locator("#home-status-row").evaluate(
                     "(n) => n.getBoundingClientRect().height >= 44")
+                assert await page.locator(".topbar .brand .sr-only").count() == 1
+                assert await page.locator(".topbar .brand > span:not(.sr-only)").count() == 1
+                assert not await page.locator("#page-home .home-disclaimer").is_visible()
+                assert await page.locator("#home-status-row").evaluate(
+                    "(n) => n.closest('.home-freshness-row') !== null")
                 assert await page.locator("#coef-grid .coef").first.evaluate(
                     "(n) => parseFloat(getComputedStyle(n).fontSize) >= 11")
                 await page.locator("#monitor-uptime").scroll_into_view_if_needed()
@@ -205,6 +210,18 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     "document.documentElement.scrollWidth <= innerWidth")
 
                 await page.locator('nav [data-tab="history"]').click()
+                await page.locator("#history-date").wait_for(state="visible")
+                assert await page.locator("#history-date").input_value() != ""
+                assert await page.locator("#history-content .history-date-row label").inner_text() == "Дата"
+                assert await page.locator("#history-content .history-heading").count() == 0
+                assert await page.locator("#history-pager").is_hidden()
+                assert await page.locator("#history-date").evaluate(
+                    "(n) => n.getBoundingClientRect().width >= 105")
+                assert await page.evaluate("""() => {
+                    const refresh = document.querySelector('#history-refresh').getBoundingClientRect();
+                    const date = document.querySelector('#history-date').getBoundingClientRect();
+                    return date.top - refresh.bottom < 45 && date.top >= refresh.top;
+                }""")
                 assert not await page.locator("#history-management").evaluate("(n) => n.open")
                 assert await page.locator("#history-reset-scope").is_hidden()
                 await page.wait_for_function(

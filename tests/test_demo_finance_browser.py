@@ -21,10 +21,12 @@ def test_mobile_demo_finance_filters_breakdown_paging_and_panel_reset():
                 for i in range(45):
                     strategy = ['classic', 'high_gap', 'target_streak'][i % 3]
                     operations.append({
-                        'id': 'cycle-' + str(i) + ':0:stake',
+                        'id': 'cycle-' + str(i) + ':0:net',
                         'type': 'expense', 'currency': 'KRW',
                         'strategy': strategy, 'step': i+1,
-                        'amount_cents': 15000, 'round_id': 'r' + str(i),
+                        'amount_cents': 15000, 'net_cents': -15000,
+                        'stake_cents': 15000, 'payout_cents': 0,
+                        'round_id': 'r' + str(i),
                         'coefficient': '1.20', 'cashout_multiplier': '1.57',
                         'time': '2026-11-08T02:00:00+00:00',
                         'time_exact': i != 44,
@@ -32,9 +34,11 @@ def test_mobile_demo_finance_filters_breakdown_paging_and_panel_reset():
                         'balance_after_cents': 985000,
                     })
                 operations.insert(0, {
-                    'id': 'cycle-0:0:payout', 'type': 'income',
+                    'id': 'cycle-winning:0:net', 'type': 'income',
                     'currency': 'KRW', 'strategy': 'target_streak', 'step': 1,
-                    'amount_cents': 82700, 'round_id': 'r0', 'coefficient': '1.57',
+                    'amount_cents': 30000, 'net_cents': 30000,
+                    'stake_cents': 52700, 'payout_cents': 82700,
+                    'round_id': 'r0', 'coefficient': '1.57',
                     'cashout_multiplier': '1.57', 'time': '2026-11-08T02:00:00+00:00',
                     'time_exact': True, 'balance_before_cents': 985000,
                     'balance_after_cents': 1067700,
@@ -67,8 +71,8 @@ def test_mobile_demo_finance_filters_breakdown_paging_and_panel_reset():
                                 'period': query.get('period', ['all'])[0],
                                 'strategy': strategy, 'flow': flow,
                                 'day': query.get('day', [None])[0],
-                                'totals': [{'currency': 'KRW', 'income_cents': 82700,
-                                    'expense_cents': 675000, 'net_cents': -592300,
+                                'totals': [{'currency': 'KRW', 'income_cents': 30000,
+                                    'expense_cents': 675000, 'net_cents': -645000,
                                     'operations': 46}],
                                 'items': filtered[number*40:(number+1)*40],
                                 'truncated': False, 'invalid_rows': 0,
@@ -114,14 +118,17 @@ def test_mobile_demo_finance_filters_breakdown_paging_and_panel_reset():
                 await expect(page.locator('#history-finance-operations')).not_to_have_attribute('open', '')
                 assert await page.locator('#history-finance-summary').count() == 0
                 assert await page.locator('.history-finance-summary').count() == 1
-                assert '82' in await page.locator('.history-finance-summary').inner_text()
+                assert '+300' in await page.locator('.history-finance-summary').inner_text()
                 await expect(page.locator('#history-reset-panel')).to_be_hidden()
                 await page.locator('#history-finance-operations > summary').click()
                 await expect(page.locator('#history-finance-operations')).to_have_attribute('open', '')
                 assert await page.locator('.history-finance-entry').count() == 40
                 await page.locator('.history-finance-entry summary').first.click()
                 await expect(page.locator('.history-finance-entry-body').first).to_be_visible()
-                assert 'Раунд' in await page.locator('.history-finance-entry-body').first.inner_text()
+                content = await page.locator('.history-finance-entry-body').first.inner_text()
+                assert 'Раунд' in content and 'Ставка' in content and 'Выплата' in content
+                assert 'Чистый результат' in content
+                assert '+300' in await page.locator('.history-finance-entry-head').first.inner_text()
                 await expect(page.locator('#history-pager')).to_be_visible()
                 await page.locator('#history-next').click()
                 await page.wait_for_function(

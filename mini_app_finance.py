@@ -1,8 +1,9 @@
 """Read-only DEMO income/expense statement from completed and active journals.
 
 Never changes source rounds, cycle history, strategy configuration or balances.
-Cycle archive is append-only across DEMO resets. A round's gross cashout is
-income; the original wager is a separate debit, never double-counted.
+Cycle archive is append-only across DEMO resets. Each confirmed virtual
+wager is one row: net result = gross payout - stake. The gross payout
+includes the returned stake; no phantom profit or double-counting.
 
 Legacy round timestamps may be absent. Do not infer the exact step time:
 display the cycle's completion time only as an explicitly marked approximation.
@@ -79,11 +80,11 @@ def _active_entries(ledger):
 
 async def demo_finance(redis, uid, ledger, *, page=0, period='all',
                        strategy='all', flow='all', day=None, now=None):
-    """One chronological, per-currency, per-operation feed (40 rows per page).
+    """One chronological, per-currency, per-wager net-result feed (40/page).
 
-    Guard exceptionally large historical data sets instead of presenting
-    incomplete totals as complete. This endpoint never records a reset as
-    income or an expense, and only emits actual saved stakes/payouts.
+    One saved step is exactly one record: payout - stake. Positive results
+    are gains; negative ones losses, with the wager and payout only in
+    details. Excludes DEMO resets. Oversized archives flag partial totals.
     """
     if period not in PERIODS or strategy not in (STRATEGIES | {'all'}) or flow not in FLOWS:
         raise ValueError('Invalid finance filters')
@@ -175,7 +176,7 @@ async def demo_finance(redis, uid, ledger, *, page=0, period='all',
             except (TypeError, ValueError, OverflowError):
                 invalid_rows += 1
                 continue
-            if stake < 0 or payout < 0 or (stake == 0 and payout == 0):
+            if stake <= 0 or payout < 0:
                 invalid_rows += 1
                 continue
             base = {
@@ -192,24 +193,21 @@ async def demo_finance(redis, uid, ledger, *, page=0, period='all',
                                if occurred is not None else 'unknown'),
                 'cycle_status': cycle.get('cycle_status') or cycle.get('outcome') or 'unknown',
             }
-            if stake > 0:
-                debit_after = balance_after - payout if balance_after is not None else None
-                operations.append({
-                    **base, 'id': identifier + ':' + str(i) + ':stake',
-                    'type': 'expense', 'amount_cents': stake,
-                    'balance_after_cents': debit_after,
-                    'balance_before_cents': debit_after + stake if debit_after is not None else None,
-                    '_order': (i, 0),
-                })
-            if payout > 0:
-                operations.append({
-                    **base, 'id': identifier + ':' + str(i) + ':payout',
-                    'type': 'income', 'amount_cents': payout,
-                    'balance_after_cents': balance_after,
-                    'balance_before_cents': (balance_after - payout
-                                             if balance_after is not None else None),
-                    '_order': (i, 1),
-                })
+            # One recorded wager, one actual net result; the payout includes
+            # the returned stake and is never counted a second time.
+            # Recorded balance_after is after this strategy's settled wager.
+            # Reconstruct the immediately preceding balance from its net.
+            net = payout - stake
+            operations.append({
+                **base, 'id': identifier + ':' + str(i) + ':net',
+                'type': 'income' if net > 0 else 'expense' if net < 0 else 'even',
+                'amount_cents': abs(net), 'net_cents': net,
+                'stake_cents': stake, 'payout_cents': payout,
+                'balance_after_cents': balance_after,
+                'balance_before_cents': (balance_after - net
+                                         if balance_after is not None else None),
+                '_order': (i, 0),
+            })
 
     totals = defaultdict(lambda: {'currency': '', 'income_cents': 0, 'expense_cents': 0,
                                   'net_cents': 0, 'operations': 0})
@@ -217,12 +215,14 @@ async def demo_finance(redis, uid, ledger, *, page=0, period='all',
         group = totals[record['currency']]
         group['currency'] = record['currency']
         group['operations'] += 1
-        if record['type'] == 'income':
-            group['income_cents'] += record['amount_cents']
-            group['net_cents'] += record['amount_cents']
-        else:
-            group['expense_cents'] += record['amount_cents']
-            group['net_cents'] -= record['amount_cents']
+        # Income/expense sums now represent *net gains/losses*, not
+        # gross cash received/spent. Thus sums reconcile to every visible +/-.
+        net = record['net_cents']
+        group['net_cents'] += net
+        if net > 0:
+            group['income_cents'] += net
+        elif net < 0:
+            group['expense_cents'] -= net
 
     if flow != 'all':
         operations = [r for r in operations if r['type'] == flow]
@@ -248,5 +248,5 @@ async def demo_finance(redis, uid, ledger, *, page=0, period='all',
         'unknown_time_rows': omitted_unknown_times,
         'invalid_rows': invalid_rows,
         'time_note': 'Дата старого шага может соответствовать окончанию цикла, а не точному времени ставки.',
-        'basis': 'Только записанные виртуальные ставки и выплаты; сбросы DEMO не учитываются.',
+        'basis': 'Одна ставка — один итог: выплата минус ставка. Сбросы DEMO не учитываются.',
     }

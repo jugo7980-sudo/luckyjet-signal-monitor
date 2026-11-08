@@ -165,13 +165,13 @@ def test_dedup_reset_archived_history_and_finance_no_reset_incomes():
         await DemoPersistence().restore(redis,restored)
         assert restored[42].recovery_history == ledger.recovery_history
         before = await demo_finance(redis,42,restored[42])
-        assert before['total'] == 3
+        assert before['total'] == 2
         assert before['totals'][0]['net_cents'] >= 15000
         restored[42].reset(currency='RUB', balance_cents=10000000,
                            base_stake_cents=10000)
         await store.save(redis,42,restored[42])
         after = await demo_finance(redis,42,restored[42])
-        assert after['total'] == 3
+        assert after['total'] == 2
         assert after['totals'] == before['totals']
         assert await redis.zcard(ARCHIVE_CYCLES+'42') == 1
         assert restored[42].recovery_streak.enabled

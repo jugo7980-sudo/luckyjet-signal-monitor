@@ -79,7 +79,9 @@ def test_v05_compact_refresh_summary_and_throttled_polling():
             assert await page.locator('#page-home > #refresh-data').count() == 0
             await page.wait_for_function("document.querySelector('#summary-heading').textContent.includes('150 раундов')")
             await page.wait_for_function("document.querySelectorAll('#coef-grid .coef').length === 7")
-            assert 'Обновлено:' in await page.locator('#live-status').inner_text()
+            assert 'Обновлено:' in (await page.locator('#live-status').text_content())
+            assert await page.locator('#live-status').evaluate(
+                "(n) => n.closest('.home-freshness-row') !== null")
             await page.wait_for_function("document.querySelector('#refresh-data').dataset.state==='idle'")
             # Inspect the synchronous click handler before the 70ms mocked
             # response can complete. Waiting separately for the transient

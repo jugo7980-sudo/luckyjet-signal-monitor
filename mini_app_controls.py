@@ -78,6 +78,7 @@ async def _seed_high_gap(redis, ledger):
         return False
     events = await redis.xrevrange('luckyjet:archive:v1:events', max=cursor, count=20000)
     elapsed = 0
+    after_anchor = []  # newest first; only the first waiting window is filtered
     for stream_id, fields in events:
         kind = str(fields.get('type', ''))
         if kind in {'gap', 'baseline'}:
@@ -91,6 +92,13 @@ async def _seed_high_gap(redis, ledger):
         if not coefficient.is_finite() or coefficient < 1:
             break
         if coefficient > ledger.high_gap.reference:
+            strategy = ledger.high_gap
+            window = after_anchor[-strategy.wait_rounds:] if strategy.wait_rounds else []
+            matching = sum(c > strategy.filter_threshold for c in window)
+            if strategy.filter_enabled and matching >= strategy.filter_limit:
+                # The latest anchor was invalidated. Never resurrect an older one.
+                strategy.filter_rejected = True
+                return False
             observed = fields.get('observed_at', '')
             try:
                 at = datetime.fromtimestamp(int(observed) / 1000, timezone.utc).isoformat()
@@ -99,9 +107,10 @@ async def _seed_high_gap(redis, ledger):
             ledger.high_gap.arm_from_source(
                 round_id=fields.get('round_id', ''),
                 coefficient=coefficient, elapsed=elapsed,
-                observed_at=at,
+                observed_at=at, filter_count=matching if strategy.filter_enabled else 0,
             )
             return True
+        after_anchor.append(coefficient)
         elapsed += 1
     return False
 
@@ -193,7 +202,9 @@ async def controls(authorization, gate, token, method='GET', body=None):
                 await _seed_high_gap(gate.redis, ledger)
             await gate._persist_demo(uid)
         elif action == 'high_gap_config':
-            if not isinstance(value, dict) or set(value) != {'reference', 'wait_rounds', 'target', 'stake'}:
+            base_fields = {'reference', 'wait_rounds', 'target', 'stake'}
+            filter_fields = {'filter_enabled', 'filter_threshold', 'filter_limit'}
+            if not isinstance(value, dict) or set(value) not in (base_fields, base_fields | filter_fields):
                 return json_response('400 Bad Request', {
                     'error': 'Укажи порог, число раундов, автовывод и сумму.',
                 })
@@ -212,6 +223,9 @@ async def controls(authorization, gate, token, method='GET', body=None):
             if not ledger.high_gap.configure(
                 reference, wait, target, stake,
                 min_stake=ledger.minimum_stake_cents,
+                filter_enabled=value.get('filter_enabled'),
+                filter_threshold=value.get('filter_threshold'),
+                filter_limit=value.get('filter_limit'),
             ):
                 return json_response('409 Conflict', {
                     'error': 'Некорректные параметры или активный цикл. Дождись завершения.',

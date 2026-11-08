@@ -434,10 +434,14 @@ def test_safe_one_and_ten_are_valid_and_checked_before_next_bet():
 def test_safe_configuration_rejects_bad_values_and_keeps_current_settings():
     ledger = new_ledger(safe=2)
     st = ledger.recovery_streak
-    for invalid in (-1, 11, True, None, 1.5, '2'):
+    for invalid in (-1, 11, True, 1.5, '2'):
         assert not st.configure(target='1.33',trigger=5,stake_cents=1000*100,
                                 currency='KRW',safe_losses=invalid)
         assert st.safe_losses == 2
+    # None means an older client omitted the new optional field: retain cap.
+    assert st.configure(target='1.33',trigger=5,stake_cents=1000*100,
+                        currency='KRW',safe_losses=None)
+    assert st.safe_losses == 2
     assert st.configure(target='1.33',trigger=5,stake_cents=1000*100,
                         currency='KRW',safe_losses=0)
     assert st.safe_losses == 0

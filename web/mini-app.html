@@ -818,6 +818,31 @@ button:active:not(:disabled){transform:scale(.985)}
 #page-history .demo-history-choice-label small{font-size:11px;color:#c7b5d9;line-height:1.3}
 #page-history .demo-history-chevron{color:#c6a7e8;font-size:20px;flex:none}
 #page-history .demo-history-choice:focus-visible{outline:2px solid #bc91ef;outline-offset:2px}
+/* v0.2.23: cashflow page is nested in DEMO; keep the established dark UI. */
+#page-history .history-finance-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:9px 0 12px}
+#page-history .history-finance-filter{display:flex;flex-direction:column;min-width:0;gap:5px;color:#baa8ce;font-size:11px;font-weight:600}
+#page-history .history-finance-filter select,
+#page-history .history-finance-filter input{width:100%;max-width:100%;min-height:42px;padding:8px 10px;border-radius:10px;background:#241b32;color:#e6d9ef;border:1px solid #594168;font-size:12px}
+#page-history .history-finance-summaries{display:grid;gap:9px;margin:10px 0 14px}
+#page-history .history-finance-summary{padding:12px 13px;border-radius:13px;background:#291f39;border:1px solid #493658;display:grid;gap:8px}
+#page-history .history-finance-summary>strong{font-size:13px;color:#e9d8fc}
+#page-history .history-finance-summary-row{display:flex;gap:8px;align-items:center;justify-content:space-between;font-size:12px;min-width:0}
+#page-history .history-finance-summary-row span{color:#b7a4ca}
+#page-history .history-finance-summary-row strong{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+#page-history .history-finance-income{color:#9ae0b7!important}
+#page-history .history-finance-expense{color:#f3a2ad!important}
+#page-history .history-finance-entry{border:1px solid #483656;border-radius:11px;background:#251c34;margin:5px 0;overflow:hidden}
+#page-history .history-finance-entry-head{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px;min-height:54px}
+#page-history .history-finance-entry-head::-webkit-details-marker{display:none}
+#page-history .history-finance-entry-label{min-width:0;display:flex;flex-direction:column;gap:4px}
+#page-history .history-finance-entry-label strong{font-size:12px;line-height:1.3}
+#page-history .history-finance-entry-label small{font-size:10px;color:#b7a7c7;line-height:1.3}
+#page-history .history-finance-entry-head>strong{white-space:nowrap;font-size:12px;text-align:right;font-variant-numeric:tabular-nums}
+#page-history .history-finance-entry-body{padding:7px 10px 10px;border-top:1px solid #483656}
+#page-history .history-finance-detail{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:5px 0;font-size:11px;line-height:1.4}
+#page-history .history-finance-detail span{color:#b9a9c8}
+#page-history .history-finance-detail strong{font-weight:550;text-align:right;overflow-wrap:anywhere;min-width:0}
+#page-history .history-finance-entry-head:focus-visible{outline:2px solid #ac7bd6;outline-offset:-2px}
 /* v0.2.22: independent third strategy and settings share existing disclosure design. */
 #page-demo #target-streak-panel .control-row input,#page-demo #target-streak-panel .control-row select{border-color:#57416e!important}
 #page-demo #demo-target-accordion .summary-preview{font-size:11px;line-height:1.4}

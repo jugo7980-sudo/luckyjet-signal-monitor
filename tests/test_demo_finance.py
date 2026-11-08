@@ -1,4 +1,4 @@
-"""DEMO cashflow history: gross credit/debit math, archived reset and 3 strategies."""
+"""DEMO cashflow history: one actual signed net result for each virtual bet."""
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
@@ -79,43 +79,48 @@ def test_three_strategies_exact_incomes_expenses_and_stable_archive_after_reset(
         code, data = await query(gate)
         assert code == '200 OK'
         assert data['view'] == 'demo_finance'
-        assert data['total'] == 8  # five wagers + three gross cashouts
-        assert len({op['id'] for op in data['items']}) == 8
+        assert data['total'] == 5  # five wagers; every cashout belongs to its stake
+        assert len({op['id'] for op in data['items']}) == 5
         assert {op['strategy'] for op in data['items']} == {
             'classic', 'high_gap', 'target_streak'}
         assert all(op['type'] in ('income', 'expense') for op in data['items'])
         totals = {t['currency']: t for t in data['totals']}
-        assert totals['USD']['income_cents'] == 7000
-        assert totals['USD']['expense_cents'] == 5000
+        assert totals['USD']['income_cents'] == 3000
+        assert totals['USD']['expense_cents'] == 1000
         assert totals['USD']['net_cents'] == 2000
-        assert totals['KRW']['income_cents'] == 82700
-        assert totals['KRW']['expense_cents'] == 67700
+        assert totals['KRW']['income_cents'] == 30000
+        assert totals['KRW']['expense_cents'] == 15000
         assert totals['KRW']['net_cents'] == 15000
-        # A payout is gross, including the returned wager. A 1.57 payout is
-        # NOT counted again as a separate profit.
-        assert next(op for op in data['items']
-                    if op['strategy'] == 'target_streak'
-                    and op['type'] == 'income')['amount_cents'] == 82700
+        # The gross x1.57 cashout includes the staked money. One wager,
+        # one +30000 net result, while original stake/payout remain details.
+        win = next(op for op in data['items']
+                   if op['strategy'] == 'target_streak' and op['type'] == 'income')
+        assert win['amount_cents'] == 30000
+        assert win['net_cents'] == 30000
+        assert win['stake_cents'] == 52700
+        assert win['payout_cents'] == 82700
+        assert win['balance_before_cents'] == 9985000
+        assert win['balance_after_cents'] == 10015000
         assert all(op['time_exact'] for op in data['items'])
 
         _, filtered = await query(gate, strategy='target_streak', flow='income')
         assert filtered['total'] == 1
-        assert filtered['items'][0]['amount_cents'] == 82700
+        assert filtered['items'][0]['amount_cents'] == 30000
         assert filtered['totals'][0]['net_cents'] == 15000  # flow does not change net
 
         _, expenses = await query(gate, flow='expense')
-        assert expenses['total'] == 5
+        assert expenses['total'] == 2
         assert all(op['type'] == 'expense' for op in expenses['items'])
         _, scoped = await query(gate, period='day', day=now.astimezone(
             timezone(timedelta(hours=10))).date().isoformat())
-        assert scoped['total'] == 8
+        assert scoped['total'] == 5
 
         # Reset DEMO is NOT income, expense or a new zero-sum transaction.
         ledger.reset(currency='RUB', balance_cents=5000000,
                      base_stake_cents=10000, reset_revision='new-reset')
         await gate._demo_storage.save(redis, 42, ledger)
         _, after_reset = await query(gate)
-        assert after_reset['total'] == 8
+        assert after_reset['total'] == 5
         assert after_reset['totals'] == data['totals']
         assert await redis.zcard(ARCHIVE_CYCLES + '42') == 3
         _, isolated = await query(gate, uid=43)
@@ -139,15 +144,19 @@ def test_older_cycle_marks_unknown_round_time_and_preserves_balance_explanations
         await gate._demo_storage.save(gate.redis, 42, gate.demo_ledgers[42])
         status, data = await query(gate)
         assert status == '200 OK'
-        assert data['total'] == 3
+        assert data['total'] == 2
         assert all(not op['time_exact'] for op in data['items'])
         assert all(op['time_basis'] == 'cycle_completion' for op in data['items'])
-        stake = next(op for op in data['items'] if op['step'] == 2 and op['type'] == 'expense')
-        payout = next(op for op in data['items'] if op['step'] == 2 and op['type'] == 'income')
-        assert stake['balance_before_cents'] == 99000
-        assert stake['balance_after_cents'] == 97000
-        assert payout['balance_before_cents'] == 97000
-        assert payout['balance_after_cents'] == 101000
+        win = next(op for op in data['items'] if op['step'] == 2)
+        loss = next(op for op in data['items'] if op['step'] == 1)
+        assert win['type'] == 'income' and win['net_cents'] == 2000
+        assert win['amount_cents'] == 2000
+        assert win['stake_cents'] == 2000 and win['payout_cents'] == 4000
+        assert win['balance_before_cents'] == 99000
+        assert win['balance_after_cents'] == 101000
+        assert loss['type'] == 'expense' and loss['net_cents'] == -1000
+        assert loss['balance_before_cents'] == 100000
+        assert loss['balance_after_cents'] == 99000
         await gate.close()
     asyncio.run(run())
 
@@ -199,12 +208,12 @@ def test_cashflow_pages_are_disjoint_and_totals_cover_full_selection():
         _, first = await query(gate, page=0)
         _, second = await query(gate, page=1)
         assert first['page_size'] == 40
-        assert first['total'] == second['total'] == 46
-        assert len(first['items']) == 40 and len(second['items']) == 6
+        assert first['total'] == second['total'] == 45
+        assert len(first['items']) == 40 and len(second['items']) == 5
         assert not ({x['id'] for x in first['items']} & {x['id'] for x in second['items']})
         assert first['totals'] == second['totals']
-        assert first['totals'][0]['income_cents'] == 46000
-        assert first['totals'][0]['expense_cents'] == 45000
+        assert first['totals'][0]['income_cents'] == 45000
+        assert first['totals'][0]['expense_cents'] == 44000
         assert first['totals'][0]['net_cents'] == 1000
         await gate.close()
     asyncio.run(run())
@@ -226,5 +235,80 @@ def test_invalid_finance_queries_are_rejected_without_mutation():
         ):
             status, _, _ = await history(signed(42), gate, 'fixture', text)
             assert status == '400 Bad Request', text
+        await gate.close()
+    asyncio.run(run())
+
+
+
+def test_single_net_entry_matches_visible_5000_x137_example():
+    """One result is +1 850 ₩, not -5 000 ₩ plus +6 850 ₩."""
+    async def run():
+        now = datetime.now(UTC)
+        gate = ReliableTelegramPasswordGate(None)
+        gate.redis = FakeRedis(decode_responses=True)
+        gate.authorized.add(42)
+        cycle = make_cycle('target_streak', 'KRW', [
+            {'round_id': 'winning-round', 'observed_at': now.isoformat(),
+             'coefficient': '1.37', 'stake_cents': 500000,
+             'payout_cents': 685000, 'balance_after_cents': 8485500}
+        ], now, target='1.37')
+        gate.demo_ledgers[42] = DemoLedger(currency='KRW', target_history=[cycle])
+        await gate._demo_storage.save(gate.redis, 42, gate.demo_ledgers[42])
+        status, data = await query(gate)
+        assert status == '200 OK'
+        assert data['total'] == 1
+        op = data['items'][0]
+        assert (op['type'], op['net_cents'], op['amount_cents']) == (
+            'income', 185000, 185000)
+        assert op['stake_cents'] == 500000 and op['payout_cents'] == 685000
+        assert op['balance_before_cents'] == 8300500
+        assert op['balance_after_cents'] == 8485500
+        assert data['totals'][0]['income_cents'] == 185000
+        assert data['totals'][0]['expense_cents'] == 0
+        await gate.close()
+    asyncio.run(run())
+
+
+def test_four_strategies_positive_negative_even_and_filter_behavior():
+    async def run():
+        now = datetime.now(UTC)
+        gate = ReliableTelegramPasswordGate(None)
+        gate.redis = FakeRedis(decode_responses=True)
+        gate.authorized.add(42)
+        # KRW: +150 (#1), -100 (#2), +1850 (#3), -150 (#4)
+        cycles = {
+            'classic': make_cycle('classic', 'KRW', [
+                row(1, now, 15000, 30000, 10015000)], now),
+            'high_gap': make_cycle('high_gap', 'KRW', [
+                row(2, now, 10000, 0, 10005000)], now),
+            'target_streak': make_cycle('target_streak', 'KRW', [
+                row(3, now, 500000, 685000, 10190000)], now, target='1.37'),
+            'recovery_streak': make_cycle('recovery_streak', 'KRW', [
+                row(4, now, 15000, 0, 10175000),
+                row(5, now, 15000, 15000, 10175000)], now, target='1.32'),
+        }
+        ledger = DemoLedger(currency='KRW', history=[cycles['classic']],
+                            high_history=[cycles['high_gap']],
+                            target_history=[cycles['target_streak']],
+                            recovery_history=[cycles['recovery_streak']])
+        gate.demo_ledgers[42] = ledger
+        await gate._demo_storage.save(gate.redis, 42, ledger)
+        _, results = await query(gate)
+        assert results['total'] == 5
+        assert {op['strategy'] for op in results['items']} == set(cycles)
+        assert len({op['id'] for op in results['items']}) == 5
+        assert {op['type'] for op in results['items']} == {'income','expense','even'}
+        assert all(op['net_cents'] == op['payout_cents'] - op['stake_cents']
+                   for op in results['items'])
+        assert results['totals'][0]['income_cents'] == (150 + 1850)*100
+        assert results['totals'][0]['expense_cents'] == (100 + 150)*100
+        assert results['totals'][0]['net_cents'] == 1750*100
+        _, plus = await query(gate, flow='income')
+        _, minus = await query(gate, flow='expense')
+        assert plus['total'] == 2 and minus['total'] == 2
+        assert results['totals'] == plus['totals'] == minus['totals']
+        _, only_four = await query(gate, strategy='recovery_streak')
+        assert only_four['total'] == 2
+        assert only_four['totals'][0]['net_cents'] == -150*100
         await gate.close()
     asyncio.run(run())

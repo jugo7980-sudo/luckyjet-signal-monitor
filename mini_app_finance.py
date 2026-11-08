@@ -176,7 +176,7 @@ async def demo_finance(redis, uid, ledger, *, page=0, period='all',
             except (TypeError, ValueError, OverflowError):
                 invalid_rows += 1
                 continue
-            if stake < 0 or payout < 0 or (stake == 0 and payout == 0):
+            if stake <= 0 or payout < 0:
                 invalid_rows += 1
                 continue
             base = {

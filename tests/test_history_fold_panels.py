@@ -121,12 +121,16 @@ def test_mobile_history_folded_strategy_stats_full_long_cycle_distribution_and_a
                 outcome = page.locator('#history-cycle-outcome')
                 params = page.locator('#history-cycle-params')
                 await expect(steps).to_be_visible()
-                assert await steps.locator('.history-metric').count() == 92
+                assert await steps.locator('.history-metric').count() == 10
+                assert 'последний: шаг 92' in await steps.locator('summary').inner_text()
                 assert not await steps.locator('.history-metric').first.is_visible()
                 assert await page.locator('.history-fold-steps').count() == 1
                 assert await page.locator('#history-cycle-steps .history-fold').count() == 0
                 await steps.locator('summary').click()
-                await expect(steps.locator('.history-metric').nth(91)).to_be_visible()
+                await expect(steps.locator('.history-metric').first).to_contain_text('Шаг 92')
+                await steps.locator('.history-step-more').click()
+                await expect(steps.locator('.history-metric')).to_have_count(92)
+                await expect(steps.locator('.history-metric').last).to_contain_text('Шаг 1')
                 await outcome.locator('summary').click()
                 await expect(steps).not_to_have_attribute('open', '')
                 await expect(outcome).to_have_attribute('open', '')

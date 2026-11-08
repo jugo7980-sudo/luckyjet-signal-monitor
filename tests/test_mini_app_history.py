@@ -300,3 +300,135 @@ def test_history_static_asset_and_mobile_flow():
                     'cycle', 'max_steps'} <= set(calls)
             await browser.close()
     asyncio.run(run())
+
+
+def test_latest_step_first_compact_all_steps_and_archive_all_four_strategies():
+    """The four DEMO journals and immutable archive show newest step without scrolling."""
+    from playwright.async_api import async_playwright, expect
+    from urllib.parse import parse_qs, urlparse
+
+    rounds = [{'coefficient': '1.20', 'stake_cents': 15000,
+               'payout_cents': 0, 'round_id': 'r' + str(i)}
+              for i in range(1, 99)]
+    rounds.append({'coefficient': '2.00', 'stake_cents': 15000,
+                   'payout_cents': 30000, 'round_id': 'r99'})
+    strategies = {'cycles': 'classic', 'high_cycles': 'high_gap',
+                  'target_cycles': 'target_streak', 'recovery_cycles': 'recovery_streak'}
+    reverse_strategy = {'cycle': 'classic', 'high_cycle': 'high_gap',
+                        'target_cycle': 'target_streak', 'recovery_cycle': 'recovery_streak'}
+    detail = {'index': 0, 'id': 'cycle-99', 'currency': 'KRW',
+              'started_at': '2026-11-09T01:00:00Z',
+              'ended_at': '2026-11-09T02:00:00Z',
+              'outcome': 'recovered', 'net_cents': -1455000,
+              'balance_before_cents': 20000000, 'balance_after_cents': 18545000,
+              'payout_cents': 30000, 'total_stake_cents': 1485000,
+              'base_stake_cents': 15000, 'rounds': rounds, 'steps': 99}
+
+    async def run():
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={'width': 390, 'height': 844})
+            errors, calls = [], []
+            page.on('pageerror', lambda e: errors.append(str(e)))
+
+            async def route(request):
+                url = request.request.url
+                if url.endswith('/access.js'):
+                    await request.fulfill(content_type='application/javascript',
+                        body="window.accessState={premium:true,registered:true,username:'tester'};"
+                             "document.body.dataset.access='premium';"
+                             "window.canUsePremium=()=>true;window.refreshAccessOverview?.();")
+                elif urlparse(url).path in ('/history.js', '/summary.js'):
+                    await request.fulfill(content_type='application/javascript',
+                        body=response(urlparse(url).path)[2])
+                elif urlparse(url).path == '/app':
+                    await request.fulfill(content_type='text/html', body=response('/app')[2])
+                elif urlparse(url).path == '/api/history':
+                    view = parse_qs(urlparse(url).query).get('view', ['days'])[0]
+                    calls.append(view)
+                    data = {'view': view, 'total': 1, 'page': 0}
+                    if view == 'days':
+                        data['days'] = [DAY]
+                    elif view in strategies:
+                        data['stats'] = {'currency': 'KRW', 'total': 1, 'maximum': 100,
+                            'recovered': 1, 'lost': 0, 'incomplete': 0,
+                            'stopped': 0, 'history_net_cents': -1455000, 'average_steps': 99}
+                        data['items'] = [{**detail, 'strategy': strategies[view], 'rounds': []}]
+                    elif view in reverse_strategy:
+                        data['item'] = {**detail, 'strategy': reverse_strategy[view]}
+                    elif view == 'archive_cycles':
+                        data['items'] = [{**detail, 'strategy': 'recovery_streak', 'rounds': []}]
+                    elif view == 'archive_cycle':
+                        data['item'] = {**detail, 'strategy': 'recovery_streak'}
+                    elif view == 'archive_days':
+                        data['days'] = [DAY]
+                    else:
+                        data['items'] = []
+                    await request.fulfill(content_type='application/json', body=json.dumps(data))
+                elif urlparse(url).path == '/api/overview':
+                    await request.fulfill(content_type='application/json',
+                        body='{"coefficients":[],"last_round_at":null}')
+                else:
+                    await request.fulfill(content_type='application/javascript',
+                        body="window.Telegram={WebApp:{initData:'fixture',ready(){},expand(){},"
+                             "setHeaderColor(){},setBackgroundColor(){},close(){},"
+                             "BackButton:{onClick(){},hide(){},show(){}},"
+                             "HapticFeedback:{selectionChanged(){}}}}")
+
+            await page.route('**/*', route)
+            await page.goto('https://example.test/app')
+            await page.locator('nav [data-tab=history]').click()
+
+            async def assert_steps():
+                fold = page.locator('#history-cycle-steps')
+                await expect(fold).to_be_visible()
+                preview = fold.locator('summary .history-fold-label small')
+                await expect(preview).to_contain_text('99 записей')
+                await expect(preview).to_contain_text('последний: шаг 99')
+                await expect(preview).to_contain_text('2.00x')
+                # Even while collapsed, the latest action and its actual net
+                # must be visible in the compact summary.
+                assert '+' in await preview.inner_text()
+                await fold.locator('summary').click()
+                entries = fold.locator('.history-steps-list .history-metric')
+                await expect(entries).to_have_count(10)
+                await expect(entries.first).to_contain_text('Шаг 99 ·')
+                await expect(entries.last).to_contain_text('Шаг 90 ·')
+                await expect(fold.locator('.history-step-more')).to_have_text(
+                    'Показать все 99 шагов')
+                await fold.locator('.history-step-more').click()
+                await expect(entries).to_have_count(99)
+                await expect(entries.first).to_contain_text('Шаг 99 ·')
+                await expect(entries.last).to_contain_text('Шаг 1 ·')
+                await expect(fold.locator('.history-step-latest')).to_be_visible()
+                await fold.locator('.history-step-latest').click()
+                assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                await fold.locator('.history-step-more').click()
+                await expect(entries).to_have_count(10)
+                await expect(fold.locator('.history-step-latest')).to_be_hidden()
+
+            for number, (list_view, detail_view) in enumerate([
+                ('cycles', 'cycle'), ('high_cycles', 'high_cycle'),
+                ('target_cycles', 'target_cycle'), ('recovery_cycles', 'recovery_cycle')], 1):
+                await page.evaluate('(number) => window.openStrategyHistory(number)', number)
+                await expect(page.locator('#history-demo-cycles')).to_be_visible()
+                await page.locator('#history-demo-cycles > summary').click()
+                await page.locator('#history-demo-cycles .history-item').first.click()
+                await expect(page.locator('#history-cycle-steps')).to_be_visible()
+                await assert_steps()
+                assert list_view in calls and detail_view in calls
+
+            # An archived cycle uses the same renderer but never edits archive.
+            await page.locator('[data-history-view=days]').click()
+            await page.locator('#history-management > summary').click()
+            await page.locator('#history-archive').click()
+            await page.locator('[data-archive-view=archive_cycles]').click()
+            await expect(page.locator('#history-archive-cycles')).to_be_visible()
+            await page.locator('#history-archive-cycles > summary').click()
+            await page.locator('#history-archive-cycles .history-item').first.click()
+            await assert_steps()
+            assert 'archive_cycle' in calls
+            assert not errors, errors
+            await browser.close()
+
+    asyncio.run(run())

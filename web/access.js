@@ -65,7 +65,7 @@
       explanation.textContent = 'Полный доступ к сводке, истории, DEMO и настройкам открыт.';
     } else if (data.registered) {
       headline.textContent = 'Активировать Premium';
-      explanation.textContent = 'Введи ключ доступа для открытия сводки, истории и всех функций.';
+      explanation.textContent = 'Введи Premium-ключ или пароль доступа к Telegram-боту.';
     } else {
       headline.textContent = 'Войти через Telegram';
       explanation.textContent = 'Зарегистрируйся через Telegram, затем активируй ключ Premium.';

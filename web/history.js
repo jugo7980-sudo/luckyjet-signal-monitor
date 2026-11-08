@@ -228,7 +228,7 @@
     if (s.view_reset) note('Показаны циклы после сброса вкладки. Фактический архив сохранён.');
     info('Валюта', currency);
     info('Всего сессий', s.total);
-    info('Успешных', s.recovered);
+    info(openDemoStrategy === 'recovery_streak' ? 'Цель X достигнута' : 'Успешных', s.recovered);
     info('Проигрышных', s.lost);
     info('Неполных', s.incomplete);
     info('Остановленных', s.stopped);
@@ -794,7 +794,9 @@
         (c.rounds || []).forEach((r, i) => {
           const amount = r.payout_cents ? Number(r.payout_cents) - Number(r.stake_cents)
             : -Number(r.stake_cents);
-          info('Шаг ' + (i + 1) + ' · ' + r.coefficient + 'x', signedMoney(amount));
+          info('Шаг ' + (i + 1) + ' · ' +
+            (c.strategy === 'recovery_streak' ? 'ставка ' + money(r.stake_cents) + ' · ' : '') +
+            r.coefficient + 'x', signedMoney(amount));
         });
         foldFrom(stepsStart, 'Пошаговые ставки', (c.rounds || []).length +
           ' записей · открыть полный список', 'history-cycle-steps', 'history-cycle-sections', true);

@@ -133,3 +133,69 @@ def test_browser_telegram_login_session_cookie(monkeypatch):
         gate.redis = None
         await gate.close()
     asyncio.run(run())
+
+
+def test_premium_accepts_existing_bot_password_or_original_premium_key(monkeypatch):
+    """Both existing credentials grant the SAME authorized membership, not a new role."""
+    monkeypatch.setenv('MINI_APP_PREMIUM_KEY', 'premium-secret-012')
+    async def run():
+        gate = ReliableTelegramPasswordGate(None, password='bot-secret-abc')
+        gate.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        async def call(uid, action, **kwargs):
+            return decode(await access(signed(uid=uid), '', gate, 'fixture',
+                'POST', json.dumps({'action':action, **kwargs}).encode()))
+        for uid in (42, 43):
+            code, data = await call(uid, 'register')
+            assert code == '200 OK' and data['registered'] and not data['premium']
+
+        # Original Premium key still works after the change.
+        code, data = await call(42,'premium',key='premium-secret-012')
+        assert code == '200 OK' and data['premium']
+        # Previously valid Telegram /start password now works in the site too.
+        code, data = await call(43,'premium',key='bot-secret-abc')
+        assert code == '200 OK' and data['premium']
+        assert gate.authorized == {42,43}
+        assert await gate.redis.smembers('luckyjet:authorized_users') == {'42','43'}
+        assert await gate.redis.get('luckyjet:premium_attempts:43') is None
+        await gate.redis.aclose()
+        gate.redis = None
+        await gate.close()
+    asyncio.run(run())
+
+
+def test_bot_password_fallback_keeps_invalid_attempt_limit_and_block_checks(monkeypatch):
+    monkeypatch.setenv('MINI_APP_PREMIUM_KEY', 'premium-only')
+    async def run():
+        gate = ReliableTelegramPasswordGate(None, password='bot-secret-abc')
+        gate.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        async def call(uid, action, key=None):
+            payload={'action':action}
+            if key is not None: payload['key']=key
+            return decode(await access(signed(uid=uid),'',gate,'fixture',
+                'POST',json.dumps(payload).encode()))
+        code,_=await call(42,'premium','bot-secret-abc')
+        assert code=='403 Forbidden'  # still requires registration
+        code,_=await call(42,'register')
+        assert code=='200 OK'
+        for _ in range(5):
+            code,data=await call(42,'premium','bad-secret')
+            assert code=='403 Forbidden' and data['error']=='Неверный ключ доступа.'
+        assert (await call(42,'premium','bot-secret-abc'))[0]=='429 Too Many Requests'
+        await gate.redis.delete('luckyjet:premium_attempts:42')
+        gate.blocked.add(42)
+        assert (await call(42,'premium','bot-secret-abc'))[0]=='403 Forbidden'
+        gate.blocked.discard(42)
+        assert (await call(42,'premium','bot-secret-abc'))[0]=='200 OK'
+
+        # No secret configured -> fail closed rather than silently unlock.
+        gate.authorized.clear()
+        gate.password=''
+        monkeypatch.delenv('MINI_APP_PREMIUM_KEY')
+        assert (await call(42,'premium','anything'))[0]=='503 Service Unavailable'
+        # Bot password alone works, even if the second key was not configured.
+        gate.password='bot-secret-abc'
+        assert (await call(42,'premium','bot-secret-abc'))[0]=='200 OK'
+        await gate.redis.aclose()
+        gate.redis=None
+        await gate.close()
+    asyncio.run(run())

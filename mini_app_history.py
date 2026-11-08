@@ -90,6 +90,10 @@ def _cycle(entry, index, detailed=False):
         'reference_threshold': entry.get('reference_threshold'),
         'reference_coefficient': entry.get('reference_coefficient'),
         'wait_rounds': entry.get('wait_rounds'),
+        'bets_limit': entry.get('bets_limit'),
+        'active_filter_threshold': entry.get('active_filter_threshold'),
+        'active_filter_window': entry.get('active_filter_window'),
+        'active_filter_limit': entry.get('active_filter_limit'),
         'trigger_streak': entry.get('trigger_streak'),
     }
     if detailed:
@@ -106,13 +110,15 @@ def _cycle(entry, index, detailed=False):
 def _demo_stats(ledger, records=None):
     records = list(ledger.history if records is None else records)
     valid = [r for r in records if r.get('outcome') in
-             {'recovered', 'insufficient_balance', 'safe_limit'} and r.get('net_cents') is not None]
+             {'recovered', 'insufficient_balance', 'safe_limit',
+              'bet_limit', 'active_filter_limit'} and r.get('net_cents') is not None]
     return {
         'currency': ledger.currency,
         'total': len(records),
         'maximum': MAX_HISTORY,
         'recovered': sum(r.get('outcome') == 'recovered' for r in records),
-        'lost': sum(r.get('outcome') in {'insufficient_balance', 'safe_limit'} for r in records),
+        'lost': sum(r.get('outcome') in {'insufficient_balance', 'safe_limit',
+                 'bet_limit', 'active_filter_limit'} for r in records),
         'incomplete': sum(r.get('outcome') == 'incomplete_data' for r in records),
         'stopped': sum(r.get('outcome') == 'stopped_by_user' for r in records),
         'since_reset_cents': ledger.balance_cents - ledger.initial_balance_cents,

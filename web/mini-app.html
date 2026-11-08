@@ -743,7 +743,7 @@ button:active:not(:disabled){transform:scale(.985)}
 #page-history .history-item-label small{font-size:11px}
 #page-history #history-management{margin:8px 0}
 @media(max-width:350px){.topbar .top-balance strong{font-size:11px}#page-demo .demo-secondary-controls>details>summary{font-size:10px}#page-home .below-tiles #refresh-data{width:116px}}
-#page-demo #high-gap-filter-enabled{appearance:auto;width:22px!important;min-width:22px!important;max-width:22px!important;height:22px!important;min-height:22px!important;padding:0!important;flex:0 0 22px;accent-color:#bc78f8;cursor:pointer}
+#page-demo #high-gap-filter-enabled,#page-demo #high-gap-bets-limit-enabled,#page-demo #high-gap-active-filter-enabled{appearance:auto;width:22px!important;min-width:22px!important;max-width:22px!important;height:22px!important;min-height:22px!important;padding:0!important;flex:0 0 22px;accent-color:#bc78f8;cursor:pointer}
 /* Unified Strategy 1/2 account-settings rows; no standalone cards or empty spacer. */
 #page-account .settings-group{display:block;margin:0;border:0;border-bottom:1px solid #392c49;border-radius:0;background:transparent;box-shadow:none;overflow:visible}
 #page-account .settings-group>summary{display:flex;align-items:center;gap:7px;min-height:52px;margin:0;padding:0 3px;list-style:none;font-size:13px;font-weight:650;color:#eee4f7;cursor:pointer;user-select:none}
@@ -932,6 +932,14 @@ body:has(#strategy-sheet-backdrop:not([hidden])) nav{z-index:70}
 <div class="control-row"><div class="control-field-caption"><label for="high-gap-filter-limit">Отмена при совпадениях</label><button type="button" class="summary-question" data-summary-help-for="high-gap-filter-limit-hint" aria-label="Сколько совпадений отменяет вход?">?</button><span class="sr-only" id="high-gap-filter-limit-hint">Достигнутое количество значений строго выше контрольного X отменяет первую ставку. Допустимо любое положительное целое число, без верхнего лимита.</span></div><input id="high-gap-filter-limit" type="text" inputmode="numeric" pattern="[0-9]*" value="3" data-control></div>
 <div class="control-row"><div class="control-field-caption"><label for="high-gap-target">Целевой X</label><button type="button" class="summary-question" data-summary-help-for="high-gap-target-hint" aria-label="Как работает автовывод?">?</button><span class="sr-only" id="high-gap-target-hint">Коэффициент, при котором виртуальная ставка считается выигравшей.</span></div><input id="high-gap-target" type="text" inputmode="decimal" value="100" maxlength="12" data-control></div>
 <div class="control-row"><div class="control-field-caption"><label for="high-gap-stake" id="high-gap-stake-label">Ставка, USD</label><button type="button" class="summary-question" data-summary-help-for="high-gap-stake-hint" aria-label="Что означает фиксированная ставка?">?</button><span class="sr-only" id="high-gap-stake-hint">Одинаковая сумма для каждой ставки. Без удвоений.</span></div><input id="high-gap-stake" type="text" inputmode="decimal" value="10.00" maxlength="18" data-control></div>
+<details class="minimal-disclosure" id="high-gap-session-safety"><summary>Сейв во время ставок <span aria-hidden="true">⌄</span></summary><div class="minimal-disclosure-body">
+<div class="control-row"><label for="high-gap-bets-limit-enabled">Лимит ставок</label><input id="high-gap-bets-limit-enabled" type="checkbox" data-control></div>
+<div class="control-row"><label for="high-gap-bets-limit">Максимум ставок за цикл</label><input id="high-gap-bets-limit" type="number" inputmode="numeric" min="1" max="100000" step="1" value="120" data-control></div>
+<div class="control-row"><label for="high-gap-active-filter-enabled">Фильтр во время ставок</label><input id="high-gap-active-filter-enabled" type="checkbox" data-control></div>
+<div class="control-row"><label for="high-gap-active-filter-window">Проверять последние раунды</label><input id="high-gap-active-filter-window" type="number" inputmode="numeric" min="1" max="100000" step="1" value="50" data-control></div>
+<div class="control-row"><label for="high-gap-active-filter-threshold">Считать X выше</label><input id="high-gap-active-filter-threshold" type="text" inputmode="decimal" maxlength="12" value="10" data-control></div>
+<div class="control-row"><label for="high-gap-active-filter-limit">Остановка при совпадениях</label><input id="high-gap-active-filter-limit" type="number" inputmode="numeric" min="1" max="100000" step="1" value="7" data-control></div>
+</div></details>
 <button type="button" class="history-outline" id="high-gap-save" data-control>Сохранить настройки</button>
 <div class="ui-status-row"><p class="connection" id="high-gap-state">Ожидание данных.</p><button type="button" class="summary-question" data-summary-help-for="high-gap-state-detail" aria-label="Подробный статус стратегии №2">?</button><span id="high-gap-state-detail" class="sr-only">Стратегия ожидает данные.</span></div>
 <p class="connection" id="high-gap-progress"></p>
@@ -986,6 +994,7 @@ body:has(#strategy-sheet-backdrop:not([hidden])) nav{z-index:70}
 <div class="control-row"><span>Порог достигнут</span><button type="button" id="settings-high-threshold" data-control>ВКЛ</button></div>
 <div class="control-row"><span>DEMO запущено</span><button type="button" id="settings-high-betting" data-control>ВКЛ</button></div>
 <div class="control-row"><span>Цель достигнута</span><button type="button" id="settings-high-goal" data-control>ВКЛ</button></div>
+<div class="control-row"><span>Сейв сработал</span><button type="button" id="settings-high-safe" data-control>ВКЛ</button></div>
 <div class="control-row"><span>Звук</span><button type="button" id="settings-high-sound" data-control>ВКЛ</button></div>
 <div class="control-row"><label for="settings-high-delete">Удалять через</label><select id="settings-high-delete" data-control><option value="0">Не удалять</option><option value="10">10 сек</option><option value="30">30 сек</option><option value="60">60 сек</option></select></div>
 <button type="button" class="history-outline settings-test-action" id="settings-high-test" data-control>Проверить уведомление</button>

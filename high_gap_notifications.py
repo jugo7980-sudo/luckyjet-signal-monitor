@@ -5,12 +5,13 @@ This module only classifies persisted state transitions and formats notices.
 """
 from luckyjet_signal.demo_money import format_money
 
-EVENTS = ('reference', 'threshold', 'betting', 'goal')
+EVENTS = ('reference', 'threshold', 'betting', 'goal', 'safe')
 DEFAULT_EVENTS = {
     'reference': False,  # Optional: avoid messages for every new >X anchor.
     'threshold': True,
     'betting': True,
     'goal': True,
+    'safe': True,
 }
 DELETE_DELAYS = (0, 10, 30, 60)
 
@@ -52,6 +53,8 @@ def changed_events(before, after, completed=None):
         notices.append('betting')
     if completed and completed.get('outcome') == 'recovered':
         notices.append('goal')
+    if completed and completed.get('outcome') in ('bet_limit', 'active_filter_limit'):
+        notices.append('safe')
     return notices
 
 
@@ -99,5 +102,19 @@ def format_event(event, high, currency, completed=None):
             f'Сделано ставок: {len(completed.get("rounds") or [])}\n'
             f'Результат цикла: {net_text}\n'
             'Цикл завершён. Ожидание нового опорного X.'
+        )
+    if event == 'safe' and completed:
+        net = completed.get('net_cents')
+        net_text = ('+' if net is not None and net > 0 else '') + (
+            format_money(net, currency) if net is not None else 'неизвестно'
+        )
+        reason = ('лимит ставок' if completed.get('outcome') == 'bet_limit'
+                  else 'фильтр X во время ставок')
+        return (
+            'Стратегия №2 · сейв сработал\n'
+            f'Причина: {reason}\n'
+            f'Ставок: {len(completed.get("rounds") or [])}\n'
+            f'Итог: {net_text}\n'
+            'Стратегия включена. Ожидание нового опорного X.'
         )
     raise ValueError('Unknown Strategy 2 notification event')

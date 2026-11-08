@@ -62,8 +62,14 @@
         filterStatus : 'Нет подтверждённого опорного раунда';
     document.getElementById('high-gap-progress').textContent = progress;
     const money = window.formatDemoMoney;
+    const safetyText = high.active ? [
+      high.bets_limit_enabled ? 'Ставок ' + (high.steps ?? 0) + '/' + (high.bets_limit ?? 120) : '',
+      high.active_filter_enabled ? '>x' + (high.active_filter_threshold || '10') +
+        ' ' + (high.active_filter_count ?? 0) + '/' + (high.active_filter_limit ?? 7) : ''
+    ].filter(Boolean).join(' · ') : '';
     const output = high.steps ? ('Ставок: ' + high.steps + ' · Сумма: ' +
-      money(high.total_stake_cents, currency)) : (high.last_outcome ? 'Последний итог: ' + high.last_outcome : '');
+      money(high.total_stake_cents, currency) + (safetyText ? ' · ' + safetyText : ''))
+      : (high.last_outcome ? 'Последний итог: ' + high.last_outcome : '');
     document.getElementById('high-gap-outcome').textContent =
       (balanceVerified === false ? 'Общий баланс не подтверждён. ' : '') + output;
     document.getElementById('high-gap-state-detail').textContent =
@@ -245,6 +251,10 @@
       'high-gap-wait': high.wait_rounds ?? 100,
       'high-gap-filter-threshold': high.filter_threshold || '10',
       'high-gap-filter-limit': high.filter_limit ?? '3',
+      'high-gap-bets-limit': high.bets_limit ?? 120,
+      'high-gap-active-filter-threshold': high.active_filter_threshold ?? '10',
+      'high-gap-active-filter-window': high.active_filter_window ?? 50,
+      'high-gap-active-filter-limit': high.active_filter_limit ?? 7,
       'high-gap-target': high.target || '100',
       'high-gap-stake': ((high.stake_cents ?? demo.base_stake_cents) / 100)
         .toFixed(demo.currency === 'KRW' ? 0 : 2),
@@ -253,9 +263,13 @@
       const field = document.getElementById(id);
       if (document.activeElement !== field) field.value = String(val);
     }
-    const filterCheckbox = document.getElementById('high-gap-filter-enabled');
-    if (document.activeElement !== filterCheckbox) {
-      filterCheckbox.checked = high.filter_enabled === true;
+    for (const [id, on] of [
+      ['high-gap-filter-enabled', high.filter_enabled],
+      ['high-gap-bets-limit-enabled', high.bets_limit_enabled],
+      ['high-gap-active-filter-enabled', high.active_filter_enabled],
+    ]) {
+      const checkbox = document.getElementById(id);
+      if (document.activeElement !== checkbox) checkbox.checked = on === true;
     }
     const highStakeLabel = document.getElementById('high-gap-stake-label');
     // Keep the help button: do not rebuild the label on every control refresh.
@@ -276,7 +290,7 @@
     document.getElementById('settings-high-enabled').textContent = highEnabled ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-high-sound').textContent = highNotices.sound !== false ? 'ВКЛ' : 'ВЫКЛ';
     document.getElementById('settings-high-delete').value = String(highNotices.delete_delay ?? 10);
-    for (const [name, fallback] of Object.entries({reference:false, threshold:true, betting:true, goal:true})) {
+    for (const [name, fallback] of Object.entries({reference:false, threshold:true, betting:true, goal:true, safe:true})) {
       document.getElementById('settings-high-' + name).textContent =
         (highEvents[name] ?? fallback) ? 'ВКЛ' : 'ВЫКЛ';
     }
@@ -307,7 +321,10 @@
         node.id === 'demo-stake-save' || (node.id === 'demo-toggle' && demo.enabled))
     ) || (high.active && ['high-gap-reference', 'high-gap-wait',
       'high-gap-filter-enabled', 'high-gap-filter-threshold', 'high-gap-filter-limit',
-      'high-gap-target', 'high-gap-stake', 'high-gap-save'].includes(node.id)) ||
+      'high-gap-target', 'high-gap-stake', 'high-gap-save',
+      'high-gap-bets-limit-enabled', 'high-gap-bets-limit',
+      'high-gap-active-filter-enabled', 'high-gap-active-filter-threshold',
+      'high-gap-active-filter-window', 'high-gap-active-filter-limit'].includes(node.id)) ||
       (target.active && ['target-streak-x', 'target-streak-trigger',
         'target-streak-stake', 'target-streak-save'].includes(node.id)) ||
       (recovery.active && ['recovery-streak-x', 'recovery-streak-x-max',
@@ -416,12 +433,29 @@
     const filter_enabled = document.getElementById('high-gap-filter-enabled').checked;
     const filter_threshold = document.getElementById('high-gap-filter-threshold').value.trim();
     const filter_limit = document.getElementById('high-gap-filter-limit').value.trim();
+    const bets_limit_enabled = document.getElementById('high-gap-bets-limit-enabled').checked;
+    const bets_limit_text = document.getElementById('high-gap-bets-limit').value.trim();
+    const active_filter_enabled = document.getElementById('high-gap-active-filter-enabled').checked;
+    const active_filter_threshold = document.getElementById('high-gap-active-filter-threshold').value.trim();
+    const active_filter_window_text = document.getElementById('high-gap-active-filter-window').value.trim();
+    const active_filter_limit_text = document.getElementById('high-gap-active-filter-limit').value.trim();
+    const validInteger = n => /^[0-9]{1,6}$/.test(n) && Number(n) >= 1 && Number(n) <= 100000;
+    const bets_limit = Number(bets_limit_text);
+    const active_filter_window = Number(active_filter_window_text);
+    const active_filter_limit = Number(active_filter_limit_text);
     if (!/^\d{1,6}$/.test(waitText) || !reference || !target || !stake ||
-        !filter_threshold || !/^[0-9]+$/.test(filter_limit) || !/[1-9]/.test(filter_limit)) {
-      message('Проверь коэффициенты, число раундов и фильтр входа.', true); return;
+        !filter_threshold || !/^[0-9]+$/.test(filter_limit) || !/[1-9]/.test(filter_limit) ||
+        !validInteger(bets_limit_text) || !validInteger(active_filter_window_text) ||
+        !validInteger(active_filter_limit_text) ||
+        active_filter_limit > active_filter_window ||
+        !/^\d+(?:[.,]\d{1,2})?$/.test(active_filter_threshold) ||
+        Number(active_filter_threshold.replace(',', '.')) < 1) {
+      message('Проверь параметры входа и сейва стратегии №2.', true); return;
     }
     action('high_gap_config', {reference, wait_rounds: Number(waitText), target, stake,
-      filter_enabled, filter_threshold, filter_limit});
+      filter_enabled, filter_threshold, filter_limit,
+      bets_limit_enabled, bets_limit, active_filter_enabled,
+      active_filter_threshold, active_filter_window, active_filter_limit});
   });
   document.getElementById('target-streak-toggle').addEventListener('click', () =>
     action('target_streak_toggle'));
@@ -512,7 +546,7 @@
   document.getElementById('settings-high-enabled').addEventListener('click', () => action('high_gap_notice_toggle'));
   document.getElementById('settings-high-sound').addEventListener('click', () => action('high_gap_notice_sound'));
   selectAction('settings-high-delete', 'high_gap_notice_delete_delay');
-  for (const event of ['reference','threshold','betting','goal']) {
+  for (const event of ['reference','threshold','betting','goal','safe']) {
     document.getElementById('settings-high-' + event).addEventListener(
       'click', () => action('high_gap_notice_event', event));
   }

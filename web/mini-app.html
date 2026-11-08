@@ -720,10 +720,33 @@ async function loadOverview(manual=false){
    lastCoefficientKey=coefficientKey;
   }
   setText('last-round',data.last_round_at?'Последний раунд: '+vladivostokTime(data.last_round_at*1000)+' · Владивосток':'Ожидаем новый раунд.');
-  if(premium&&data.status){const s=data.status;setText('monitor-state',s.age_seconds==null?'Нет данных':s.fresh?'Активен':'Нет свежих раундов');setText('monitor-last',s.last||'Нет данных');setText('monitor-age',s.age_seconds==null?'Неизвестно':s.age_seconds+' сек. назад');setText('monitor-threshold',(s.streak_count??0)+' из '+s.threshold);setText('monitor-uptime',fmtUptime(s.uptime_seconds))}
+  if(premium&&data.status){
+    const s=data.status;
+    const state=s.age_seconds==null?'Нет данных':s.fresh?'Свежие раунды':'Задержка';
+    setText('monitor-state',state);
+    const led=document.getElementById('monitor-led');
+    led.dataset.state=s.age_seconds==null?'warn':s.fresh?'good':'warn';
+    setText('monitor-header-age',s.age_seconds==null?'—':s.age_seconds+' с');
+    setText('monitor-last',s.last||'Нет данных');
+    setText('monitor-age',s.age_seconds==null?'Неизвестно':s.age_seconds+' сек. назад');
+    setText('monitor-threshold',(s.streak_count??0)+' из '+s.threshold);
+    setText('monitor-uptime',fmtUptime(s.uptime_seconds));
+  }
   if(premium&&data.status&&data.status.probe&&window.showDemoProbe){const key=JSON.stringify(data.status.probe);if(key!==lastProbeKey){window.showDemoProbe(data.status.probe);lastProbeKey=key}}
   if(premium&&data.demo&&demoEpoch===window.demoViewEpoch){
-    setText('demo-balance',money(data.demo.balance_cents,data.demo.currency));setText('demo-enabled',(data.demo.enabled||data.demo.high_gap?.enabled)?'Включено':'Выключено');
+    setText('demo-balance',money(data.demo.balance_cents,data.demo.currency));
+    // Strategy #1 is independent from #2; do not combine their enabled flags.
+    setText('demo-enabled',data.demo.enabled?'Включено':'Выключено');
+    const quality=document.getElementById('demo-quality');
+    const verified=data.demo.balance_verified;
+    quality.textContent=verified===false?'Не подтверждён':verified===true?'По архиву':'Проверка';
+    quality.dataset.state=verified===false?'warn':verified===true?'good':'unknown';
+    setText('demo-quality-help',verified===false
+      ?'Баланс DEMO не подтверждён: при пропусках истории сумма может быть неверной.'
+      :'Виртуальный баланс рассчитан по доступной истории. Полнота всех раундов игрового сайта не гарантируется.');
+    setText('demo-classic-preview',verified===false?'Баланс не подтверждён':
+      data.demo.active?'Активна · шаг '+data.demo.step:
+      data.demo.enabled?'Серия '+(data.demo.low_streak??0)+' из '+data.demo.trigger:'Выключена');
     setText('demo-step',data.demo.active?'Шаг '+data.demo.step:'Ожидает запуска');
     setText('demo-stake',money(data.demo.base_stake_cents,data.demo.currency));setText('demo-trigger',data.demo.trigger+' подряд');
     document.getElementById('live-demo').hidden=false;document.getElementById('demo-placeholder').hidden=true;
@@ -732,11 +755,13 @@ async function loadOverview(manual=false){
   }
   document.getElementById('live-home').hidden=false;
   lastSuccessfulCheck=Date.now();
-  setText('live-status','Проверено: '+vladivostokTime(lastSuccessfulCheck)+' · автообновление от 0,1 с');
+  setText('live-status','Обновлено: '+new Intl.DateTimeFormat('ru-RU',{timeZone:'Asia/Vladivostok',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(lastSuccessfulCheck)));
+  setText('live-status-help','Последний успешный ответ: '+vladivostokTime(lastSuccessfulCheck)+'. Частота автоматической проверки зависит от состояния и активной вкладки. Это не подтверждает полноту истории источника.');
  }catch(error){
   failedPolls=Math.min(failedPolls+1,7);
   if(!allowed){if(window.clearHistoryData)window.clearHistoryData();if(window.clearControlsData)window.clearControlsData();if(window.clearAdminData)window.clearAdminData();if(window.clearSiteData)window.clearSiteData();document.getElementById('live-home').hidden=true;document.getElementById('live-demo').hidden=true;document.getElementById('demo-placeholder').hidden=false;hasData=false;lastCoefficientKey=''}
-  setText('live-status',error.name==='AbortError'?'Нет ответа. Повтори обновление.':error.message);
+  setText('live-status',error.name==='AbortError'?'Нет ответа':'Ошибка обновления');
+  setText('live-status-help',error.name==='AbortError'?'Сервер не ответил вовремя. Повтори обновление.':String(error.message||'Не удалось обновить данные.'));
   refreshState('error');
  }finally{
   clearTimeout(timeout);loading=false;

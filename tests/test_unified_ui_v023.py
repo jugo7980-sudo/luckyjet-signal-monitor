@@ -194,6 +194,25 @@ def test_mobile_full_site_design_navigation_and_explanations():
                     "(n) => n.parentElement.id === 'live-demo'")
                 assert await page.locator("#demo-management").evaluate(
                     "(n) => n.parentElement.classList.contains('demo-secondary-controls')")
+                secondary = await page.evaluate("""() => {
+                    const group = document.querySelector('#page-demo .demo-secondary-controls');
+                    const a = document.getElementById('demo-management').getBoundingClientRect();
+                    const b = document.getElementById('demo-metrics-disclosure').getBoundingClientRect();
+                    const first = document.querySelector('#demo-management > summary').getBoundingClientRect();
+                    const second = document.querySelector('#demo-metrics-disclosure > summary').getBoundingClientRect();
+                    return {layout:getComputedStyle(group).display,
+                      sameLeft:Math.abs(a.left-b.left)<=1,
+                      sameWidth:Math.abs(a.width-b.width)<=1,
+                      sameHeight:Math.abs(first.height-second.height)<=1,
+                      stacked:b.top>=a.bottom-1,
+                      targetHeight:Math.min(first.height,second.height),
+                      short:Math.max(a.height,b.height)<=55,
+                      groupWithinViewport:group.getBoundingClientRect().right<=innerWidth};
+                }""")
+                assert secondary["layout"] == "flex", secondary
+                assert all(secondary[k] for k in ("sameLeft","sameWidth","sameHeight",
+                              "stacked","short","groupWithinViewport")), secondary
+                assert secondary["targetHeight"] >= 44, secondary
                 assert await page.locator("#demo-status-row").count() == 0
                 assert await page.locator("#page-demo .demo-status-row").is_hidden()
                 assert "серия" in (await page.locator("#demo-classic-accordion").inner_text()).lower()

@@ -57,16 +57,16 @@ def format_event(event, state, currency, completed=None):
                 f'{trigger} подряд ниже x{x}. Ставка — со следующего раунда.')
     if event == 'betting':
         return (f'Стратегия №4 · DEMO запущено\n'
-                f'Первая ставка: {format_money(stake, currency)}\n'
+                f'Фиксированная ставка: {format_money(stake, currency)}\n'
                 f'Вывод: x{x}')
     if event == 'loss':
         return (f'Стратегия №4 · ставка проиграна\n'
                 f'Ставок: {state.get("steps", 0)}\n'
                 f'Новый вход: после {trigger} подряд ниже x{x}\n'
-                f'Ставка после сигнала: {format_money(state.get("next_stake_cents", 0), currency)}')
+                f'Фиксированная ставка после сигнала: {format_money(stake, currency)}')
     if event == 'goal' and completed:
         result = completed.get('net_cents')
-        return (f'Стратегия №4 · выигрыш, сессия завершена\n'
+        return (f'Стратегия №4 · целевой X достигнут, цикл завершён\n'
                 f'Коэффициент: x{completed.get("coefficient")}\n'
                 f'Шагов: {len(completed.get("rounds") or [])}\n'
                 f'Чистый итог: {format_money(result, currency)}')

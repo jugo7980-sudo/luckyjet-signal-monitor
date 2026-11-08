@@ -128,9 +128,15 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#summary-help-close").click()
                 assert await page.locator("#summary-help-body").is_hidden()
                 # All expanded help is separated from the main page into compact ? dialogs.
-                await page.locator('[data-summary-help-for="ind-target-hint"]').click()
+                help_target = page.locator('[data-summary-help-for="ind-target-hint"]')
+                assert await help_target.evaluate("(n) => n.getBoundingClientRect().width >= 44")
+                await help_target.click()
                 assert "100x и выше" in await page.locator("#summary-metric-text").inner_text()
-                await page.locator("#summary-metric-close").click()
+                await page.keyboard.press("Tab")
+                assert await page.locator("#summary-metric-close").evaluate("(n) => document.activeElement === n")
+                await page.keyboard.press("Escape")
+                assert await page.locator("#summary-metric-popup").is_hidden()
+                assert await help_target.evaluate("(n) => document.activeElement === n")
                 assert await page.locator("#summary-metric-popup").is_hidden()
                 await page.locator('[data-summary-help-for="ind-summary-status-detail"]').click()
                 assert "истории самого игрового сайта" in await page.locator(
@@ -156,7 +162,9 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 assert "не гарантирует полноту" in await page.locator("#summary-metric-text").inner_text()
                 await page.locator("#summary-metric-close").click()
                 assert await page.locator("#home-status-row").evaluate(
-                    "(n) => n.getBoundingClientRect().height <= 40")
+                    "(n) => n.getBoundingClientRect().height >= 44")
+                assert await page.locator("#coef-grid .coef").first.evaluate(
+                    "(n) => parseFloat(getComputedStyle(n).fontSize) >= 11")
                 await page.locator("#monitor-uptime").scroll_into_view_if_needed()
                 await page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
                 assert await page.evaluate("""() => {
@@ -172,6 +180,9 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 assert await page.locator("#demo-metrics-disclosure").evaluate("(n) => !n.open")
                 await page.locator("#demo-classic-accordion summary").click()
                 await page.locator("#demo-controls").wait_for(state="visible")
+                assert await page.locator("#page-demo .control-row label button").count() == 0
+                assert await page.locator("#demo-management").evaluate(
+                    "(n) => n.compareDocumentPosition(document.querySelector('#demo-classic-accordion')) & Node.DOCUMENT_POSITION_FOLLOWING")
                 assert "серия" in (await page.locator("#demo-classic-accordion").inner_text()).lower()
                 assert await page.locator("#demo-quality").inner_text() == "По архиву"
                 await page.locator('[data-summary-help-for="demo-quality-help"]').click()
@@ -196,8 +207,13 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator('nav [data-tab="history"]').click()
                 assert not await page.locator("#history-management").evaluate("(n) => n.open")
                 assert await page.locator("#history-reset-scope").is_hidden()
+                assert await page.locator("#history-guide summary").evaluate(
+                    "(n) => n.getBoundingClientRect().height >= 44")
                 await page.locator("#history-guide summary").click()
                 await page.locator("#history-explainer").wait_for(state="visible")
+                await page.locator('[data-history-view="days"]').focus()
+                await page.keyboard.press("ArrowRight")
+                assert await page.locator('[data-history-view="high_days"]').get_attribute("aria-selected") == "true"
                 await page.locator('[data-history-view="cycles"]').click()
                 await page.wait_for_function(
                     "document.querySelector('#history-explainer').textContent.includes('DEMO-циклы')")
@@ -210,6 +226,8 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 await page.locator("#open-settings").click()
                 await page.locator("#settings-panel").wait_for(state="visible")
                 assert await page.locator("#account-username").count() == 1
+                assert await page.locator("#page-account .control-row label button").count() == 0
+                assert await page.locator("#site-connection-panel").count() == 1
                 assert await page.locator("#app-release-notes").count() == 1
                 assert APP_VERSION in await page.locator("#app-release-notes").inner_text()
                 await page.locator('[data-summary-help-for="settings-notifications-hint"]').click()

@@ -35,17 +35,21 @@ def changed_events(before, after, completed=None):
     if not before.get('enabled') or not after.get('enabled'):
         return []
     notices = []
-    if (after.get('reference_id') and
-            after.get('reference_id') != before.get('reference_id')):
+    if (before.get('phase') in {'waiting_reference', 'waiting'}
+            and after.get('reference_id')
+            and after.get('reference_id') != before.get('reference_id')):
         notices.append('reference')
     if (before.get('phase') != 'betting' and after.get('phase') == 'betting'
             and not before.get('rounds') and not after.get('rounds')):
         notices.append('threshold')
-    if before.get('phase') == 'betting' and not before.get('rounds'):
-        # A winning first wager clears after.rounds immediately, so read
-        # the finalized cycle too. The trigger round itself is not a wager.
-        if after.get('rounds') or (completed and completed.get('rounds')):
-            notices.append('betting')
+    if (before.get('phase') == 'betting'
+            and before.get('started_at') is None
+            and (after.get('started_at') is not None
+                 or (completed and completed.get('rounds')))):
+        # started_at is set only by the first actual wager. Unlike the
+        # mutable rounds list, this scalar snapshot remains stable.
+        # An immediate win clears started_at but supplies the final cycle.
+        notices.append('betting')
     if completed and completed.get('outcome') == 'recovered':
         notices.append('goal')
     return notices

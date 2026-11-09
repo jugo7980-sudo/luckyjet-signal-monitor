@@ -123,6 +123,12 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                     'entry_range_enabled':True,'trigger':4,'stake':'150',
                     'safe_losses':2,'safe_mode':'consecutive','continuous_session':True}
                 await expect(page.locator('#recovery-streak-cashout')).to_have_value('2.00')
+                await page.locator('#recovery-streak-trigger').select_option('1')
+                await page.locator('#recovery-streak-save').click()
+                await expect(page.locator('#recovery-streak-trigger')).to_have_value('1')
+                assert actions[-1]['action'] == 'recovery_streak_config'
+                assert actions[-1]['value']['trigger'] == 1
+                assert actions[-1]['value']['entry_range_enabled'] is True
                 await expect(page.locator('#recovery-streak-safe')).to_have_value('2')
                 await expect(page.locator('#recovery-streak-safe-mode')).to_have_value('consecutive')
                 await page.wait_for_function('document.getElementById("recovery-streak-x").value === "1.29"')

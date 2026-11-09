@@ -703,3 +703,89 @@ def test_new_range_api_requires_independent_cashout_and_saves_correctly():
             assert ledger.recovery_streak.dump() == snapshot
         await gate.close()
     asyncio.run(run())
+
+
+def test_one_matching_x_entry_bets_only_on_following_round_and_rearms_after_safe():
+    ledger = new_ledger(x='1.29', stake=1000, balance=20000, trigger=3, safe=1)
+    st = ledger.recovery_streak
+    assert st.configure(target='1.29', target_max='1.50',
+                        cashout_target='2.00', entry_range_enabled=True,
+                        continuous_session=True, trigger=1, stake_cents=1000*100,
+                        currency='KRW', safe_losses=1, safe_mode='total')
+    assert st.trigger == 1
+    assert st.phase == 'waiting'
+    before = ledger.balance_cents
+    tick(ledger, 1, '1.28')  # outside window
+    assert st.phase == 'waiting' and st.streak == 0
+    tick(ledger, 2, '1.50')  # inclusive upper bound; arm, no bet
+    assert st.phase == 'betting' and st.rounds == []
+    assert ledger.balance_cents == before
+    tick(ledger, 3, '1.45')  # actual wager loses because below cashout x2
+    assert st.phase == 'waiting' and st.enabled is True
+    assert ledger.recovery_history[0]['outcome'] == 'safe_limit'
+    assert ledger.recovery_history[0]['net_cents'] == -1000*100
+    assert ledger.balance_cents == before - 1000*100
+    tick(ledger, 4, '1.29')  # arm a new session, not retroactively charged
+    assert st.phase == 'betting' and not st.rounds
+    tick(ledger, 5, '2.10')  # next round virtual wager pays x2
+    assert st.phase == 'betting'
+    assert st.rounds[-1]['payout_cents'] == 2000*100
+    assert ledger.balance_cents == before
+    restored = DemoLedger(**ledger.dump())
+    assert restored.recovery_streak.trigger == 1
+    assert restored.recovery_streak.entry_range_enabled
+    tick(restored, 6, '1.05')  # loss, safe auto-closes cycle
+    assert restored.recovery_streak.enabled and restored.recovery_streak.phase == 'waiting'
+    assert restored.recovery_history[0]['net_cents'] == 0
+    assert restored.recovery_history[0]['cashout_multiplier'] == '2.00'
+    assert restored.balance_cents == before-1000*100
+
+
+def test_one_match_seed_is_read_only_and_strategy_3_keeps_minimum_two():
+    from luckyjet_signal.target_streak_demo import TargetStreakStrategy
+    ledger = new_ledger(x='1.29', stake=1000, balance=20000, trigger=1, safe=2)
+    st = ledger.recovery_streak
+    assert st.trigger == 1
+    assert st.configure(target='1.29', target_max='1.50', cashout_target='2.00',
+                        entry_range_enabled=True, continuous_session=True,
+                        trigger=1, stake_cents=1000*100, currency='KRW')
+    balance = ledger.balance_cents
+    st.seed_streak(['1.30', '1.17'])
+    assert st.phase == 'betting' and not st.rounds
+    assert ledger.balance_cents == balance
+    st.reset_progress()
+    st.seed_streak(['1.51', '1.40'])
+    assert st.phase == 'waiting' and st.streak == 0
+    third = TargetStreakStrategy({'trigger':1}, currency='KRW')
+    assert third.trigger == 3
+    third_before = third.dump()
+    assert not third.configure(target='1.57', trigger=1, stake_cents=1000*100,
+                               currency='KRW')
+    assert third.dump() == third_before
+
+
+def test_strategy4_api_accepts_one_matching_round_and_rejects_zero_or_eleven():
+    async def run():
+        gate=ReliableTelegramPasswordGate(None)
+        gate.redis=FakeRedis(decode_responses=True)
+        gate.authorized.add(42)
+        ledger=new_ledger(x='1.29', stake=1000, balance=20000, trigger=3)
+        ledger.recovery_streak.enabled = False
+        gate.demo_ledgers[42] = ledger
+        config={'target':'1.29', 'target_max':'1.50', 'cashout_target':'2.00',
+                'entry_range_enabled':True, 'continuous_session':True,
+                'trigger':1, 'stake':'1000', 'safe_losses':2, 'safe_mode':'total'}
+        async def submit(value):
+            return await controls(signed(42),gate,'fixture','POST',
+                json.dumps({'action':'recovery_streak_config','value':value}).encode())
+        ok=await submit(config)
+        assert ok[0] == '200 OK', ok
+        assert json.loads(ok[2])['recovery_streak']['trigger'] == 1
+        assert ledger.recovery_streak.trigger == 1
+        original=ledger.recovery_streak.dump()
+        for invalid in (dict(config, trigger=0), dict(config, trigger=11),
+                        dict(config, trigger=True), dict(config, trigger='1')):
+            assert (await submit(invalid))[0] != '200 OK'
+            assert ledger.recovery_streak.dump() == original
+        await gate.close()
+    asyncio.run(run())

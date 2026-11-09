@@ -27,6 +27,13 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
                            else self.target)
         # Old persisted sessions retain their historic win-closes-cycle behaviour.
         self.continuous_session = raw.get('continuous_session') is True
+        # Opt-in on save only: old saved sessions retain their old X semantics.
+        self.entry_range_enabled = raw.get('entry_range_enabled') is True
+        cashout = parse_multiplier(raw.get('cashout_target', str(self.target)))
+        self.cashout_target = (
+            cashout if cashout is not None and Decimal('1.01') <= cashout <= Decimal('10000')
+            else self.target
+        )
         self.safe_mode = (raw.get('safe_mode') if raw.get('safe_mode') in
                           ('total', 'consecutive') else 'total')
         cap = raw.get('safe_losses', 2)
@@ -52,7 +59,9 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
         return self.consecutive_losses if self.safe_mode == 'consecutive' else self.losses
 
     def next_target(self):
-        """Fixed, disclosed 3-point cycle; it does NOT predict the next round."""
+        """A separate fixed cashout X in entry-range mode; legacy X unchanged."""
+        if self.entry_range_enabled:
+            return self.cashout_target
         if not self.continuous_session or self.target_max == self.target:
             return self.target
         index = len(self.rounds) % 3
@@ -74,6 +83,8 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
         state.update(safe_losses=self.safe_losses, session_autobet=self.session_autobet,
                      target_max=str(self.target_max),
                      continuous_session=self.continuous_session,
+                     entry_range_enabled=self.entry_range_enabled,
+                     cashout_target=str(self.cashout_target),
                      safe_mode=self.safe_mode,
                      consecutive_losses=self.consecutive_losses)
         return state
@@ -86,6 +97,8 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
             counted_losses=self.counted_losses,
             consecutive_losses=self.consecutive_losses,
             safe_mode=self.safe_mode, continuous_session=self.continuous_session,
+            entry_range_enabled=self.entry_range_enabled,
+            cashout_target=str(self.cashout_target),
             target_max=str(self.target_max), next_target=str(self.next_target()),
             last_bet_win=(bool(self.rounds) and
                           int(self.rounds[-1].get('payout_cents') or 0) > 0),
@@ -102,8 +115,28 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
         self.consecutive_losses = 0
         self.session_autobet = True
 
+    def seed_streak(self, coefficients):
+        """Read only confirmed previous rounds; no retroactive charges."""
+        if not self.entry_range_enabled:
+            return super().seed_streak(coefficients)
+        if not self.enabled or self.phase != 'waiting':
+            return
+        streak = 0
+        for value in coefficients:  # newest first
+            x = parse_multiplier(value)
+            if x is None or not self.target <= x <= self.target_max:
+                break
+            streak += 1
+            if streak >= self.trigger:
+                break
+        self.streak = streak
+        if streak >= self.trigger:
+            self.phase = 'betting'
+            self.streak = 0
+
     def configure(self, *, target, trigger, stake_cents, currency, safe_losses=None,
-                  target_max=None, safe_mode=None, continuous_session=None):
+                  target_max=None, safe_mode=None, continuous_session=None,
+                  entry_range_enabled=None, cashout_target=None):
         if self.rounds:
             return False
         cap = self.safe_losses if safe_losses is None else safe_losses
@@ -112,12 +145,19 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
                       else continuous_session)
         lower = parse_multiplier(target)
         upper = parse_multiplier(target_max if target_max is not None else target)
+        range_mode = (self.entry_range_enabled if entry_range_enabled is None
+                      else entry_range_enabled)
+        cashout = parse_multiplier(cashout_target if cashout_target is not None
+                                   else str(self.cashout_target))
         if (type(cap) is not int or not 0 <= cap <= 10
                 or mode not in ('total', 'consecutive')
                 or type(continuous) is not bool
-                or lower is None or upper is None
+                or type(range_mode) is not bool
+                or (range_mode and not continuous)
+                or lower is None or upper is None or cashout is None
                 or not Decimal('1.01') <= lower <= upper <= Decimal('10000')
-                or Decimal(stake_cents) * upper > MAX_AMOUNT):
+                or not Decimal('1.01') <= cashout <= Decimal('10000')
+                or Decimal(stake_cents) * (cashout if range_mode else upper) > MAX_AMOUNT):
             return False
         if not super().configure(target=target, trigger=trigger,
                                  stake_cents=stake_cents, currency=currency):
@@ -126,6 +166,8 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
         self.safe_mode = mode
         self.target_max = upper
         self.continuous_session = continuous
+        self.entry_range_enabled = range_mode
+        self.cashout_target = cashout
         return True
 
     def required_stake(self, currency):
@@ -142,6 +184,10 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
         safe_mode = self.safe_mode
         target_max = str(self.target_max)
         continuous = self.continuous_session
+        entry_range_enabled = self.entry_range_enabled
+        range_from = str(self.target)
+        range_to = str(self.target_max)
+        cashout_target = str(self.cashout_target)
         if continuous and payout_cents is not None:
             # Settled wins during a continuous session must be included in the
             # final net result, including when the session closes on a loss.
@@ -154,6 +200,11 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
             entry['session_mode'] = 'autobet' if session_autobet else 'legacy_migrated'
             entry['safe_losses'] = self.safe_losses
             entry['losses'] = losses
+            if entry_range_enabled:
+                entry['entry_range_enabled'] = True
+                entry['entry_range_min'] = range_from
+                entry['entry_range_max'] = range_to
+                entry['cashout_multiplier'] = cashout_target
             if continuous:
                 entry['cashout_multiplier_max'] = target_max
                 entry['safe_mode'] = safe_mode
@@ -172,9 +223,11 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
         at = (now or datetime.now(timezone.utc)).isoformat()
 
         if self.phase == 'waiting':
-            # The original low-X entry rule is unchanged: N consecutive
-            # results strictly below the configured lower target.
-            self.streak = self.streak + 1 if multiplier < self.target else 0
+            # New mode: N consecutive completed results INSIDE [min X, max X].
+            # Prior saved configurations retain the original below-min rule.
+            matches = (self.target <= multiplier <= self.target_max
+                       if self.entry_range_enabled else multiplier < self.target)
+            self.streak = self.streak + 1 if matches else 0
             if self.streak >= self.trigger:
                 self.phase = 'betting'
                 self.next_stake_cents = self.stake_cents
@@ -228,7 +281,7 @@ class RecoveryStreakStrategy(TargetStreakStrategy):
         self.consecutive_losses += 1
         self.next_stake_cents = self.stake_cents
         if self.safe_losses and self.counted_losses >= self.safe_losses:
-            # Reset SESSION only; next entry again requires a low-X streak.
+            # Reset SESSION only; next entry again requires the entry signal.
             return balance, self._complete('safe_limit', balance=balance,
                                             currency=currency, at=at)
         self.phase = 'betting'

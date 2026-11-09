@@ -61,13 +61,17 @@ def format_event(event, state, currency, completed=None):
     x = state.get('target', '1.57')
     trigger = state.get('trigger', 3)
     stake = state.get('stake_cents', 0)
+    range_mode = state.get('entry_range_enabled') is True
+    entry = (f'в диапазоне x{x}–{state.get("target_max", x)}'
+             if range_mode else f'ниже x{x}')
+    cashout = state.get('cashout_target', x) if range_mode else x
     if event == 'armed':
         return (f'Стратегия №4 · серия достигнута\n'
-                f'{trigger} подряд ниже x{x}. Ставка — со следующего раунда.')
+                f'{trigger} подряд {entry}. Ставка — со следующего раунда.')
     if event == 'betting':
         return (f'Стратегия №4 · DEMO запущено\n'
                 f'Фиксированная ставка: {format_money(stake, currency)}\n'
-                f'Вывод: x{x}')
+                f'Вывод: x{cashout}')
     if event == 'loss':
         steps = (len(completed.get('rounds') or []) if completed else state.get('steps', 0))
         return (f'Стратегия №4 · ставка проиграна\n'
@@ -78,7 +82,7 @@ def format_event(event, state, currency, completed=None):
         return (f'Стратегия №4 · сейф сработал, сессия закрыта\n'
                 f'Проигрышей: {completed.get("losses", len(completed.get("rounds") or []))}\n'
                 f'Чистый итог: {format_money(completed.get("net_cents"), currency)}\n'
-                f'Новый вход: после {trigger} подряд ниже x{x}')
+                f'Новый вход: после {trigger} подряд {entry}')
     if event == 'goal' and not completed and state.get('continuous_session'):
         return (f'Стратегия №4 · ставка выиграна, сессия продолжается\n'
                 f'Чистая прибыль ставки: {format_money(state.get("last_bet_profit_cents", 0), currency)}\n'

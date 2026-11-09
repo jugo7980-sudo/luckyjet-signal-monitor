@@ -756,12 +756,18 @@
           'Цикл ' + (c.index + 1), 'Время Владивостока, UTC+10');
         const paramsStart = root.childNodes.length;
         if (c.strategy === 'recovery_streak') {
-          info('Стратегия', (c.stake_mode === 'fixed' ?
-            'Фиксированная ставка после N ниже x' : 'Ранее: догон после N ниже x') +
-            (c.cashout_multiplier || '1.32'));
-          info('Условие входа', (c.trigger_streak || 3) + ' подряд');
+          if (c.entry_range_enabled === true) {
+            info('Стратегия', 'Фиксированная ставка по диапазону X');
+            info('Условие входа', (c.trigger_streak || 3) + ' подряд внутри x' +
+              c.entry_range_min + '–' + c.entry_range_max);
+          } else {
+            info('Стратегия', (c.stake_mode === 'fixed' ?
+              'Фиксированная ставка после N ниже x' : 'Ранее: догон после N ниже x') +
+              (c.cashout_multiplier || '1.32'));
+            info('Условие входа', (c.trigger_streak || 3) + ' подряд');
+          }
           if (c.session_mode === 'autobet') info('Режим', 'Автоставка каждый раунд');
-          if (c.safe_losses != null) info('Сейф', c.safe_losses === 0 ? 'Выкл' : c.safe_losses + ' проигрышей');
+          if (c.safe_losses != null) info('Сейв', c.safe_losses === 0 ? 'Выкл' : c.safe_losses + ' проигрышей');
           info('Автовывод', 'x' + (c.cashout_multiplier || '1.32'));
           info(c.stake_mode === 'fixed' ? 'Фиксированная ставка' : 'Первая ставка', money(c.base_stake_cents));
         }

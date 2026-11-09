@@ -72,8 +72,10 @@ def strategy_tile_snapshot(ledger):
     )
     target = ledger.target_streak
     recovery = ledger.recovery_streak
-    recovery_target = str(recovery.target)
-    if recovery.continuous_session and recovery.target_max != recovery.target:
+    recovery_target = (str(recovery.cashout_target) if recovery.entry_range_enabled
+                       else str(recovery.target))
+    if (not recovery.entry_range_enabled and recovery.continuous_session
+            and recovery.target_max != recovery.target):
         recovery_target += '–' + str(recovery.target_max)
     return [
         _tile(1, ledger.enabled, 'betting' if ledger.active else 'waiting',

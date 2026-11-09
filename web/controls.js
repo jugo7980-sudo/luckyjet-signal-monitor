@@ -494,7 +494,7 @@
         Number(target) < 1.01 || Number(target_max) < Number(target) ||
         Number(target_max) > 10000 || Number(cashout_target) < 1.01 ||
         Number(cashout_target) > 10000 ||
-        !Number.isInteger(trigger) || trigger < 2 || trigger > 10 ||
+        !Number.isInteger(trigger) || trigger < 1 || trigger > 10 ||
         !Number.isInteger(safe_losses) || safe_losses < 0 || safe_losses > 10 ||
         !['total', 'consecutive'].includes(safe_mode)) {
       message('Проверь диапазон входа, X вывода, ставку, шаг и сейв.', true); return;

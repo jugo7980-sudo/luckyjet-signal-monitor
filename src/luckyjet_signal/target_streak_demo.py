@@ -22,7 +22,8 @@ class TargetStreakStrategy:
             trigger = int(raw.get('trigger', 3))
         except (TypeError, ValueError):
             trigger = 3
-        self.trigger = trigger if 2 <= trigger <= 10 else 3
+        min_trigger = 1 if self.strategy_name == 'recovery_streak' else 2
+        self.trigger = trigger if min_trigger <= trigger <= 10 else 3
         try:
             stake = int(raw.get('stake_cents', default_stake))
         except (TypeError, ValueError):
@@ -89,7 +90,8 @@ class TargetStreakStrategy:
             return False
         x = parse_multiplier(target)
         if (x is None or not Decimal('1.01') <= x <= Decimal('10000')
-                or type(trigger) is not int or not 2 <= trigger <= 10
+                or type(trigger) is not int
+                or not (1 if self.strategy_name == 'recovery_streak' else 2) <= trigger <= 10
                 or not valid_amount(stake_cents, currency)
                 or Decimal(stake_cents) * x > MAX_AMOUNT):
             return False

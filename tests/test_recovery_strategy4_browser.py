@@ -56,6 +56,8 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                                 target.update(target=cfg['target'],
                                               target_max=cfg['target_max'],
                                               continuous_session=cfg['continuous_session'],
+                                              entry_range_enabled=cfg['entry_range_enabled'],
+                                              cashout_target=cfg['cashout_target'],
                                               safe_mode=cfg['safe_mode'],
                                               trigger=cfg['trigger'],
                                               stake_cents=int(cfg['stake'])*100,
@@ -110,14 +112,17 @@ def test_strategy4_mobile_controls_notifications_history_and_auto_close():
                 await expect(page.locator('#recovery-streak-x')).to_have_value('1.32')
                 await page.locator('#recovery-streak-x').fill('1.29')
                 await page.locator('#recovery-streak-x-max').fill('1.50')
+                await page.locator('#recovery-streak-cashout').fill('2.00')
                 await page.locator('#recovery-streak-trigger').select_option('4')
                 await page.locator('#recovery-streak-stake').fill('150')
                 await page.locator('#recovery-streak-safe').select_option('2')
                 await page.locator('#recovery-streak-safe-mode').select_option('consecutive')
                 await page.locator('#recovery-streak-save').click()
                 assert actions[-1]['value'] == {
-                    'target':'1.29','target_max':'1.50','trigger':4,'stake':'150',
+                    'target':'1.29','target_max':'1.50','cashout_target':'2.00',
+                    'entry_range_enabled':True,'trigger':4,'stake':'150',
                     'safe_losses':2,'safe_mode':'consecutive','continuous_session':True}
+                await expect(page.locator('#recovery-streak-cashout')).to_have_value('2.00')
                 await expect(page.locator('#recovery-streak-safe')).to_have_value('2')
                 await expect(page.locator('#recovery-streak-safe-mode')).to_have_value('consecutive')
                 await page.wait_for_function('document.getElementById("recovery-streak-x").value === "1.29"')

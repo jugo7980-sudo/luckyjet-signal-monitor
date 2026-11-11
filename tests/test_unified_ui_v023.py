@@ -167,7 +167,7 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 assert await page.locator(".topbar .app-context-label").inner_text() == "DEMO"
                 assert await page.locator("#header-premium").inner_text() == "Premium"
                 assert await page.locator(".below-tiles #refresh-data").evaluate(
-                    "(n) => n.getBoundingClientRect().width <= 150")
+                    "(n) => Math.abs(n.getBoundingClientRect().width - n.parentElement.getBoundingClientRect().width) <= 1")
                 assert not await page.locator("#page-home .home-disclaimer").is_visible()
                 assert await page.locator("#home-status-row").evaluate(
                     "(n) => n.closest('.home-freshness-row') !== null")
@@ -227,6 +227,18 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 assert await page.locator("#high-gap-panel").is_hidden()
                 await page.locator("#demo-high-accordion > summary").click()
                 await page.locator("#high-gap-panel").wait_for(state="visible")
+                await page.locator("#high-gap-session-safety > summary").click()
+                # Every toggle shares the input column and a usable touch target.
+                for control_id in ('high-gap-filter-enabled', 'high-gap-bets-limit-enabled',
+                                   'high-gap-active-filter-enabled'):
+                    geometry = await page.locator('#' + control_id).evaluate("""node => {
+                        const box = node.getBoundingClientRect();
+                        const row = node.closest('.control-row').getBoundingClientRect();
+                        return {width:box.width,height:box.height,right:box.right,rowRight:row.right};
+                    }""")
+                    assert geometry['width'] == 76, geometry
+                    assert geometry['height'] >= 44, geometry
+                    assert abs(geometry['right'] - geometry['rowRight']) <= 1, geometry
                 await page.locator("#high-gap-help-toggle").click()
                 assert "Без догона" in await page.locator(
                     "#high-gap-help-body").inner_text()

@@ -326,6 +326,12 @@
       document.getElementById('settings-recovery-' + name).textContent =
         (recoveryEvents[name] ?? fallback) ? 'ВКЛ' : 'ВЫКЛ';
     }
+    for (const button of settingsPanel.querySelectorAll('.control-row > button[data-control]')) {
+      const state = button.textContent.trim();
+      if (state === 'ВКЛ' || state === 'ВЫКЛ') {
+        button.setAttribute('aria-pressed', String(state === 'ВКЛ'));
+      }
+    }
     for (const node of all) node.disabled = busy || (
       demo.active && (node.id === 'demo-trigger-select' || node.id === 'demo-stake-input' ||
         node.id === 'demo-stake-save' || (node.id === 'demo-toggle' && demo.enabled))

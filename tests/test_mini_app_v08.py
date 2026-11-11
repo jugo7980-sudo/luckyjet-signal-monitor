@@ -69,7 +69,7 @@ def test_v08_guest_layout_320_390_430_and_compact_tabs():
                 }""")
                 assert layout["columns"] == 5, layout
                 assert layout["sameRow"] and layout["nextRow"] and layout["completeRows"], layout
-                assert 100 <= layout["refreshWidth"] <= min(150, layout["gridWidth"]), layout
+                assert abs(layout["refreshWidth"] - layout["gridWidth"]) <= 1, layout
                 assert layout["refreshHeight"] >= 44, layout
                 assert layout["refreshLabel"] == "Обновить"
                 assert layout["headerPosition"] == "sticky"

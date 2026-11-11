@@ -227,7 +227,7 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
                     '(el) => el.parentElement.id') == 'settings-controls'
             assert await page.locator('#low-streak-notice-preview').inner_text() == 'ВКЛ'
             assert await page.locator('#page-account > h1').evaluate(
-                '(el) => el.getBoundingClientRect().width') <= 1
+                '(el) => el.getBoundingClientRect().width') > 100
             await page.locator('#high-gap-notice-options > summary').click()
             assert await page.locator('#high-gap-notice-options').evaluate('(el) => el.open')
             assert not await page.locator('#low-streak-notice-options').evaluate('(el) => el.open')

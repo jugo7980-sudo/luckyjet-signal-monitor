@@ -227,6 +227,7 @@ def test_mobile_full_site_design_navigation_and_explanations():
                 assert await page.locator("#high-gap-panel").is_hidden()
                 await page.locator("#demo-high-accordion > summary").click()
                 await page.locator("#high-gap-panel").wait_for(state="visible")
+                await page.locator("#high-gap-session-safety > summary").click()
                 # Every toggle shares the input column and a usable touch target.
                 for control_id in ('high-gap-filter-enabled', 'high-gap-bets-limit-enabled',
                                    'high-gap-active-filter-enabled'):

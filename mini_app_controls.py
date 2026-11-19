@@ -569,8 +569,10 @@ async def controls(authorization, gate, token, method='GET', body=None):
             await gate._persist_user(uid)
             await gate.ensure_private_history(uid)
         elif action == 'delete_delay':
-            if type(value) is not int or value not in {0, 10, 30, 60}:
-                return json_response('400 Bad Request', {'error': 'Допустимые значения: 0, 10, 30, 60 секунд.'})
+            if type(value) is int and value == 10:
+                value = 5
+            if type(value) is not int or value not in {0, 5, 30, 60}:
+                return json_response('400 Bad Request', {'error': 'Допустимые значения: 0, 5, 30, 60 секунд.'})
             gate.delete_seconds[uid] = value
             await gate._persist_user(uid)
         elif action == 'test_notification':

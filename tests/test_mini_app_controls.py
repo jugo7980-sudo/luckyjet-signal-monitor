@@ -76,13 +76,13 @@ def test_user_scoped_controls_writes_and_invariants():
         _, reset = await request('settings_reset', confirm=True)
         assert reset['settings'] == {
             'notifications': True, 'sound': True,
-            'threshold': 4, 'history_size': 20, 'delete_delay': 10,
+            'threshold': 4, 'history_size': 20, 'delete_delay': 5,
         }
         assert saved_demo == [42, 42, 42, 42]
         assert len(saved_settings) == 6
 
         for action, value in [('demo_trigger', 99), ('notification_threshold', 1),
-                              ('history_size', 200), ('delete_delay', 5)]:
+                              ('history_size', 200), ('delete_delay', 7)]:
             assert (await request(action, value=value))[0] == '400 Bad Request'
         assert (await request(body=b'{}'))[0] == '400 Bad Request'
         assert (await request(body=b'{"action":"admin_block","value":43}'))[0] == '400 Bad Request'
@@ -110,7 +110,7 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
                          'base_stake_cents': 1000, 'trigger': 4, 'low_streak': 1,
                          'step': None, 'next_stake_cents': None},
                 'settings': {'notifications': True, 'sound': True, 'threshold': 4,
-                             'history_size': 20, 'delete_delay': 10},
+                             'history_size': 20, 'delete_delay': 5},
             }
             page.on('pageerror', lambda error: errors.append(str(error)))
 
@@ -153,7 +153,7 @@ def test_controls_mobile_ui_reads_changes_and_confirms_reset():
                         elif action == 'settings_reset':
                             assert payload['confirm'] is True
                             state['settings'].update(notifications=True, sound=True, threshold=4,
-                                                     history_size=20, delete_delay=10)
+                                                     history_size=20, delete_delay=5)
                     if pause_controls['active']:
                         control_started.set()
                         await control_resume.wait()

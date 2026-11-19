@@ -189,7 +189,9 @@ class ReliableTelegramPasswordGate(TelegramPasswordGate):
             if user_id not in self.authorized or user_id not in self.chats or user_id in self.notifications_disabled:
                 await self._clear_streak_notice(user_id)
             elif deadline and deadline <= now:
-                await self._safe_delete(self.chats.get(user_id), message_id)
+                if not await self._safe_delete(self.chats.get(user_id), message_id):
+                    self._start_streak_deletion(user_id, message_id, deadline)
+                    continue
                 self.pending_deletions.pop(user_id, None)
                 await self._persist_runtime_user(user_id)
             elif deadline:

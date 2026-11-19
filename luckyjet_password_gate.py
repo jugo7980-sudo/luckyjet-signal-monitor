@@ -110,6 +110,7 @@ class TelegramPasswordGate(HistoryPanels):
 
         self.current_streak = []
         self.active_messages = {}
+        self.uncertain_streak_sends = {}
         self.pending_deletions = {}
         self.last_round = None
         self.last_round_at = None
@@ -939,11 +940,14 @@ class TelegramPasswordGate(HistoryPanels):
 
     async def _safe_delete(self, chat_id, message_id):
         if chat_id is None or message_id is None:
-            return
+            return True
         try:
             await self.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+            return True
+        except httpx.HTTPStatusError as exc:
+            return exc.response.status_code in (400, 403)
         except (httpx.HTTPError, RuntimeError, KeyError, TypeError):
-            pass
+            return False
 
     async def _replace_prompt(self, user_id, chat_id, text):
         # Guests don't have a coefficient history yet; make the Mini App
@@ -1615,6 +1619,11 @@ class TelegramPasswordGate(HistoryPanels):
             return
 
         self.chats[user_id] = chat_id
+        if (data == "noop" and chat_id == user_id
+                and (callback.get("message") or {}).get("text") == "🎰 Lucky Jet | Серия <2x"
+                and message_id != self.active_messages.get(user_id)):
+            await self._safe_delete(chat_id, message_id)
+            return
         if data not in {"noop", "history_refresh", "demo_warning_close"}:
             await self._leave_site_account(user_id)
         if data == "demo_warning_close":
@@ -2476,13 +2485,16 @@ class TelegramPasswordGate(HistoryPanels):
     async def _clear_streak_notice(self, user_id):
         if user_id not in self.active_messages and user_id not in self.pending_deletions:
             return
-        ids = {self.active_messages.pop(user_id, None)}
-        pending = self.pending_deletions.pop(user_id, None)
-        if pending:
-            ids.add(pending[0])
-        for message_id in ids:
+        active = self.active_messages.get(user_id)
+        pending = self.pending_deletions.get(user_id)
+        for message_id in {active, pending[0] if pending else None}:
             if message_id not in {self.menu_messages.get(user_id), self.history_messages.get(user_id)}:
-                await self._safe_delete(self.chats.get(user_id), message_id)
+                if not await self._safe_delete(self.chats.get(user_id), message_id):
+                    return False
+        if self.active_messages.get(user_id) == active:
+            self.active_messages.pop(user_id, None)
+        if self.pending_deletions.get(user_id) == pending:
+            self.pending_deletions.pop(user_id, None)
         await self._persist_user(user_id)
 
     def _start_streak_deletion(self, user_id, message_id, deadline):
@@ -2495,14 +2507,20 @@ class TelegramPasswordGate(HistoryPanels):
         await asyncio.sleep(max(0, deadline - time.time()))
         if self.pending_deletions.get(user_id) != (message_id, deadline):
             return
-        try:
-            await self.request("deleteMessage", {
-                "chat_id": self.chats.get(user_id), "message_id": message_id,
-            })
-        except (httpx.HTTPError, RuntimeError):
-            # Retain the deadline for recovery rather than orphaning the notice.
-            log.warning("Streak deletion deferred: user_id=%s", user_id)
-            return
+        delay = 2
+        while self.pending_deletions.get(user_id) == (message_id, deadline):
+            try:
+                await self.request("deleteMessage", {
+                    "chat_id": self.chats.get(user_id), "message_id": message_id,
+                })
+                break
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in (400, 403):
+                    break
+            except (httpx.HTTPError, RuntimeError):
+                pass
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60)
         if self.pending_deletions.get(user_id) == (message_id, deadline):
             self.pending_deletions.pop(user_id, None)
             await self._persist_user(user_id)
@@ -2512,18 +2530,23 @@ class TelegramPasswordGate(HistoryPanels):
         if chat_id is None:
             return
         if user_id in self.notifications_disabled:
-            await self._clear_streak_notice(user_id)
-            return
+            return await self._clear_streak_notice(user_id)
         message_id = self.active_messages.get(user_id)
         if ending is None and len(self.current_streak) < self.user_threshold(user_id):
             if message_id is not None:
-                await self._clear_streak_notice(user_id)
+                return await self._clear_streak_notice(user_id)
             return
         if message_id is None:
             if ending is not None:
                 return
+            view = streak_view.get()
+            series = view[2] if view and len(view) > 2 and view[2] else self.current_streak
+            previous = self.uncertain_streak_sends.get(user_id)
+            if previous is series or (isinstance(series, str) and previous == series):
+                return
             # Remove the previous completed notice before opening the next one.
-            await self._clear_streak_notice(user_id)
+            if await self._clear_streak_notice(user_id) is False:
+                return False
             try:
                 result = await self.request("sendMessage", {
                     "chat_id": chat_id, "text": "🎰 Lucky Jet | Серия <2x",
@@ -2531,10 +2554,20 @@ class TelegramPasswordGate(HistoryPanels):
                     "disable_notification": user_id in self.silent_users,
                 })
                 message_id = result.get("result", {}).get("message_id")
-                if message_id is not None:
+                if message_id is None:
+                    self.uncertain_streak_sends[user_id] = series
+                else:
                     self.active_messages[user_id] = int(message_id)
                     await self._persist_user(user_id)
-            except (httpx.HTTPError, RuntimeError):
+            except (httpx.ReadError, httpx.ReadTimeout, httpx.WriteError, httpx.WriteTimeout,
+                    httpx.RemoteProtocolError, ValueError):
+                self.uncertain_streak_sends[user_id] = series
+                log.warning("Streak send unconfirmed; waiting for next series: user_id=%s", user_id)
+                return
+            except (httpx.HTTPError, RuntimeError) as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500:
+                    self.uncertain_streak_sends[user_id] = series
+                    return
                 log.warning("Streak notification create failed: user_id=%s", user_id)
                 return False
             return
@@ -2552,7 +2585,8 @@ class TelegramPasswordGate(HistoryPanels):
                     pass
             if not unchanged:
                 log.info("Streak notification edit not applied: user_id=%s", user_id)
-                return False
+                if ending is None:
+                    return False
         if ending is not None:
             delay = self.user_delete_seconds(user_id)
             deadline = time.time() + delay if delay else 0

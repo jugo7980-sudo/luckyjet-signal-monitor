@@ -18,6 +18,7 @@ from round_archive import HEALTH_KEY, COLLECTOR_HEALTH_PREFIX
 log = logging.getLogger("luckyjet.archive_watchdog")
 WATCHDOG_STATE = "luckyjet:archive:v1:watchdog:state"
 WATCHDOG_LEASE = "luckyjet:archive:v1:watchdog:lease"
+WATCHDOG_CLEANUP = "luckyjet:archive:v1:watchdog:cleanup"
 ARCHIVE_STALE_MS = 180_000
 COLLECTOR_STALE_MS = 150_000
 
@@ -84,15 +85,19 @@ async def check_once(redis, collector_name, sender, *, now_ms=None):
         if new_gap:
             text += " Также обнаружен разрыв истории."
     try:
-        delivered = bool(await sender(text))
+        delivered = await sender(text)
     except Exception:
         log.warning("Archive warning delivery failed")
         delivered = False
     if not delivered:
         return "delivery_failed"
-    await redis.hset(WATCHDOG_STATE, mapping={
+    pipe = redis.pipeline()
+    if type(delivered) is int:
+        pipe.zadd(WATCHDOG_CLEANUP, {str(delivered): now + 60_000})
+    pipe.hset(WATCHDOG_STATE, mapping={
         "status": severity, "last_gap_count": gaps, "updated_at": now,
     })
+    await pipe.execute()
     log.warning("Archive health state changed: status=%s gap_alert=%s", severity, new_gap)
     return "notified"
 
@@ -109,17 +114,39 @@ async def send_telegram(text):
                 f"https://api.telegram.org/bot{token}/sendMessage",
                 json={"chat_id": admin, "text": "⚠️ " + text},
             )
-            return result.status_code == 200 and bool(result.json().get("ok"))
+            return result.json()["result"]["message_id"] if result.is_success else False
     except (httpx.HTTPError, ValueError):
         log.warning("Archive watchdog Telegram request failed")
         return False
+
+
+async def clean_notifications(redis):
+    now = int(time.time() * 1000)
+    due = await redis.zrangebyscore(WATCHDOG_CLEANUP, "-inf", now, start=0, num=20)
+    if not due:
+        return
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    admin = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    async with httpx.AsyncClient(timeout=12) as client:
+        for mid in due:
+            result = await client.post(
+                f"https://api.telegram.org/bot{token}/deleteMessage",
+                json={"chat_id": admin, "message_id": int(mid)},
+            )
+            absent = (result.status_code == 400 and
+                      "message to delete not found" in result.text.lower())
+            if result.is_success or absent:
+                await redis.zrem(WATCHDOG_CLEANUP, mid)
+            else:
+                await redis.zadd(WATCHDOG_CLEANUP, {mid: now + 60_000}, xx=True)
 
 
 async def watchdog_loop(redis, collector_name):
     """Runs separately from capture; a Telegram failure cannot stop polling."""
     while True:
         try:
-            await check_once(redis, collector_name, send_telegram)
+            if await check_once(redis, collector_name, send_telegram) != "not_leader":
+                await clean_notifications(redis)
         except asyncio.CancelledError:
             raise
         except Exception:

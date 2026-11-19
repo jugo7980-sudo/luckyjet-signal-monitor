@@ -88,3 +88,23 @@ def test_failed_delivery_is_retried_once_without_advancing_state():
         assert await redis.hget(WATCHDOG_STATE, "status") == "no_new_rounds"
         await redis.aclose()
     asyncio.run(run())
+
+
+def test_cleanup_retries_known_messages_and_removes_confirmed_deletions(monkeypatch):
+    import httpx
+    import archive_watchdog as watchdog
+
+    async def run():
+        redis = FakeRedis(decode_responses=True)
+        await redis.zadd(watchdog.WATCHDOG_CLEANUP, {"42": 0, "43": 0, "44": 0})
+        statuses = iter([200, 400, 502])
+
+        def respond(request):
+            return httpx.Response(next(statuses), json={"description": "message to delete not found"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        monkeypatch.setattr(watchdog.httpx, "AsyncClient", lambda **kwargs: client)
+        await watchdog.clean_notifications(redis)
+        assert await redis.zrange(watchdog.WATCHDOG_CLEANUP, 0, -1) == ["44"]
+        await redis.aclose()
+    asyncio.run(run())

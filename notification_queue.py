@@ -16,6 +16,7 @@ class NotificationQueue:
         self.gate = gate
         self.queue = asyncio.Queue()
         self.pending = {}
+        self.series = uuid.uuid4().hex
         self.scheduled = set()
         self.lock = asyncio.Lock()
         self.task = None
@@ -37,6 +38,8 @@ class NotificationQueue:
                     if not isinstance(item['streak'], list):
                         raise ValueError('Invalid streak')
                     if user in self.gate.authorized:
+                        if item.get('series') and item.get('ending') is None:
+                            self.series = item['series']
                         self.pending[user] = item
                         self._schedule(user)
                     else:
@@ -46,13 +49,15 @@ class NotificationQueue:
 
     async def submit(self, users, streak, ending=None):
         async with self.lock:
-            items = {int(uid): {'version': uuid.uuid4().hex, 'streak': list(streak), 'ending': ending}
+            items = {int(uid): {'version': uuid.uuid4().hex, 'streak': list(streak), 'ending': ending, 'series': self.series}
                      for uid in list(users)}
             if self.gate.redis and items:
                 pipe = self.gate.redis.pipeline()
                 for uid, item in items.items():
                     pipe.hset(KEY, str(uid), json.dumps(item))
                 await pipe.execute()
+            if ending is not None:
+                self.series = uuid.uuid4().hex
             self.pending.update(items)
             for uid in items:
                 self._schedule(uid)
@@ -74,7 +79,7 @@ class NotificationQueue:
             try:
                 if item is None:
                     continue
-                token = streak_view.set((self.gate, item['streak']))
+                token = streak_view.set((self.gate, item['streak'], item.get('series')))
                 delivery_token = notification.set(True)
                 try:
                     if uid in self.gate.authorized:

@@ -155,3 +155,28 @@ def test_redis_migration_and_restart_resume_notice_without_duplicate():
         assert await redis.hget("luckyjet:pending_delete_message", "42") is None
         await redis.aclose()
     asyncio.run(run())
+
+
+def test_unconfirmed_send_is_not_repeated_until_next_series():
+    import httpx
+    from notification_queue import NotificationQueue
+
+    async def run():
+        gate, telegram = setup()
+        attempts = []
+        async def request(method, payload):
+            if method == "sendMessage":
+                attempts.append(payload)
+                if len(attempts) == 1:
+                    raise httpx.ReadTimeout("response lost")
+            return await telegram(method, payload)
+
+        gate.request = request
+        gate.notification_queue = NotificationQueue(gate)
+        for value in ["1.2x"] * 7 + ["2.0x"] + ["1.2x"] * 4:
+            await gate.on_round(value)
+            await gate.notification_queue.queue.join()
+        assert len(attempts) == 2
+        assert gate.active_messages[42] == 101
+        await gate.close()
+    asyncio.run(run())
